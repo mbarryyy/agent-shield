@@ -246,6 +246,31 @@ async def governance_stream(
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
+# --- governance HITL resume (W3 PR-S5; thin route+auth+validation, ---------
+#     gov owns the LangGraph Command(resume=) semantics) ---------------------
+@router.post("/v1/governance/incidents/{incident_id}/resume")
+async def governance_resume(incident_id: str, request: Request, ctx: Ctx) -> GovernanceVerdict:
+    """Act-2 HITL: re-enter a paused ESCALATE incident with the human
+    decision. Server signs the post-resume verdict; gov owns the resume()
+    semantics (Null default → honest stub until gov lands)."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise AppError(400, "VALIDATION_ERROR", "Invalid resume body.")
+    decision = body.get("decision")
+    if not isinstance(decision, str):
+        raise AppError(400, "VALIDATION_ERROR", "Missing resume decision.")
+    payload = body.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        raise AppError(400, "VALIDATION_ERROR", "resume payload must be an object.")
+    return await governance_svc.resume(
+        request.app.state.settings,
+        request.app.state.governance,
+        incident_id,
+        decision,
+        payload,
+    )
+
+
 # --- epochs (W4 produces real epochs; W1 = empty list / not-found) ---------
 @router.get("/v1/epochs")
 async def list_epochs(request: Request, ctx: Ctx) -> ListEpochsResponse:

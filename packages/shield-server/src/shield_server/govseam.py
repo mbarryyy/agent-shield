@@ -40,6 +40,14 @@ class GovernanceApp(Protocol):
 
     async def decide(self, rec: ShieldActionRecord) -> GovernanceVerdict: ...
 
+    async def resume(
+        self, incident_id: str, decision: str, payload: dict[str, object] | None
+    ) -> GovernanceVerdict:
+        """HITL resume (PR-S5): re-enter the paused LangGraph incident with the
+        human decision (accept|edit|response|ignore — gov §3.3 interrupt
+        schema). Returns the post-resume verdict UNSIGNED; server signs."""
+        ...
+
 
 class NullGovernanceApp:
     """Honest W3 staged-delivery default: UNSIGNED PASS (server signs).
@@ -70,6 +78,26 @@ class NullGovernanceApp:
             ],
         )
 
+    async def resume(
+        self, incident_id: str, decision: str, payload: dict[str, object] | None
+    ) -> GovernanceVerdict:
+        return GovernanceVerdict(
+            correlation_id=incident_id,
+            decision=Decision.PASS,
+            risk_score=0.0,
+            reasons=[
+                VerdictReason(
+                    agent=Guardian.SUPERVISOR,
+                    label="HITL_RESUME_STUB",
+                    detail=(
+                        "server HITL-resume seam default (NullGovernanceApp) — "
+                        "real LangGraph Command(resume=) pending gov Task #21."
+                    ),
+                    score=0.0,
+                )
+            ],
+        )
+
 
 class _GovSeamAdapter:
     """Adapts the converged ``shield_governance`` module surface —
@@ -77,12 +105,21 @@ class _GovSeamAdapter:
     GovernanceVerdict`` (server W3 proposal / gov Task #21) — to the
     server-side ``GovernanceApp`` protocol (``.decide(rec)``)."""
 
-    def __init__(self, decide_fn: object, app: object) -> None:
+    def __init__(self, decide_fn: object, resume_fn: object, app: object) -> None:
         self._decide_fn = decide_fn
+        self._resume_fn = resume_fn
         self._app = app
 
     async def decide(self, rec: ShieldActionRecord) -> GovernanceVerdict:
         verdict: GovernanceVerdict = await self._decide_fn(self._app, rec)  # type: ignore[operator]
+        return verdict
+
+    async def resume(
+        self, incident_id: str, decision: str, payload: dict[str, object] | None
+    ) -> GovernanceVerdict:
+        verdict: GovernanceVerdict = await self._resume_fn(  # type: ignore[operator]
+            self._app, incident_id, decision, payload
+        )
         return verdict
 
 
@@ -97,7 +134,8 @@ def load_governance_app() -> GovernanceApp:
         import shield_governance as gov
 
         build_decide_app = gov.build_decide_app  # type: ignore[attr-defined]
-        decide_fn = gov.decide  # type: ignore[attr-defined]  # the seam fn
+        decide_fn = gov.decide  # type: ignore[attr-defined]  # the decide seam fn
+        resume_fn = gov.resume  # type: ignore[attr-defined]  # the HITL seam fn
     except (ImportError, AttributeError):
         return NullGovernanceApp()
-    return _GovSeamAdapter(decide_fn, build_decide_app())
+    return _GovSeamAdapter(decide_fn, resume_fn, build_decide_app())

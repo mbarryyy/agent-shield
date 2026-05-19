@@ -204,3 +204,22 @@ def test_governance_record_post_exec_acks_202(client: TestClient) -> None:
     assert body["record_id"] == rec.record_id
     assert body["seq_no"] == 1
     assert "signature_by_shield" not in body  # async post_exec: no verdict
+
+
+def test_governance_hitl_resume_route(client: TestClient) -> None:
+    ok = client.post(
+        "/v1/governance/incidents/inc-42/resume",
+        json={"decision": "accept", "payload": {"note": "approved"}},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["decision"] == "PASS"
+    assert body["correlation_id"] == "inc-42"
+    assert body["signature_by_shield"]  # server-signed
+    assert (
+        client.post(
+            "/v1/governance/incidents/inc-42/resume", json={"decision": "bogus"}
+        ).status_code
+        == 400
+    )
+    assert client.post("/v1/governance/incidents/inc-42/resume", json={}).status_code == 400

@@ -362,3 +362,37 @@ async def record(
         "chain_hash": chain_hash,
         "seq_no": next_seq,
     }
+
+
+# W3 PR-S5 — HITL resume. The LangGraph interrupt resume schema
+# (gov §3.3 / langgraph prebuilt/interrupt.py:87-105).
+RESUME_DECISIONS = ("accept", "edit", "response", "ignore")
+
+
+async def resume(
+    settings: Settings,
+    gov_app: GovernanceApp,
+    incident_id: str,
+    decision: str,
+    payload: dict[str, object] | None,
+) -> GovernanceVerdict:
+    """W3 PR-S5 — thin HITL resume gate. Server owns route+auth+validation +
+    SIGNING; governance owns the semantics (LangGraph ``Command(resume=…)``
+    re-entry of the paused incident, gov §3.3). Returns the server-signed
+    post-resume verdict."""
+    from .config import SHIELD_KID
+
+    if decision not in RESUME_DECISIONS:
+        raise AppError(
+            400,
+            "VALIDATION_ERROR",
+            f"decision must be one of {', '.join(RESUME_DECISIONS)}.",
+        )
+    started = time.perf_counter()
+    verdict = await gov_app.resume(incident_id, decision, payload)
+    verdict.served_at = _now_ms()
+    verdict.latency_ms = (time.perf_counter() - started) * 1000.0
+    verdict.shield_kid = SHIELD_KID
+    # Server owns signing (the shield-server key) — verdict arrives UNSIGNED.
+    verdict = canonical.finalize_verdict(verdict, settings.server_signing_key)
+    return verdict

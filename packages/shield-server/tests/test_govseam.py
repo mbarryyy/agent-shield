@@ -19,7 +19,8 @@ from shield_sdk.schema import (
 )
 from shield_server import agents as agent_svc
 from shield_server.config import Settings
-from shield_server.governance import decide
+from shield_server.errors import AppError
+from shield_server.governance import decide, resume
 from shield_server.govseam import NullGovernanceApp, load_governance_app
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage, build_memory_storage
@@ -107,3 +108,28 @@ async def test_server_signs_and_forces_identity_on_gov_verdict() -> None:
     log = storage.db.intervention_log  # type: ignore[attr-defined]
     assert len(log) == 1
     assert log[0]["decision"] == "BLOCK" and log[0]["record_id"] == rec.record_id
+
+
+async def test_null_resume_unsigned_stub() -> None:
+    v = await NullGovernanceApp().resume("inc-1", "accept", None)
+    assert v.decision.value == "PASS"
+    assert v.signature_by_shield is None  # UNSIGNED — server signs
+    assert v.correlation_id == "inc-1"
+    assert v.reasons[0].label == "HITL_RESUME_STUB"
+
+
+async def test_resume_signs_and_validates_decision() -> None:
+    settings = Settings.from_env()
+    v = await resume(settings, NullGovernanceApp(), "inc-9", "accept", {"note": "ok"})
+    assert v.decision.value == "PASS"
+    assert v.shield_kid == "shield-server-key-v1"
+    assert v.served_at is not None and v.latency_ms is not None
+    server_pub = crypto.get_public_key_base64url(settings.server_signing_key)
+    assert v.signature_by_shield is not None
+    assert canonical.verify_verdict(v, server_pub) is True
+
+    import pytest
+
+    with pytest.raises(AppError) as ei:
+        await resume(settings, NullGovernanceApp(), "inc-9", "not-a-decision", None)
+    assert ei.value.error_code == "VALIDATION_ERROR"
