@@ -7,8 +7,17 @@ dependencies = [
     "pydantic[email]>=2.7.1",
     "cryptography>=43.0",
     "httpx>=0.27",
-    # agentdojo: pinned at W1 to HEAD 18b501a via [tool.uv.sources] (sdk-builder + eval-builder).
+    # W2: the AgentDojo Shield elements subclass agentdojo.* — shield-sdk now
+    # depends on it directly. SAME exact pin as shield-eval (HEAD 18b501a);
+    # already resolved in uv.lock so this is a minimal lock delta.
+    "agentdojo",
 ]
+
+[tool.uv.sources]
+# AgentDojo HEAD 18b501a630db736e1d0496a496d8d7aa947c596d — the LOCKED governed
+# worker; exact-SHA git pin (reproducible on a clean CI checkout). Mirrors
+# packages/shield-eval/pyproject.toml verbatim (one shared resolved version).
+agentdojo = { git = "https://github.com/ethz-spylab/agentdojo.git", rev = "18b501a630db736e1d0496a496d8d7aa947c596d" }
 
 [build-system]
 requires = ["hatchling"]

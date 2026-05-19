@@ -2384,6 +2384,7 @@ name = "shield-sdk"
 version = "0.1.0"
 source = { editable = "packages/shield-sdk" }
 dependencies = [
+    { name = "agentdojo" },
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pydantic", extra = ["email"] },
@@ -2391,6 +2392,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentdojo", git = "https://github.com/ethz-spylab/agentdojo.git?rev=18b501a630db736e1d0496a496d8d7aa947c596d" },
     { name = "cryptography", specifier = ">=43.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.7.1" },
