@@ -103,8 +103,37 @@ CREATE TABLE IF NOT EXISTS exports (
 );
 CREATE INDEX IF NOT EXISTS idx_exports_org_status ON exports (org_id, status);
 
+-- W2: structured intervention log (master design §2.5 cost hook #3 ≡ eval §9
+-- dep #2). One server-owned write per /v1/governance/decide; tokens_in/out +
+-- model_id + served_via are populated by governance's token counter (hook #1)
+-- via the §4 record/verdict — server owns the TABLE+WRITE, not the counts.
+CREATE TABLE IF NOT EXISTS intervention_log (
+  verdict_id        TEXT    NOT NULL PRIMARY KEY,
+  record_id         TEXT    NOT NULL,
+  correlation_id    TEXT    NOT NULL,
+  run_id            TEXT,
+  decision          TEXT    NOT NULL,
+  step_index        INTEGER NOT NULL,
+  triggered_rule_id TEXT,
+  tokens_in         INTEGER NOT NULL DEFAULT 0,
+  tokens_out        INTEGER NOT NULL DEFAULT 0,
+  model_id          TEXT,
+  served_via        TEXT,
+  latency_ms        DOUBLE PRECISION,
+  created_at        BIGINT  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intervention_run ON intervention_log (run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_intervention_corr ON intervention_log (correlation_id);
+
 INSERT INTO schema_versions (version, applied_at, description)
 VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema (Elydora 001 port)')
+ON CONFLICT (version) DO NOTHING;
+INSERT INTO schema_versions (version, applied_at, description)
+VALUES (
+  2,
+  EXTRACT(EPOCH FROM NOW())::BIGINT * 1000,
+  'W2: Channel-2 intervention_log (cost hook #3)'
+)
 ON CONFLICT (version) DO NOTHING;
 """
 

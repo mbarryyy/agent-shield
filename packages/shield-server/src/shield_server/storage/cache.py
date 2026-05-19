@@ -35,3 +35,13 @@ class RedisCache:  # pragma: no cover - integration-only network glue
 
     async def set(self, key: str, value: str) -> None:
         await self._client.set(key, value)
+
+    async def ensure_group(self, stream: str, group: str) -> None:
+        try:
+            await self._client.xgroup_create(stream, group, id="0", mkstream=True)
+        except Exception as exc:  # BUSYGROUP => group already exists (idempotent)
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        return str(await self._client.xadd(stream, fields))  # type: ignore[arg-type]
