@@ -1,9 +1,65 @@
-# ShieldModelRouter — LOCAL profile (the zero-egress, air-gapped SKU, moat #7).
-# W0 STUB: shape only. governance-builder finalizes at W1. Selecting this profile
-# is the ONLY change needed for air-gapped operation (no dependency swaps).
+# ShieldModelRouter — LOCAL profile (the zero-egress, air-gapped enterprise SKU).
+#
+# Selecting this profile is the ONLY change needed for fully air-gapped
+# operation — ZERO dependency swaps (conflict-register C5 RESOLVED; commercial
+# moat #7). Every `openai_compat` role points at an in-VPC OpenAI-compatible
+# server (vLLM primary; Ollama/llama.cpp also speak this API), reachable purely
+# by the `base_url` swap. Open-weight picks: local_deployment_moat.md §2.
+#
+# Air-gap is enforced by 5 CI/lint config overrides (NOT in this file):
+# AlignmentCheck base_url->in-VPC (here), ANONYMIZED_TELEMETRY=False, Invariant
+# LocalPolicy-only import-lint, HF/Transformers offline+no-telemetry, LangSmith
+# disabled (local_deployment_moat.md §6).
 profile: local
+
 guardians:
-  defender:   { served_via: local, model: llamafirewall-promptguard2-86m }
-  evaluator:  { served_via: local, model: vllm:local-evaluator }
-  supervisor: { served_via: local, model: vllm:local-supervisor }
-  auditor:    { served_via: local, model: vllm:local-auditor }
+  # Identical to the cloud profile — Defender is always local/model-free.
+  defender:
+    provider: local
+    model: meta-llama/Llama-Prompt-Guard-2-86M
+    served_via: local
+  # Qwen2.5-32B primary (Llama-3.3-70B ceiling / Qwen2.5-14B budget) — the
+  # semantic grey-band judge; the hard detection ($30k structuring, exfil) is
+  # model-free Invariant LocalPolicy, so a mid-size model suffices.
+  evaluator:
+    provider: openai_compat
+    model: Qwen2.5-32B-Instruct
+    base_url: http://vllm.shield.svc:8000/v1
+    api_key_env: SHIELD_LLM_KEY
+    served_via: local
+    temperature: 0.0
+  # Conflict-only arbitrate() — highest reasoning bar, lowest call volume.
+  supervisor:
+    provider: openai_compat
+    model: Llama-3.3-70B-Instruct
+    base_url: http://vllm.shield.svc:8000/v1
+    api_key_env: SHIELD_LLM_KEY
+    served_via: local
+    temperature: 0.0
+  # Compliance narrative only; integrity is deterministic, not LLM.
+  auditor:
+    provider: openai_compat
+    model: Qwen2.5-7B-Instruct
+    base_url: http://vllm-small.shield.svc:8000/v1
+    api_key_env: SHIELD_LLM_KEY
+    served_via: local
+    temperature: 0.0
+
+aux_roles:
+  policy_codegen:
+    provider: openai_compat
+    model: Qwen2.5-7B-Instruct
+    base_url: http://vllm-small.shield.svc:8000/v1
+    api_key_env: SHIELD_LLM_KEY
+    served_via: local
+    temperature: 0.0
+  # AlignmentCheck repointed off the LlamaFirewall default
+  # (https://api.together.xyz/v1 — verified custom_check_scanner.py:36) to the
+  # in-VPC vLLM server. This single base_url override is air-gap action #1.
+  defender_llm_scanner:
+    provider: openai_compat
+    model: Llama-3.3-70B-Instruct
+    base_url: http://vllm.shield.svc:8000/v1
+    api_key_env: SHIELD_LLM_KEY
+    served_via: local
+    temperature: 0.0
