@@ -7,8 +7,18 @@ dependencies = [
     "shield-sdk",
     "networkx>=3.2",
     "pyyaml>=6.0.1",
-    # W1 (governance-builder, §5b-pinned): langgraph>=0.2, langgraph-checkpoint-postgres>=2.0,
-    # chromadb>=0.5, llamafirewall (Meta PurpleLlama, MIT), invariant-ai==<exact-pin> (LocalPolicy only).
+    # W2/W3 heavy frameworks — pins §5b-verified first-hand against Related_Work
+    # clones on 2026-05-19, ACTIVATED when the live graph lands (no live graph at
+    # W1, so these stay deferred and uv.lock is untouched this PR):
+    #   langgraph>=1.2            (verified langgraph/libs/langgraph/pyproject.toml
+    #                              version = "1.2.0"; MIT langgraph/LICENSE:1)
+    #   langgraph-checkpoint-postgres   (HITL interrupt() + time-travel rollback)
+    #   chromadb>=0.5            (Apache-2.0; ANONYMIZED_TELEMETRY=False air-gap)
+    #   llamafirewall            (Meta PurpleLlama framework MIT — verified
+    #                              PurpleLlama/LlamaFirewall/LICENSE:1)
+    #   invariant-ai==0.3.5      (verified invariant/pyproject.toml version=0.3.5;
+    #                              Apache-2.0 invariant/LICENSE:1; LocalPolicy ONLY
+    #                              — bare Policy/RemotePolicy banned by import-lint)
 ]
 
 [tool.uv.sources]

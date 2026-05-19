@@ -1,10 +1,54 @@
-# ShieldModelRouter — CLOUD profile (the demo default).
-# W0 STUB: shape only. governance-builder finalizes at W1.
+# ShieldModelRouter — CLOUD profile (the hardware-light demo default).
+#
 # Swapping this file for models.local.yaml turns the demo into the zero-egress
-# air-gapped SKU with ZERO dependency replacement (C5 RESOLVED, moat #7).
+# air-gapped enterprise SKU with ZERO dependency replacement (conflict-register
+# C5 RESOLVED; commercial moat #7). The guardian-node code is byte-identical
+# across both profiles — only this config differs.
+#
+# Per-role picks: governance_design.md §7 + local_deployment_moat.md §2.
+# `served_via` feeds GovernanceVerdict.reasons[].served_via (master design §2.5
+# cost hook #2) so $/action uses the correct price (cloud token price vs $0
+# marginal in-VPC).
 profile: cloud
+
+# The 4 guardian roles (this key set is frozen — the one-YAML-swap invariant
+# is asserted against it in tests).
 guardians:
-  defender:   { served_via: local,  model: llamafirewall-promptguard2-86m }
-  evaluator:  { served_via: cloud,  model: claude-sonnet }
-  supervisor: { served_via: cloud,  model: claude-opus }
-  auditor:    { served_via: cloud,  model: claude-haiku }
+  # Defender hot path is model-free / local classifier in BOTH profiles
+  # (PromptGuard2-86M local 86M DeBERTa; Regex/HiddenASCII/CodeShield
+  # model-free; deterministic caps + Invariant LocalPolicy = no model). Never
+  # cloud.
+  defender:
+    provider: local
+    model: meta-llama/Llama-Prompt-Guard-2-86M
+    served_via: local
+  evaluator:
+    provider: anthropic
+    model: claude-sonnet-4
+    served_via: cloud
+    temperature: 0.0
+  supervisor:
+    provider: anthropic
+    model: claude-opus-4
+    served_via: cloud
+    temperature: 0.0
+  auditor:
+    provider: anthropic
+    model: claude-haiku-4
+    served_via: cloud
+    temperature: 0.0
+
+# Non-guardian LLM roles routed through the same seam.
+aux_roles:
+  # Defender's cached NL-policy -> Python-predicate codegen (GuardAgent
+  # technique, re-implemented training-free; cached per policy-hash).
+  policy_codegen:
+    provider: anthropic
+    model: claude-haiku-4
+    served_via: cloud
+    temperature: 0.0
+  # LlamaFirewall AlignmentCheck — the only model-using scanner. Disabled in
+  # the cloud demo (Defender hot path is already model-free; AlignmentCheck is
+  # an optional async Evaluator grey-band tool — local_deployment_moat.md §6).
+  defender_llm_scanner:
+    enabled: false
