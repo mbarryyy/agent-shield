@@ -19,6 +19,7 @@ from shield_sdk.schema import GovernanceVerdict  # frozen §4 type, imported not
 from ._crypto import CryptoProvider, ShieldSdkCrypto
 from .config import PROTOCOL_VERSION, Settings
 from .errors import AppError, app_error_handler
+from .govseam import GovernanceApp, load_governance_app
 from .routes import router
 from .storage import Storage, build_storage
 
@@ -28,6 +29,7 @@ def create_app(
     storage: Storage | None = None,
     crypto: CryptoProvider | None = None,
     settings: Settings | None = None,
+    governance: GovernanceApp | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
 
@@ -35,6 +37,8 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not hasattr(app.state, "storage"):  # pragma: no cover - real infra path
             app.state.storage = await build_storage(settings)
+        if not hasattr(app.state, "governance"):  # pre-warm ONCE (master §1.2/§2.3)
+            app.state.governance = load_governance_app()
         yield
 
     app = FastAPI(title="Agent Shield Server", version="1.0", lifespan=lifespan)
@@ -42,6 +46,8 @@ def create_app(
     app.state.crypto = crypto or ShieldSdkCrypto()
     if storage is not None:
         app.state.storage = storage
+    if governance is not None:
+        app.state.governance = governance
 
     app.add_middleware(
         CORSMiddleware,
