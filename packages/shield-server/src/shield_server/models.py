@@ -309,3 +309,25 @@ class ProvenanceGraph(BaseModel):
     run_id: str
     nodes: list[ProvenanceNode]
     edges: list[ProvenanceEdge]
+
+
+# --- W3 PR-S4: hook#5 GET /v1/governance/runs/{run_id}/cost — the LOCKED
+# seam-4 shape (eval OWNS the money-shot artifact schema; this MIRRORS it
+# byte-for-byte: single source). Pure READ-rollup of the W2 intervention_log
+# SINK + the PR-S2 governance_verdicts.prevented_loss store — ZERO server
+# token re-count / $ synthesis. $cost/BCR stay OUT (eval/commercial-owned).
+
+
+class CostTokens(BaseModel):
+    prompt: int
+    completion: int
+    total: int
+
+
+class CostRollup(BaseModel):
+    tokens: CostTokens
+    # ALL 6 §4 Decision keys ALWAYS present (0 if none) — stable demo KPI shape.
+    decision_mix: dict[str, int]
+    prevented_loss_total: float  # USD; Σ obligations.prevented_loss (MEASURED)
+    latency_p50_ms: float
+    latency_p95_ms: float

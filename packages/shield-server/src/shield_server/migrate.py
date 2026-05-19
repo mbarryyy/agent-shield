@@ -150,6 +150,10 @@ CREATE TABLE IF NOT EXISTS governance_verdicts (
   decision        TEXT    NOT NULL,
   risk_score      DOUBLE PRECISION NOT NULL DEFAULT 0,
   latency_ms      DOUBLE PRECISION,
+  -- W3 PR-S4 (hook#5 /cost): server stores the value gov/sdk put in the §4
+  -- GovernanceVerdict.obligations.prevented_loss (the MEASURED AgentDojo
+  -- env-diff). /cost is a pure READ-rollup of this — NO server recompute.
+  prevented_loss  DOUBLE PRECISION NOT NULL DEFAULT 0,
   r2_verdict_key  TEXT    NOT NULL,
   created_at      BIGINT  NOT NULL
 );

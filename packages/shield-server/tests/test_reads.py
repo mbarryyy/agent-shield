@@ -204,3 +204,98 @@ def test_verdict_not_found_http(client: TestClient) -> None:
     r = client.get("/v1/governance/verdicts/missing")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
+class _FakeGovPrevented:
+    """gov stand-in: UNSIGNED BLOCK carrying the MEASURED env-diff
+    prevented_loss (the money-shot $30k); server stores, /cost reads it."""
+
+    async def decide(self, rec):  # type: ignore[no-untyped-def]
+        from shield_sdk.schema import (
+            Decision,
+            GovernanceVerdict,
+            Obligations,
+        )
+
+        return GovernanceVerdict(
+            record_id=rec.record_id,
+            correlation_id=rec.correlation_id,
+            run_id=rec.run_id,
+            decision=Decision.BLOCK,
+            risk_score=0.93,
+            obligations=Obligations(prevented_loss=30000.0),
+        )
+
+
+async def test_cost_rollup_locked_shape(storage: Storage, settings: Settings) -> None:
+    await _register(storage)
+    prev = "A" * 43
+    for i in range(2):
+        r = _rec(phase=Phase.PRE_EXEC, prev=prev, nonce=f"c{i}aaaaaaaaaaaaaaaaaaaa")
+        v = await decide(storage, r, settings, _FakeGovPrevented())  # type: ignore[arg-type]
+        op = await storage.db.fetchrow(
+            "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+            v.record_id,
+            ORG,
+        )
+        prev = str(op["chain_hash"])
+
+    c = await reads_svc.cost(storage, ORG, "run-0001")
+    # Exact LOCKED seam-4 shape.
+    assert c.tokens.prompt == 0 and c.tokens.completion == 0 and c.tokens.total == 0
+    assert set(c.decision_mix) == {"PASS", "ALERT", "BLOCK", "ESCALATE", "ROLLBACK", "REWRITE"}
+    assert c.decision_mix["BLOCK"] == 2 and c.decision_mix["PASS"] == 0
+    # Σ of the STORED §4 obligations.prevented_loss (MEASURED; no recompute).
+    assert c.prevented_loss_total == 60000.0
+    assert isinstance(c.latency_p50_ms, float)
+    assert isinstance(c.latency_p95_ms, float)
+    # org-scoped
+    empty = await reads_svc.cost(storage, "other-org", "run-0001")
+    assert empty.decision_mix["BLOCK"] == 0 and empty.prevented_loss_total == 0.0
+
+
+def test_cost_http_locked_pact(client: TestClient) -> None:
+    import shield_sdk.canonical as c
+    import shield_sdk.crypto as k
+    from shield_sdk.schema import ShieldActionRecord as SAR
+
+    pub = k.get_public_key_base64url(PRIV)
+    client.post(
+        "/v1/agents/register",
+        json={"agent_id": AGENT, "keys": [{"kid": KID, "public_key": pub}]},
+    )
+    rec = SAR(
+        org_id=ORG,
+        agent_id=AGENT,
+        agent_pubkey_kid=KID,
+        phase="pre_exec",
+        run_id="run-cost",
+    )
+    rec.payload.tool_name = "send_money"
+    rec = c.finalize_record(rec, PRIV)
+    assert client.post("/v1/governance/decide", json=rec.model_dump(mode="json")).status_code == 200
+
+    r = client.get("/v1/governance/runs/run-cost/cost")
+    assert r.status_code == 200
+    body = r.json()
+    # Byte-for-byte LOCKED seam-4 key contract (eval mirrors this exact shape).
+    assert set(body) == {
+        "tokens",
+        "decision_mix",
+        "prevented_loss_total",
+        "latency_p50_ms",
+        "latency_p95_ms",
+    }
+    assert set(body["tokens"]) == {"prompt", "completion", "total"}
+    assert set(body["decision_mix"]) == {
+        "PASS",
+        "ALERT",
+        "BLOCK",
+        "ESCALATE",
+        "ROLLBACK",
+        "REWRITE",
+    }
+    assert body["decision_mix"]["PASS"] == 1
+    assert isinstance(body["prevented_loss_total"], (int, float))
+    assert isinstance(body["latency_p50_ms"], (int, float))
+    assert isinstance(body["latency_p95_ms"], (int, float))

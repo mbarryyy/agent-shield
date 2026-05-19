@@ -17,10 +17,14 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+from shield_sdk.schema import Decision
+
 from .audit import decode_cursor, encode_cursor
 from .config import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 from .errors import AppError
 from .models import (
+    CostRollup,
+    CostTokens,
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
@@ -37,6 +41,15 @@ def _i(x: object) -> int:
 
 def _f(x: object) -> float:
     return float(cast(float, x))
+
+
+def _pct(values: list[float], q: float) -> float:
+    """Nearest-rank percentile (q in [0,1]); 0.0 for an empty sample."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    idx = max(0, min(len(s) - 1, int(round(q * (len(s) - 1)))))
+    return float(s[idx])
 
 
 async def _load_json(storage: Storage, key: str | None) -> dict[str, Any] | None:
@@ -175,3 +188,38 @@ async def provenance(storage: Storage, org_id: str, run_id: str) -> ProvenanceGr
                 ProvenanceEdge(src=pair["pre_exec"], dst=pair["post_exec"], kind="correlation")
             )
     return ProvenanceGraph(run_id=run_id, nodes=nodes, edges=edges)
+
+
+async def cost(storage: Storage, org_id: str, run_id: str) -> CostRollup:
+    """W3 PR-S4 hook#5 — the LOCKED seam-4 /cost rollup. Pure READ-aggregation
+    of server-owned stores: tokens/decision_mix/latency from the W2
+    intervention_log SINK (gov-populated hook#1 counts — server NEVER
+    re-counts), prevented_loss_total = Σ the stored §4
+    obligations.prevented_loss (the MEASURED env-diff — NO server recompute).
+    Org-safe scoping via governance_verdicts (org_id+run_id) → verdict_ids."""
+    gv = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    scoped_gv = [r for r in gv if r["org_id"] == org_id and r.get("run_id") == run_id]
+    verdict_ids = {str(r["verdict_id"]) for r in scoped_gv}
+
+    il = await storage.db.fetch("SELECT * FROM intervention_log")
+    rows = [r for r in il if str(r["verdict_id"]) in verdict_ids]
+
+    prompt = sum(_i(r.get("tokens_in") or 0) for r in rows)
+    completion = sum(_i(r.get("tokens_out") or 0) for r in rows)
+
+    mix: dict[str, int] = {d.value: 0 for d in Decision}  # all 6 keys, 0 default
+    for r in rows:
+        key = str(r["decision"])
+        if key in mix:
+            mix[key] += 1
+
+    latencies = [_f(r["latency_ms"]) for r in rows if r.get("latency_ms") is not None]
+    prevented = sum(_f(r.get("prevented_loss") or 0.0) for r in scoped_gv)
+
+    return CostRollup(
+        tokens=CostTokens(prompt=prompt, completion=completion, total=prompt + completion),
+        decision_mix=mix,
+        prevented_loss_total=float(prevented),
+        latency_p50_ms=_pct(latencies, 0.50),
+        latency_p95_ms=_pct(latencies, 0.95),
+    )

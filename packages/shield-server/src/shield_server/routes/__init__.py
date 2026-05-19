@@ -29,6 +29,7 @@ from ..config import ACTIONS_STREAM_PREFIX, VERDICTS_STREAM_PREFIX
 from ..errors import AppError
 from ..models import (
     AuditQueryRequest,
+    CostRollup,
     CreateExportResponseModel,
     ExportModel,
     FreezeAgentRequest,
@@ -217,6 +218,13 @@ async def governance_verdict(correlation_id: str, request: Request, ctx: Ctx) ->
 @router.get("/v1/governance/runs/{run_id}/provenance")
 async def governance_provenance(run_id: str, request: Request, ctx: Ctx) -> ProvenanceGraph:
     return await reads_svc.provenance(get_storage(request), ctx.org_id, run_id)
+
+
+@router.get("/v1/governance/runs/{run_id}/cost")
+async def governance_cost(run_id: str, request: Request, ctx: Ctx) -> CostRollup:
+    """hook#5 — LOCKED seam-4 /cost rollup (READ-agg of intervention_log SINK
+    + stored §4 prevented_loss; zero server token re-count / $ synthesis)."""
+    return await reads_svc.cost(get_storage(request), ctx.org_id, run_id)
 
 
 def _sse(event: str, data: str) -> str:

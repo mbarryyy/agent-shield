@@ -131,6 +131,8 @@ class MemoryDatabase:
         # Only used by audit.query_audit, which sorts/filters in Python.
         if "FROM governance_verdicts" in sql:
             return [dict(v) for v in self.governance_verdicts.values()]
+        if "FROM intervention_log" in sql:
+            return [dict(r) for r in self.intervention_log]
         if "FROM operations" in sql:
             return [dict(o) for o in self.operations.values()]
         if "FROM agent_keys" in sql:
@@ -242,6 +244,7 @@ class MemoryDatabase:
                 "decision",
                 "risk_score",
                 "latency_ms",
+                "prevented_loss",
                 "r2_verdict_key",
                 "created_at",
             ]
