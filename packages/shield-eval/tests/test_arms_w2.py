@@ -27,14 +27,17 @@ def test_decide_mode_override() -> None:
     assert a2.decide_mode == "http"
 
 
-def test_shield_build_skips_until_sdk_w2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shield elements are sdk-builder's module; absent from main until sdk-w2.
-    Arm.build must raise ArmUnavailable (SKIP-not-fake), naming the dependency."""
+def test_shield_build_skips_without_wiring() -> None:
+    """Post sdk-w2 merge the canonical Shield API resolves; with no
+    ``ShieldClient`` wiring (offline unit test — no --decide-url/--shield-agent
+    -key) ``Arm.build`` still SKIPs (never fakes) via ``ArmUnavailable``.
+    SKIP-not-fake is intact; only the guard that fires changed (canonical
+    import now succeeds → falls through to the wiring-not-configured guard)."""
     a2 = resolve_arms(["A2"])[0]
     with pytest.raises(ArmUnavailable) as ei:
         a2.build(MockedLLM(name="mocked-x"), mock=True)
     msg = str(ei.value)
-    assert "A2" in msg and ("sdk-w2" in msg or "shield_sdk.instrument.agentdojo" in msg)
+    assert "A2" in msg and ("wiring not configured" in msg or "SKIP, never faked" in msg)
 
 
 def test_native_arms_unaffected_by_w2() -> None:
