@@ -127,15 +127,24 @@ def load_governance_app() -> GovernanceApp:
     """Pre-warm the real gov app if its converged surface is importable; else
     the honest Null default. Optional runtime import — NOT a shield-server
     pyproject dep (keeps server independently buildable; gov is a workspace
-    member so it imports in CI/integration once Task #21 lands the surface).
-    ``(ImportError, AttributeError)`` = "gov not ready yet" → Null; any other
-    exception propagates (a real gov-import bug must surface, not be hidden)."""
+    member so it imports in CI/integration once gov W3 lands the surface).
+
+    Symbol resolution is STATE-ROBUST: ``getattr(gov, name, None)`` is
+    statically ``Any`` regardless of whether ``shield_governance`` exports the
+    seam fns yet, so this is mypy-clean BOTH when gov-W3 is absent (no
+    ``build_decide_app``/``decide``/``resume`` → None → honest Null) AND when
+    gov-W3 is present (real callables → adapter) — with NO ``# type: ignore``
+    here, so ``warn_unused_ignores`` cannot go red as the cascade advances
+    (this is exactly the W3-cascade-red root cause being removed). The
+    3-fn-presence requirement, honest-Null fallback and ``_GovSeamAdapter``
+    semantics are preserved unchanged."""
     try:
         import shield_governance as gov
-
-        build_decide_app = gov.build_decide_app  # type: ignore[attr-defined]
-        decide_fn = gov.decide  # type: ignore[attr-defined]  # the decide seam fn
-        resume_fn = gov.resume  # type: ignore[attr-defined]  # the HITL seam fn
-    except (ImportError, AttributeError):
+    except ImportError:
         return NullGovernanceApp()
+    build_decide_app = getattr(gov, "build_decide_app", None)
+    decide_fn = getattr(gov, "decide", None)
+    resume_fn = getattr(gov, "resume", None)
+    if build_decide_app is None or decide_fn is None or resume_fn is None:
+        return NullGovernanceApp()  # gov W3 seam not exported yet → honest Null
     return _GovSeamAdapter(decide_fn, resume_fn, build_decide_app())
