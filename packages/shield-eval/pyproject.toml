@@ -7,11 +7,19 @@ dependencies = [
     "shield-sdk",
     "click>=8.1.7",
     "rich>=13.7.1",
-    # W1 (eval-builder, §5b-pinned): agentdojo @ HEAD 18b501a via [tool.uv.sources].
+    # §5b: AgentDojo is the LOCKED governed worker AND eval harness, pinned to
+    # the exact HEAD 18b501a (see [tool.uv.sources]). A git+rev source (not a
+    # local path) keeps it reproducible on a clean CI checkout — Related_Work/
+    # is git-ignored and out of this public repo.
+    "agentdojo",
 ]
 
 [tool.uv.sources]
 shield-sdk = { workspace = true }
+# AgentDojo HEAD 18b501a630db736e1d0496a496d8d7aa947c596d ("Improve Stability
+# (#136)") — independently re-verified via `git ls-remote` against the public
+# ethz-spylab/agentdojo. Full-SHA pin = reproducible even if HEAD advances.
+agentdojo = { git = "https://github.com/ethz-spylab/agentdojo.git", rev = "18b501a630db736e1d0496a496d8d7aa947c596d" }
 
 [build-system]
 requires = ["hatchling"]
