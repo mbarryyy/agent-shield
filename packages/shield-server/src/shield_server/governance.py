@@ -42,6 +42,7 @@ from .config import (
     MAX_PAYLOAD_SIZE,
     MAX_TTL_MS,
     MIN_TTL_MS,
+    VERDICTS_STREAM_PREFIX,
     Settings,
 )
 from .errors import AppError
@@ -223,6 +224,31 @@ async def _fan_channel2(
     await storage.cache.set(f"chain:{rec.agent_id}:latest", chain_hash)
 
 
+async def _fan_verdicts(
+    storage: Storage, rec: ShieldActionRecord, verdict: GovernanceVerdict
+) -> None:
+    """W3 PR-S3 — Channel-2 `shield:verdicts:{workflow_id}` producer. The
+    server OWNS this producer side (as with `shield:actions`); gov emits late
+    async outcomes on, and the console SSE renders, THIS exact LOCKED FLAT
+    8-field envelope (str values, decode_responses=True) — no re-guessing."""
+    stream = f"{VERDICTS_STREAM_PREFIX}:{rec.workflow_id}"
+    for group in CONSUMER_GROUPS:
+        await storage.cache.ensure_group(stream, group)
+    await storage.cache.xadd(
+        stream,
+        {
+            "verdict_id": verdict.verdict_id,
+            "record_id": rec.record_id,
+            "correlation_id": rec.correlation_id,
+            "run_id": rec.run_id,
+            "decision": verdict.decision.value,
+            "risk_score": str(verdict.risk_score),
+            "phase": rec.phase.value,
+            "verdict": verdict.model_dump_json(),
+        },
+    )
+
+
 async def decide(
     storage: Storage,
     rec: ShieldActionRecord,
@@ -308,6 +334,7 @@ async def decide(
         )
 
     await _fan_channel2(storage, rec, chain_hash, next_seq, verdict.verdict_id)
+    await _fan_verdicts(storage, rec, verdict)  # W3 PR-S3 Channel-2 verdicts
     return verdict
 
 
