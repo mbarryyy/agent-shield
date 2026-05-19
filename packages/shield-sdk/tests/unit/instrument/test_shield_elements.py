@@ -332,8 +332,20 @@ def test_shield_client_decide_and_submit_roundtrip() -> None:
     respx.post("http://srv/v1/governance/decide").mock(
         return_value=httpx.Response(200, json=verdict.model_dump(mode="json"))
     )
-    respx.post("http://srv/v1/operations").mock(return_value=httpx.Response(200))
+    # post_exec route confirmed by server-builder: /v1/governance/record -> 202
+    # ack {record_id, chain_hash, seq_no, accepted} (no verdict).
+    respx.post("http://srv/v1/governance/record").mock(
+        return_value=httpx.Response(
+            202,
+            json={
+                "record_id": "r1",
+                "chain_hash": "h",
+                "seq_no": 1,
+                "accepted": True,
+            },
+        )
+    )
     with ShieldClient("http://srv") as c:
         got = c.decide(rec)
         assert got.decision is Decision.PASS
-        c.submit(rec)  # no raise == Channel-2 accepted
+        c.submit(rec)  # no raise == Channel-2 accepted (202)
