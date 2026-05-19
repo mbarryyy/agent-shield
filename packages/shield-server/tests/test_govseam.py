@@ -8,6 +8,10 @@ PASS, explicitly a staged stub) until gov Task #21 lands.
 
 from __future__ import annotations
 
+import sys
+import types
+
+import pytest
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
 from shield_sdk.schema import (
@@ -21,7 +25,11 @@ from shield_server import agents as agent_svc
 from shield_server.config import Settings
 from shield_server.errors import AppError
 from shield_server.governance import decide, resume
-from shield_server.govseam import NullGovernanceApp, load_governance_app
+from shield_server.govseam import (
+    NullGovernanceApp,
+    _GovSeamAdapter,
+    load_governance_app,
+)
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage, build_memory_storage
 
@@ -44,10 +52,49 @@ async def test_null_gov_app_returns_unsigned_pass() -> None:
     assert v.record_id == rec.record_id
 
 
-def test_loader_falls_back_to_null_when_gov_surface_absent() -> None:
-    # gov Task #21 hasn't shipped build_decide_app/decide yet → honest Null.
+def test_loader_falls_back_to_null_when_gov_surface_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # State-robust: deterministically exercise the gov-ABSENT Null-fallback
+    # branch regardless of whether shield_governance (gov W3) is present in the
+    # workspace. Binding sys.modules[name]=None makes `import name` raise
+    # ImportError (CPython import-machinery contract), which
+    # load_governance_app() catches → the honest NullGovernanceApp default.
+    #
+    # Was premised on "gov Task #21 hasn't shipped build_decide_app/decide
+    # yet"; gov-W3 ships that surface, so the *ambient* loader now correctly
+    # returns a _GovSeamAdapter. Simulating the precondition restores
+    # determinism (same spirit as the Task #25 govseam.py state-robust
+    # hotfix) while STILL genuinely guarding the Null-fallback branch —
+    # coverage is not weakened.
+    monkeypatch.setitem(sys.modules, "shield_governance", None)
     app = load_governance_app()
     assert isinstance(app, NullGovernanceApp)
+
+
+def test_loader_returns_adapter_when_gov_surface_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # State-robust counterpart: SIMULATE the converged gov-W3 surface (Task #21
+    # landing build_decide_app/decide/resume) via an injected stub module, so
+    # the real _GovSeamAdapter wiring path is exercised deterministically
+    # whether or not gov-W3 is present in the workspace.
+    fake = types.ModuleType("shield_governance")
+
+    async def _decide(app: object, rec: object) -> object:  # pragma: no cover
+        raise AssertionError("loader must not invoke decide")
+
+    async def _resume(
+        app: object, incident_id: str, decision: str, payload: object
+    ) -> object:  # pragma: no cover
+        raise AssertionError("loader must not invoke resume")
+
+    fake.build_decide_app = lambda: object()
+    fake.decide = _decide
+    fake.resume = _resume
+    monkeypatch.setitem(sys.modules, "shield_governance", fake)
+    app = load_governance_app()
+    assert isinstance(app, _GovSeamAdapter)
 
 
 class _FakeBlockGov:
@@ -128,8 +175,6 @@ async def test_resume_signs_and_validates_decision() -> None:
     server_pub = crypto.get_public_key_base64url(settings.server_signing_key)
     assert v.signature_by_shield is not None
     assert canonical.verify_verdict(v, server_pub) is True
-
-    import pytest
 
     with pytest.raises(AppError) as ei:
         await resume(storage, settings, NullGovernanceApp(), "inc-9", "not-a-decision", None)
