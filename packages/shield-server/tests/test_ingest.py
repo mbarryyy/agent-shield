@@ -7,7 +7,7 @@ import time
 
 import pytest
 from shield_server import agents as agent_svc
-from shield_server._b64 import b64url_decode, b64url_encode
+from shield_server._b64 import b64url_encode
 from shield_server.errors import AppError
 from shield_server.ingest import _signable, get_operation, submit_operation, verify_operation
 from shield_server.models import OperationRecord, RegisterAgentRequest
@@ -54,8 +54,8 @@ def _record(
     fields.update(over)
     rec = OperationRecord(**fields)  # type: ignore[arg-type]
     if signed:
-        msg = crypto.canonical(_signable(rec))
-        rec.signature = fake_signature(b64url_decode(PUBKEY), msg)
+        sig_string = crypto.canonical(_signable(rec))
+        rec.signature = fake_signature(PUBKEY, sig_string.encode("utf-8"))
     return rec
 
 
@@ -225,4 +225,4 @@ async def test_verify_detects_tampered_chain(storage: Storage, crypto: FakeCrypt
 async def test_signable_excludes_signature(crypto: FakeCrypto) -> None:
     rec = _record(crypto, prev="A" * 43)
     assert "signature" not in _signable(rec)
-    assert json.loads(crypto.canonical(_signable(rec)).decode())["op_version"] == "1.0"
+    assert json.loads(crypto.canonical(_signable(rec)))["op_version"] == "1.0"

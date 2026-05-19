@@ -32,16 +32,19 @@ def test_genesis_is_frozen_no_pad() -> None:
     assert GENESIS_CHAIN_HASH == "A" * 43 and "=" not in GENESIS_CHAIN_HASH
 
 
-def test_crypto_frozen_false_until_sdk_builder() -> None:
-    # W1 hard dependency: shield_sdk.crypto is the W0 stub until Task #2 freezes.
-    assert crypto_frozen() is False
+def test_crypto_frozen_and_chain_hash_matches_golden() -> None:
+    # POST-v1.1 rebase: shield_sdk.crypto is byte-exact on main -> frozen True,
+    # and chain_hash takes issued_at as INT unix-ms (no str() coercion). Pinned
+    # to contracts/golden/vectors.json chain_hash[0].
+    assert crypto_frozen() is True
     sdk = ShieldSdkCrypto()
-    try:
-        sdk.chain_hash("p", "h", "o", 1)
-    except NotImplementedError:
-        pass
-    else:  # pragma: no cover - only once sdk-builder lands the real port
-        raise AssertionError("crypto unexpectedly implemented in this worktree")
+    got = sdk.chain_hash(
+        "A" * 43,
+        "u7j9Bqiba5NFxcGzpHlri1IGIF2lnl6kVlgn4nMhsgU",
+        "0193aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+        1747526400000,
+    )
+    assert got == "2OxyLR10CXKdX5fWpRI_ELMjw9BP4xkTYgnnmk_3sQ4"
 
 
 def test_error_response_shape() -> None:

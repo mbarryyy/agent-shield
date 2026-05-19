@@ -15,7 +15,6 @@ import json
 import time
 from typing import cast
 
-from ._b64 import b64url_decode
 from ._crypto import GENESIS_CHAIN_HASH, CryptoProvider
 from ._ids import generate_uuid7
 from .config import (
@@ -80,23 +79,14 @@ def validate_record_fields(rec: OperationRecord, received_at: int) -> None:
 
 
 def _signable(rec: OperationRecord) -> dict[str, object]:
-    """buildSignableEOR (operation-service.ts:553-570) — excludes `signature`."""
-    return {
-        "op_version": rec.op_version,
-        "operation_id": rec.operation_id,
-        "org_id": rec.org_id,
-        "agent_id": rec.agent_id,
-        "issued_at": rec.issued_at,
-        "ttl_ms": rec.ttl_ms,
-        "nonce": rec.nonce,
-        "operation_type": rec.operation_type,
-        "subject": rec.subject,
-        "action": rec.action,
-        "payload": rec.payload,
-        "payload_hash": rec.payload_hash,
-        "prev_chain_hash": rec.prev_chain_hash,
-        "agent_pubkey_kid": rec.agent_pubkey_kid,
-    }
+    """The exact EOR signable dict — BYTE-PARITY with the frozen
+    ``shield_sdk.crypto.sign_eor`` rule (= the EOR dict minus the ``signature``
+    key). ``model_dump(mode="json")`` reproduces all Elydora EOR fields incl.
+    present-null (Elydora EOR keeps ``payload: null``), so JCS over this is
+    byte-identical to ``sign_eor`` and to Elydora ``buildSignableEOR``
+    (operation-service.ts:553-570). Pinned by the ``sign_eor`` golden vector.
+    No projection is re-derived: it is delegated to the frozen primitive."""
+    return {k: v for k, v in rec.model_dump(mode="json").items() if k != "signature"}
 
 
 async def submit_operation(
@@ -143,10 +133,11 @@ async def submit_operation(
     if agent_key["status"] == "retired":
         raise AppError(403, "KEY_REVOKED", "The signing key is retired.")
 
-    # Step 5 — verify Ed25519 over JCS(signable record).
-    message = crypto.canonical(_signable(rec))
-    public_key = b64url_decode(str(agent_key["public_key"]))
-    if not crypto.verify_ed25519(public_key, message, rec.signature):
+    # Step 5 — verify Ed25519 over JCS(signable EOR). public_key is the stored
+    # base64url string (frozen verify_ed25519 takes the b64url key, not bytes).
+    signing_string = crypto.canonical(_signable(rec))
+    public_key_b64url = str(agent_key["public_key"])
+    if not crypto.verify_ed25519(public_key_b64url, signing_string.encode("utf-8"), rec.signature):
         raise AppError(400, "INVALID_SIGNATURE")
 
     # Step 6 — prev_chain_hash must equal the agent's latest stored chain_hash.
@@ -216,9 +207,9 @@ async def submit_operation(
         "queue_message_id": queue_message_id,
     }
     receipt_hash = crypto.receipt_hash(receipt_fields)
-    elydora_signature = crypto.sign_ed25519(
-        b64url_decode(server_signing_key), receipt_hash.encode("utf-8")
-    )
+    # server_signing_key is the base64url Ed25519 seed (frozen sign_ed25519
+    # takes the b64url string, not raw bytes).
+    elydora_signature = crypto.sign_ed25519(server_signing_key, receipt_hash.encode("utf-8"))
     ear = EAR(
         receipt_version="1.0",
         receipt_id=receipt_id,
@@ -348,8 +339,8 @@ async def verify_operation(
     )
     if agent_key is not None:
         sig_ok = crypto.verify_ed25519(
-            b64url_decode(str(agent_key["public_key"])),
-            crypto.canonical(_signable(rec)),
+            str(agent_key["public_key"]),
+            crypto.canonical(_signable(rec)).encode("utf-8"),
             rec.signature,
         )
         if not sig_ok:
