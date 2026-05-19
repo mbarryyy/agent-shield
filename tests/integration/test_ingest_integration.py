@@ -70,24 +70,27 @@ def _record(agent_id: str, **over: object) -> OperationRecord:
     return OperationRecord(**fields)  # type: ignore[arg-type]
 
 
-async def _register(storage: Storage) -> str:
+async def _register(storage: Storage) -> tuple[str, str]:
+    # Elydora `agent_keys.kid` is a GLOBAL primary key (migrations/001_initial.sql),
+    # so every registration in the shared integration DB needs a unique kid.
     agent_id = _uid("agentdojo-banking")
+    kid = _uid("k")
     await agent_svc.register_agent(
         storage,
         RegisterAgentRequest(
             agent_id=agent_id,
-            keys=[{"kid": "k1", "public_key": "AAAA"}],  # type: ignore[list-item]
+            keys=[{"kid": kid, "public_key": "AAAA"}],  # type: ignore[list-item]
         ),
         ORG,
     )
-    return agent_id
+    return agent_id, kid
 
 
 async def test_agent_round_trip_real_postgres(storage: Storage) -> None:
-    agent_id = await _register(storage)
+    agent_id, kid = await _register(storage)
     got = await agent_svc.get_agent(storage, agent_id, ORG)
     assert got.agent.agent_id == agent_id
-    assert got.keys[0].kid == "k1"
+    assert got.keys[0].kid == kid
 
 
 async def test_minio_object_round_trip(storage: Storage) -> None:
@@ -105,7 +108,7 @@ async def test_redis_replay_primitive(storage: Storage) -> None:
 
 
 async def test_validation_gate_runs_pre_crypto(storage: Storage) -> None:
-    agent_id = await _register(storage)
+    agent_id, _kid = await _register(storage)
     bad = _record(agent_id, op_version="9.9")
     with pytest.raises(AppError) as ei:
         await submit_operation(storage, ShieldSdkCrypto(), bad, "A" * 43)
@@ -136,16 +139,17 @@ async def test_full_12_step_ingest_with_real_crypto(storage: Storage) -> None:
 
     crypto = ShieldSdkCrypto()
     agent_id = _uid("agentdojo-banking")
+    kid = _uid("k")
     pubkey = b64url_encode(b"\x01" * 32)
     await agent_svc.register_agent(
         storage,
         RegisterAgentRequest(
             agent_id=agent_id,
-            keys=[{"kid": "k1", "public_key": pubkey}],  # type: ignore[list-item]
+            keys=[{"kid": kid, "public_key": pubkey}],  # type: ignore[list-item]
         ),
         ORG,
     )
-    rec = _record(agent_id)
+    rec = _record(agent_id, agent_pubkey_kid=kid)
     # Once crypto is frozen, sign the signable projection with the real port.
     from shield_server.ingest import _signable
 
