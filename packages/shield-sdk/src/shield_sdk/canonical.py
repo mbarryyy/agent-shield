@@ -142,6 +142,23 @@ def verify_record(record: ShieldActionRecord, public_key_base64url: str) -> bool
     )
 
 
+def verify_ingest(record: ShieldActionRecord, public_key_base64url: str) -> bool:
+    """Server-side single ingest call-site — a PURE pass-through to
+    ``verify_record`` (W3 U3 / HG#1 byte-parity).
+
+    This function adds ZERO independent verification logic: it returns exactly
+    ``verify_record(record, public_key_base64url)``. shield-server's real
+    ``/v1/governance/decide`` (and ``/v1/governance/record``) 12-step ingest
+    can call this single name and is byte-identical to the SDK's own signature
+    check by construction — there is no second implementation to drift. The
+    contract test ``test_verify_ingest_is_pure_passthrough`` pins
+    ``verify_ingest`` ≡ ``verify_record`` over the golden vectors + property
+    inputs; if that equivalence ever cannot be guaranteed this wrapper must be
+    removed and the server must call ``verify_record`` directly.
+    """
+    return verify_record(record, public_key_base64url)
+
+
 def sign_verdict(verdict: GovernanceVerdict, private_key_base64url: str) -> str:
     """Ed25519 signature over ``verdict_signing_string(verdict)``."""
     return crypto.sign_ed25519(
