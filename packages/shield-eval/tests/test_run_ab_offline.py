@@ -24,7 +24,7 @@ def _suite():  # type: ignore[no-untyped-def]
     return get_suite("v1.2.2", "banking")
 
 
-def test_resolve_arms_expands_a0b_and_blocks_shield() -> None:
+def test_resolve_arms_expands_a0b_and_resolves_shield() -> None:
     arms = resolve_arms(["A0", "A0b"])
     assert [a.key for a in arms][0] == "A0"
     assert {a.key for a in arms[1:]} == {
@@ -33,8 +33,14 @@ def test_resolve_arms_expands_a0b_and_blocks_shield() -> None:
         "repeat_user_prompt",
         "tool_filter",
     }
+    # W2: A2/shielded now RESOLVE to a shield Arm (no longer an early raise);
+    # SKIP-not-fake moves to Arm.build() while sdk-w2's elements are absent.
+    a2 = resolve_arms(["shielded"])
+    assert len(a2) == 1 and a2[0].key == "A2" and a2[0].kind == "shield"
     with pytest.raises(ArmUnavailable):
-        resolve_arms(["A2"])
+        a2[0].build(MockedLLM(name="mocked-x"), mock=True)
+    with pytest.raises(ArmUnavailable):
+        resolve_arms(["bogus-arm"])
 
 
 def test_a0_benign_utility_holds(tmp_path) -> None:  # type: ignore[no-untyped-def]
