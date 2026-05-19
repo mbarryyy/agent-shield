@@ -186,9 +186,9 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
     const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
     // CLI install commands for supported integrations
     const buildCliCommands = (integration: Integration) => ({
-      node: `npx @elydora/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
-      python: `pip install elydora && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
-      go: `go install github.com/Elydora-Infrastructure/Elydora-Go-SDK/cmd/elydora@latest && elydora install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base-url "${apiBaseUrl}"`,
+      node: `npx @agent-shield/sdk install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      python: `pip install agent-shield && agent-shield install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base_url "${apiBaseUrl}"`,
+      go: `go install github.com/AgentShield-Infrastructure/AgentShield-Go-SDK/cmd/agent-shield@latest && agent-shield install --agent ${integration.agentFlag} --org_id "${creds.orgId}" --agent_id "${creds.agentId}" --private_key "${creds.privateKey}" --kid "${creds.kid}" --token "${apiToken ?? ''}" --base-url "${apiBaseUrl}"`,
     });
 
     // SDK step-by-step tutorial (used for unsupported / SDK integrations)
@@ -201,7 +201,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { recordOperation } from './client.mjs';
 
-// Self-locate: daemon lives in ~/.elydora/{agentId}/
+// Self-locate: daemon lives in ~/.agent-shield/{agentId}/
 const AGENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const QUEUE_DIR = path.join(AGENT_DIR, 'queue');
 const PROCESSED_DIR = path.join(AGENT_DIR, 'processed');
@@ -251,11 +251,11 @@ process.on('SIGTERM', () => process.exit());`;
 
     // Agent-specific persistent instructions content
     function buildAgentInstructions(integrationId: string): TutorialStep {
-      const agentDir = `~/.elydora/${creds.agentId}`;
-      const agentDirWin = `$env:USERPROFILE\\.elydora\\${creds.agentId}`;
+      const agentDir = `~/.agent-shield/${creds.agentId}`;
+      const agentDirWin = `$env:USERPROFILE\\.agent-shield\\${creds.agentId}`;
 
       const queueInstr = `After EVERY tool call, write a JSON file to the queue directory.
-The daemon will pick it up automatically and submit to Elydora.
+The daemon will pick it up automatically and submit to Agent Shield.
 
 IMPORTANT: Only access your own directory ${agentDir}/ — do NOT read or modify other agent directories.
 
@@ -276,16 +276,16 @@ Every single tool use must be logged. No exceptions.`;
 # Windows:         Start-Process -NoNewWindow node -ArgumentList "${agentDirWin}\\daemon.mjs"
 
 # Create the skill directory:
-# macOS / Linux:  mkdir -p ~/.codex/skills/elydora-audit
-# Windows:        New-Item -ItemType Directory -Force "$env:USERPROFILE\\.codex\\skills\\elydora-audit" | Out-Null
+# macOS / Linux:  mkdir -p ~/.codex/skills/agent-shield-audit
+# Windows:        New-Item -ItemType Directory -Force "$env:USERPROFILE\\.codex\\skills\\agent-shield-audit" | Out-Null
 
-# Write ~/.codex/skills/elydora-audit/SKILL.md:
+# Write ~/.codex/skills/agent-shield-audit/SKILL.md:
 ---
-name: elydora-audit
-description: Log every tool use to Elydora. MUST be active at all times.
+name: agent-shield-audit
+description: Log every tool use to Agent Shield. MUST be active at all times.
 ---
 
-# Elydora Audit Logging (MANDATORY)
+# Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`,
         };
@@ -301,7 +301,7 @@ ${queueInstr}`,
 
 # Append to KIMI.md in your project root (create if needed):
 
-## Elydora Audit Logging (MANDATORY)
+## Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`,
         };
@@ -316,7 +316,7 @@ ${queueInstr}`,
 
 # Add the following to your agent's instructions file (system prompt, instructions.md, AGENTS.md, etc.):
 
-## Elydora Audit Logging (MANDATORY)
+## Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`,
       };
@@ -324,64 +324,64 @@ ${queueInstr}`,
 
     // Build tutorial steps: setup → client → daemon → start+instructions → log → verify
     function buildSdkTutorialSteps(lang: 'node' | 'python' | 'go', integrationId: string): TutorialStep[] {
-      const agentDir = `~/.elydora/${creds.agentId}`;
-      const agentDirWin = `$env:USERPROFILE\\.elydora\\${creds.agentId}`;
+      const agentDir = `~/.agent-shield/${creds.agentId}`;
+      const agentDirWin = `$env:USERPROFILE\\.agent-shield\\${creds.agentId}`;
 
-      // Step 1: setup directory + install SDK (shared at ~/.elydora/, agent subdir created)
+      // Step 1: setup directory + install SDK (shared at ~/.agent-shield/, agent subdir created)
       const setupStep: TutorialStep = lang === 'node' ? {
-        title: 'Create ~/.elydora/ and install SDK',
-        description: `Install the SDK at ~/.elydora/ (shared) and create your agent directory at ${agentDir}/.`,
+        title: 'Create ~/.agent-shield/ and install SDK',
+        description: `Install the SDK at ~/.agent-shield/ (shared) and create your agent directory at ${agentDir}/.`,
         code: `# macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora && npm init -y && npm install @elydora/sdk
+mkdir -p ~/.agent-shield && cd ~/.agent-shield && npm init -y && npm install @agent-shield/sdk
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null
-cd "$env:USERPROFILE\\.elydora"; npm init -y; npm install @elydora/sdk
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null
+cd "$env:USERPROFILE\\.agent-shield"; npm init -y; npm install @agent-shield/sdk
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
       } : lang === 'python' ? {
-        title: 'Create ~/.elydora/ and install SDK',
-        description: `Install the SDK at ~/.elydora/ (shared) and create your agent directory at ${agentDir}/.`,
+        title: 'Create ~/.agent-shield/ and install SDK',
+        description: `Install the SDK at ~/.agent-shield/ (shared) and create your agent directory at ${agentDir}/.`,
         code: `# macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora
-npm init -y && npm install @elydora/sdk   # daemon always uses Node.js
-python -m venv .venv && source .venv/bin/activate && pip install elydora
+mkdir -p ~/.agent-shield && cd ~/.agent-shield
+npm init -y && npm install @agent-shield/sdk   # daemon always uses Node.js
+python -m venv .venv && source .venv/bin/activate && pip install agent-shield
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null
-cd "$env:USERPROFILE\\.elydora"
-npm init -y; npm install @elydora/sdk
-python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install elydora
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null
+cd "$env:USERPROFILE\\.agent-shield"
+npm init -y; npm install @agent-shield/sdk
+python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install agent-shield
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
       } : {
-        title: 'Create ~/.elydora/ and install SDK',
-        description: `Install the SDK at ~/.elydora/ (shared) and create your agent directory at ${agentDir}/.`,
+        title: 'Create ~/.agent-shield/ and install SDK',
+        description: `Install the SDK at ~/.agent-shield/ (shared) and create your agent directory at ${agentDir}/.`,
         code: `# macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora
-npm init -y && npm install @elydora/sdk   # daemon always uses Node.js
-go mod init elydora-audit && go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+mkdir -p ~/.agent-shield && cd ~/.agent-shield
+npm init -y && npm install @agent-shield/sdk   # daemon always uses Node.js
+go mod init agent-shield-audit && go get github.com/AgentShield-Infrastructure/AgentShield-Go-SDK
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null
-cd "$env:USERPROFILE\\.elydora"
-npm init -y; npm install @elydora/sdk
-go mod init elydora-audit; go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null
+cd "$env:USERPROFILE\\.agent-shield"
+npm init -y; npm install @agent-shield/sdk
+go mod init agent-shield-audit; go get github.com/AgentShield-Infrastructure/AgentShield-Go-SDK
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
       };
 
       // Step 2: create client.mjs in agent subdirectory
       const clientStep: TutorialStep = {
         title: 'Create client.mjs',
-        description: `Create ${agentDir}/client.mjs — the pre-configured ElydoraClient used by the daemon.`,
+        description: `Create ${agentDir}/client.mjs — the pre-configured AgentShieldClient used by the daemon.`,
         code: `import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ElydoraClient } from '@elydora/sdk';
+import { AgentShieldClient } from '@agent-shield/sdk';
 
 const AGENT_ID = '${creds.agentId}';
-const AGENT_DIR = path.join(os.homedir(), '.elydora', AGENT_ID);
+const AGENT_DIR = path.join(os.homedir(), '.agent-shield', AGENT_ID);
 const CHAIN_STATE_PATH = path.join(AGENT_DIR, 'chain-state.json');
 const ZERO_CHAIN_HASH = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -394,7 +394,7 @@ function writeChainState(h) {
   fs.writeFileSync(CHAIN_STATE_PATH, JSON.stringify({ prev_chain_hash: h }));
 }
 
-export const client = new ElydoraClient({
+export const client = new AgentShieldClient({
   orgId: '${creds.orgId}',
   agentId: AGENT_ID,
   privateKey: '${creds.privateKey}',
@@ -417,7 +417,7 @@ export async function recordOperation({ operationType, subject, action, payload,
       // Step 3: create daemon.mjs in agent subdirectory
       const daemonStep: TutorialStep = {
         title: 'Create daemon.mjs',
-        description: `Create ${agentDir}/daemon.mjs — the queue watcher that automatically submits operations to Elydora.`,
+        description: `Create ${agentDir}/daemon.mjs — the queue watcher that automatically submits operations to Agent Shield.`,
         code: daemonCode,
       };
 
@@ -433,7 +433,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const queueDir = path.join(os.homedir(), '.elydora', '${creds.agentId}', 'queue');
+const queueDir = path.join(os.homedir(), '.agent-shield', '${creds.agentId}', 'queue');
 fs.mkdirSync(queueDir, { recursive: true });
 fs.writeFileSync(
   path.join(queueDir, \`\${Date.now()}-\${Math.random().toString(36).slice(2)}.json\`),
@@ -445,7 +445,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { recordOperation } = await import(
-  pathToFileURL(join(homedir(), '.elydora', '${creds.agentId}', 'client.mjs')).href
+  pathToFileURL(join(homedir(), '.agent-shield', '${creds.agentId}', 'client.mjs')).href
 );
 await recordOperation({
   operationType: 'ai.tool_use',
@@ -460,7 +460,7 @@ await recordOperation({
 import json, time
 from pathlib import Path
 
-queue_dir = Path.home() / ".elydora" / "${creds.agentId}" / "queue"
+queue_dir = Path.home() / ".agent-shield" / "${creds.agentId}" / "queue"
 queue_dir.mkdir(parents=True, exist_ok=True)
 (queue_dir / f"{time.time_ns()}.json").write_text(json.dumps({
     "tool_name": tool_name,
@@ -471,7 +471,7 @@ queue_dir.mkdir(parents=True, exist_ok=True)
 # ALTERNATIVE — write to queue from a separate script (no daemon import needed)
 import json, time, os
 
-queue_dir = os.path.join(os.path.expanduser("~"), ".elydora", "${creds.agentId}", "queue")
+queue_dir = os.path.join(os.path.expanduser("~"), ".agent-shield", "${creds.agentId}", "queue")
 os.makedirs(queue_dir, exist_ok=True)
 payload = {"tool_name": tool_name, "tool_input": tool_input, "session_id": session_id}
 filename = f"{int(time.time() * 1e9)}.json"
@@ -490,7 +490,7 @@ import (
 )
 
 home, _ := os.UserHomeDir()
-queueDir := filepath.Join(home, ".elydora", "${creds.agentId}", "queue")
+queueDir := filepath.Join(home, ".agent-shield", "${creds.agentId}", "queue")
 os.MkdirAll(queueDir, 0755)
 data, _ := json.Marshal(map[string]any{
     "tool_name": toolName, "tool_input": toolInput, "session_id": sessionId,
@@ -498,7 +498,7 @@ data, _ := json.Marshal(map[string]any{
 os.WriteFile(filepath.Join(queueDir, fmt.Sprintf("%d.json", time.Now().UnixNano())), data, 0644)
 
 // ALTERNATIVE — write to queue from Go (same approach, different entry point)
-queueDir := filepath.Join(os.Getenv("HOME"), ".elydora", "${creds.agentId}", "queue")
+queueDir := filepath.Join(os.Getenv("HOME"), ".agent-shield", "${creds.agentId}", "queue")
 payload := fmt.Sprintf(\`{"tool_name":"%s","tool_input":{},"session_id":"session-1"}\`, toolName)
 filename := fmt.Sprintf("%d.json", time.Now().UnixNano())
 os.WriteFile(filepath.Join(queueDir, filename), []byte(payload), 0644)`,
@@ -512,7 +512,7 @@ os.WriteFile(filepath.Join(queueDir, filename), []byte(payload), 0644)`,
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { client } = await import(
-  pathToFileURL(join(homedir(), '.elydora', '${creds.agentId}', 'client.mjs')).href
+  pathToFileURL(join(homedir(), '.agent-shield', '${creds.agentId}', 'client.mjs')).href
 );
 const result = await client.verifyOperation(operationId);
 console.log('Signature:', result.checks.signature);
@@ -520,7 +520,7 @@ console.log('Chain:',     result.checks.chain);`,
       } : lang === 'python' ? {
         title: 'Verify (optional)',
         description: 'Verify the integrity of a recorded operation.',
-        code: `# Verify via the Elydora console UI, or use urllib to call the API:
+        code: `# Verify via the Agent Shield console UI, or use urllib to call the API:
 import urllib.request, json
 
 url = f"${apiBaseUrl}/v1/operations/{operation_id}/verify"
@@ -712,67 +712,67 @@ fmt.Println("Chain:",     result.Checks.Chain)`,
       // AI-ready prompt for SDK integrations (copy-paste into any AI agent)
       // Daemon-centric: setup → client → daemon → start + instructions → log via queue
       function buildSdkAiPrompt(lang: 'node' | 'python' | 'go', integrationId: string): string {
-        const agentDir = `~/.elydora/${creds.agentId}`;
-        const agentDirWin = `$env:USERPROFILE\\.elydora\\${creds.agentId}`;
+        const agentDir = `~/.agent-shield/${creds.agentId}`;
+        const agentDirWin = `$env:USERPROFILE\\.agent-shield\\${creds.agentId}`;
 
-        const preamble = `Set up Elydora audit logging at ~/.elydora/${creds.agentId}/ (on Windows: $env:USERPROFILE\\.elydora\\${creds.agentId}\\). This is NOT project-specific — do NOT add anything to the current project's dependencies or files. Detect the current OS and use the appropriate commands below.
+        const preamble = `Set up Agent Shield audit logging at ~/.agent-shield/${creds.agentId}/ (on Windows: $env:USERPROFILE\\.agent-shield\\${creds.agentId}\\). This is NOT project-specific — do NOT add anything to the current project's dependencies or files. Detect the current OS and use the appropriate commands below.
 
-IMPORTANT: Only access your own directory ${agentDir}/ — do NOT read or modify other agent directories under ~/.elydora/.
+IMPORTANT: Only access your own directory ${agentDir}/ — do NOT read or modify other agent directories under ~/.agent-shield/.
 
 IMPORTANT: Every queue JSON file MUST follow this exact structure:
 { "tool_name": "<the tool you used>", "tool_input": <the tool input object>, "session_id": "<your current session ID>" }`;
 
-        // Step 1: install SDK (shared at ~/.elydora/) + create agent subdir
+        // Step 1: install SDK (shared at ~/.agent-shield/) + create agent subdir
         const setupSteps: Record<'node' | 'python' | 'go', string> = {
-          node: `1. Create ~/.elydora/ and install the SDK, then create your agent directory:
+          node: `1. Create ~/.agent-shield/ and install the SDK, then create your agent directory:
 
 # macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora && npm init -y && npm install @elydora/sdk
+mkdir -p ~/.agent-shield && cd ~/.agent-shield && npm init -y && npm install @agent-shield/sdk
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null; cd "$env:USERPROFILE\\.elydora"; npm init -y; npm install @elydora/sdk
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null; cd "$env:USERPROFILE\\.agent-shield"; npm init -y; npm install @agent-shield/sdk
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
 
-          python: `1. Create ~/.elydora/ and install SDKs (Node.js required for daemon), then create your agent directory:
+          python: `1. Create ~/.agent-shield/ and install SDKs (Node.js required for daemon), then create your agent directory:
 
 # macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora
-npm init -y && npm install @elydora/sdk
-python -m venv .venv && source .venv/bin/activate && pip install elydora
+mkdir -p ~/.agent-shield && cd ~/.agent-shield
+npm init -y && npm install @agent-shield/sdk
+python -m venv .venv && source .venv/bin/activate && pip install agent-shield
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null; cd "$env:USERPROFILE\\.elydora"
-npm init -y; npm install @elydora/sdk
-python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install elydora
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null; cd "$env:USERPROFILE\\.agent-shield"
+npm init -y; npm install @agent-shield/sdk
+python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install agent-shield
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
 
-          go: `1. Create ~/.elydora/ and install SDKs (Node.js required for daemon), then create your agent directory:
+          go: `1. Create ~/.agent-shield/ and install SDKs (Node.js required for daemon), then create your agent directory:
 
 # macOS / Linux
-mkdir -p ~/.elydora && cd ~/.elydora
-npm init -y && npm install @elydora/sdk
-go mod init elydora-audit && go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+mkdir -p ~/.agent-shield && cd ~/.agent-shield
+npm init -y && npm install @agent-shield/sdk
+go mod init agent-shield-audit && go get github.com/AgentShield-Infrastructure/AgentShield-Go-SDK
 mkdir -p ${agentDir}
 
 # Windows (PowerShell)
-New-Item -ItemType Directory -Force "$env:USERPROFILE\\.elydora" | Out-Null; cd "$env:USERPROFILE\\.elydora"
-npm init -y; npm install @elydora/sdk
-go mod init elydora-audit; go get github.com/Elydora-Infrastructure/Elydora-Go-SDK
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.agent-shield" | Out-Null; cd "$env:USERPROFILE\\.agent-shield"
+npm init -y; npm install @agent-shield/sdk
+go mod init agent-shield-audit; go get github.com/AgentShield-Infrastructure/AgentShield-Go-SDK
 New-Item -ItemType Directory -Force "${agentDirWin}" | Out-Null`,
         };
 
         // Step 2: client.mjs in agent subdirectory
-        const clientStep = `2. Create ${agentDir}/client.mjs with the pre-configured ElydoraClient:
+        const clientStep = `2. Create ${agentDir}/client.mjs with the pre-configured AgentShieldClient:
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ElydoraClient } from '@elydora/sdk';
+import { AgentShieldClient } from '@agent-shield/sdk';
 
 const AGENT_ID = '${creds.agentId}';
-const AGENT_DIR = path.join(os.homedir(), '.elydora', AGENT_ID);
+const AGENT_DIR = path.join(os.homedir(), '.agent-shield', AGENT_ID);
 const CHAIN_STATE_PATH = path.join(AGENT_DIR, 'chain-state.json');
 const ZERO_CHAIN_HASH = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -785,7 +785,7 @@ function writeChainState(h) {
   fs.writeFileSync(CHAIN_STATE_PATH, JSON.stringify({ prev_chain_hash: h }));
 }
 
-export const client = new ElydoraClient({
+export const client = new AgentShieldClient({
   orgId: '${creds.orgId}',
   agentId: AGENT_ID,
   privateKey: '${creds.privateKey}',
@@ -811,7 +811,7 @@ ${daemonCode}`;
 
         // Step 4: start daemon + agent-specific persistent instructions
         const queueInstr = `After EVERY tool call, write a JSON file to the queue directory.
-The daemon will pick it up automatically and submit to Elydora.
+The daemon will pick it up automatically and submit to Agent Shield.
 
 IMPORTANT: Only access your own directory ${agentDir}/ — do NOT read or modify other agent directories.
 
@@ -832,16 +832,16 @@ Every single tool use must be logged. No exceptions.`;
 # Windows:         Start-Process -NoNewWindow node -ArgumentList "${agentDirWin}\\daemon.mjs"
 
 # Create skill directory:
-# macOS / Linux:   mkdir -p ~/.codex/skills/elydora-audit
-# Windows:         New-Item -ItemType Directory -Force "$env:USERPROFILE\\.codex\\skills\\elydora-audit" | Out-Null
+# macOS / Linux:   mkdir -p ~/.codex/skills/agent-shield-audit
+# Windows:         New-Item -ItemType Directory -Force "$env:USERPROFILE\\.codex\\skills\\agent-shield-audit" | Out-Null
 
-# Write ~/.codex/skills/elydora-audit/SKILL.md:
+# Write ~/.codex/skills/agent-shield-audit/SKILL.md:
 ---
-name: elydora-audit
-description: Log every tool use to Elydora. MUST be active at all times.
+name: agent-shield-audit
+description: Log every tool use to Agent Shield. MUST be active at all times.
 ---
 
-# Elydora Audit Logging (MANDATORY)
+# Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`;
         } else if (integrationId === 'kimi') {
@@ -853,7 +853,7 @@ ${queueInstr}`;
 
 # Append to KIMI.md in your project root (create if needed):
 
-## Elydora Audit Logging (MANDATORY)
+## Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`;
         } else {
@@ -865,7 +865,7 @@ ${queueInstr}`;
 
 # Add to your agent's instructions file (system prompt, instructions.md, AGENTS.md, etc.):
 
-## Elydora Audit Logging (MANDATORY)
+## Agent Shield Audit Logging (MANDATORY)
 
 ${queueInstr}`;
         }
@@ -879,7 +879,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const queueDir = path.join(os.homedir(), '.elydora', '${creds.agentId}', 'queue');
+const queueDir = path.join(os.homedir(), '.agent-shield', '${creds.agentId}', 'queue');
 fs.mkdirSync(queueDir, { recursive: true });
 fs.writeFileSync(
   path.join(queueDir, \`\${Date.now()}-\${Math.random().toString(36).slice(2)}.json\`),
@@ -891,7 +891,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { recordOperation } = await import(
-  pathToFileURL(join(homedir(), '.elydora', '${creds.agentId}', 'client.mjs')).href
+  pathToFileURL(join(homedir(), '.agent-shield', '${creds.agentId}', 'client.mjs')).href
 );
 await recordOperation({
   operationType: 'ai.tool_use',
@@ -906,7 +906,7 @@ PRIMARY — write to queue (daemon submits automatically):
 import json, time
 from pathlib import Path
 
-queue_dir = Path.home() / ".elydora" / "${creds.agentId}" / "queue"
+queue_dir = Path.home() / ".agent-shield" / "${creds.agentId}" / "queue"
 queue_dir.mkdir(parents=True, exist_ok=True)
 (queue_dir / f"{time.time_ns()}.json").write_text(json.dumps({
     "tool_name": tool_name,
@@ -917,7 +917,7 @@ queue_dir.mkdir(parents=True, exist_ok=True)
 ALTERNATIVE — write to queue from a separate script (no daemon import needed):
 import json, time, os
 
-queue_dir = os.path.join(os.path.expanduser("~"), ".elydora", "${creds.agentId}", "queue")
+queue_dir = os.path.join(os.path.expanduser("~"), ".agent-shield", "${creds.agentId}", "queue")
 os.makedirs(queue_dir, exist_ok=True)
 payload = {"tool_name": tool_name, "tool_input": tool_input, "session_id": session_id}
 filename = f"{int(time.time() * 1e9)}.json"
@@ -936,7 +936,7 @@ import (
 )
 
 home, _ := os.UserHomeDir()
-queueDir := filepath.Join(home, ".elydora", "${creds.agentId}", "queue")
+queueDir := filepath.Join(home, ".agent-shield", "${creds.agentId}", "queue")
 os.MkdirAll(queueDir, 0755)
 data, _ := json.Marshal(map[string]any{
     "tool_name": toolName, "tool_input": toolInput, "session_id": sessionId,
@@ -944,7 +944,7 @@ data, _ := json.Marshal(map[string]any{
 os.WriteFile(filepath.Join(queueDir, fmt.Sprintf("%d.json", time.Now().UnixNano())), data, 0644)
 
 ALTERNATIVE — write to queue from Go (same approach, different entry point):
-queueDir := filepath.Join(os.Getenv("HOME"), ".elydora", "${creds.agentId}", "queue")
+queueDir := filepath.Join(os.Getenv("HOME"), ".agent-shield", "${creds.agentId}", "queue")
 payload := fmt.Sprintf(\`{"tool_name":"%s","tool_input":{},"session_id":"session-1"}\`, toolName)
 filename := fmt.Sprintf("%d.json", time.Now().UnixNano())
 os.WriteFile(filepath.Join(queueDir, filename), []byte(payload), 0644)`,
@@ -958,7 +958,7 @@ os.WriteFile(filepath.Join(queueDir, filename), []byte(payload), 0644)`,
 # Windows:         Get-Content "${agentDirWin}\\daemon.pid"
 
 # Check processed operations appear in ${agentDir}/processed/
-# You can also verify in the Elydora console at ${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/operations`;
+# You can also verify in the Agent Shield console at ${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/operations`;
 
         return `${preamble}
 

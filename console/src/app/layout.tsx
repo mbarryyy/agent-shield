@@ -4,7 +4,7 @@ import AppShell from '@/components/AppShell';
 import I18nProvider from '@/components/I18nProvider';
 
 export const metadata: Metadata = {
-  title: 'Elydora Console',
+  title: 'Agent Shield Console',
   description: 'Enterprise AI accountability and compliance console',
   icons: { icon: '/favicon.svg' },
 };

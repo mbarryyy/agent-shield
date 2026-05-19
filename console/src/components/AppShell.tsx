@@ -53,7 +53,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
             <path d="M3 5h14M3 10h14M3 15h14" />
           </svg>
         </button>
-        <span className="font-sans text-sm font-semibold tracking-wide text-[#EAEAE5]">ELYDORA</span>
+        <span className="font-sans text-sm font-semibold tracking-wide text-[#EAEAE5]">AGENT SHIELD</span>
       </div>
 
       <main className="min-h-screen md:ml-[260px]">
