@@ -13,6 +13,13 @@ import type {
   AuditQueryResponse,
   JWKSResponse,
 } from '@elydora/shared';
+import type {
+  TimelinePage,
+  VerdictDetail,
+  ProvenanceGraph,
+  CostRollup,
+  IncidentList,
+} from '@/types/governance';
 
 export function useAgent(agentId: string | undefined) {
   return useSWR<GetAgentResponse>(
@@ -90,6 +97,54 @@ export function useJWKS() {
   return useSWR<JWKSResponse>(
     '/jwks',
     () => api.jwks.get(),
+    { revalidateOnFocus: false },
+  );
+}
+
+// --- W3 governance READ hooks (SWR over the server console-READ contract).
+//     `poll` enables SWR polling = the deterministic pre-recorded-demo
+//     fallback; the live monitor's primary path is the SSE stream. ---------
+export function useGovTimeline(
+  runId: string | undefined,
+  poll = false,
+) {
+  return useSWR<TimelinePage>(
+    runId ? ['/gov/timeline', runId] : null,
+    runId ? () => api.governance.timeline(runId, { limit: 200 }) : null,
+    { revalidateOnFocus: false, refreshInterval: poll ? 2000 : 0 },
+  );
+}
+
+export function useVerdictDetail(correlationId: string | undefined) {
+  return useSWR<VerdictDetail>(
+    correlationId ? ['/gov/verdict', correlationId] : null,
+    correlationId ? () => api.governance.verdict(correlationId) : null,
+    { revalidateOnFocus: false },
+  );
+}
+
+export function useProvenance(runId: string | undefined) {
+  return useSWR<ProvenanceGraph>(
+    runId ? ['/gov/provenance', runId] : null,
+    runId ? () => api.governance.provenance(runId) : null,
+    { revalidateOnFocus: false },
+  );
+}
+
+export function useCost(runId: string | undefined) {
+  return useSWR<CostRollup>(
+    runId ? ['/gov/cost', runId] : null,
+    runId ? () => api.governance.cost(runId) : null,
+    { revalidateOnFocus: false },
+  );
+}
+
+export function useIncidents(
+  params: { run_id?: string; status?: string } = {},
+) {
+  return useSWR<IncidentList>(
+    ['/gov/incidents', params.run_id ?? '', params.status ?? ''],
+    () => api.governance.incidents(params),
     { revalidateOnFocus: false },
   );
 }

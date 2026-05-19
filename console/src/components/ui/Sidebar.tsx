@@ -176,11 +176,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         <div className="px-5 py-6 border-b border-[rgba(234,234,229,0.1)]">
           <Link href="/" className="flex items-center gap-3 no-underline" onClick={onClose}>
             <div className="w-8 h-8 border border-[#EAEAE5] flex items-center justify-center">
-              <span className="font-mono text-sm font-bold text-[#EAEAE5]">E</span>
+              <span className="font-mono text-sm font-bold text-[#EAEAE5]">AS</span>
             </div>
             <div>
               <div className="font-sans text-sm font-semibold tracking-wide text-[#EAEAE5]">
-                ELYDORA
+                AGENT SHIELD
               </div>
               <div className="font-mono text-[10px] text-[rgba(234,234,229,0.4)] tracking-widest uppercase">
                 {t('common.console')}

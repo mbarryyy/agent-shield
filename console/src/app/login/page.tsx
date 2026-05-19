@@ -41,7 +41,7 @@ export default function LoginPage() {
               <span className="font-mono text-lg font-bold text-ink">E</span>
             </div>
             <div className="text-left">
-              <div className="font-sans text-base font-semibold tracking-wide text-ink">ELYDORA</div>
+              <div className="font-sans text-base font-semibold tracking-wide text-ink">AGENT SHIELD</div>
               <div className="font-mono text-[10px] text-ink-dim tracking-widest uppercase">Console</div>
             </div>
           </div>

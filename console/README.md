@@ -1,6 +1,6 @@
-# Elydora Console
+# Agent Shield Console
 
-Web dashboard for the Elydora Responsibility Protocol. Provides agent management, operation inspection, epoch visualization, audit log querying, and compliance export tools.
+Web dashboard for Agent Shield — runtime AI-agent governance + accountability. Provides agent management, operation inspection, epoch visualization, audit log querying, the governance demo surface (live monitor, verdict tab, provenance DAG, KPI/cost), and compliance export tools.
 
 ## Tech Stack
 

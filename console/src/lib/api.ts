@@ -24,6 +24,14 @@ import type {
   ShieldActionRecord,
   GovernanceVerdict,
 } from '@elydora/shared';
+import type {
+  TimelinePage,
+  VerdictDetail,
+  ProvenanceGraph,
+  CostRollup,
+  IncidentList,
+  ShieldVerdictEvent,
+} from '@/types/governance';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
 
@@ -252,8 +260,113 @@ export const api = {
         body: JSON.stringify(rec),
       });
     },
+
+    // --- W3 console READ contract (server PR-S2; additive /v1/governance/*,
+    //     console-pact; paths/shapes verified §5b vs shield-server routes). ---
+
+    /** U2 live-monitor feed — keyset-paginated, org-scoped. */
+    timeline(
+      runId: string,
+      params: { cursor?: string; limit?: number } = {},
+    ): Promise<TimelinePage> {
+      const q = new URLSearchParams();
+      if (params.cursor) q.set('cursor', params.cursor);
+      if (params.limit != null) q.set('limit', String(params.limit));
+      const qs = q.toString();
+      return request<TimelinePage>(
+        `/v1/governance/runs/${encodeURIComponent(runId)}/timeline${qs ? `?${qs}` : ''}`,
+      );
+    },
+
+    /** U3 verdict tab — signed §4 verdict + paired pre↔post (404 if unknown). */
+    verdict(correlationId: string): Promise<VerdictDetail> {
+      return request<VerdictDetail>(
+        `/v1/governance/verdicts/${encodeURIComponent(correlationId)}`,
+      );
+    },
+
+    /** U4 provenance DAG data (console renders; BLOCK = blocked-intent node). */
+    provenance(runId: string): Promise<ProvenanceGraph> {
+      return request<ProvenanceGraph>(
+        `/v1/governance/runs/${encodeURIComponent(runId)}/provenance`,
+      );
+    },
+
+    /** U5 hook#5 cost rollup — server-authoritative; console renders verbatim. */
+    cost(runId: string): Promise<CostRollup> {
+      return request<CostRollup>(
+        `/v1/governance/runs/${encodeURIComponent(runId)}/cost`,
+      );
+    },
+
+    /** U6 incidents list — ESCALATE-only; server-authoritative HITL state. */
+    incidents(
+      params: { run_id?: string; status?: string; cursor?: string; limit?: number } = {},
+    ): Promise<IncidentList> {
+      const q = new URLSearchParams();
+      if (params.run_id) q.set('run_id', params.run_id);
+      if (params.status) q.set('status', params.status);
+      if (params.cursor) q.set('cursor', params.cursor);
+      if (params.limit != null) q.set('limit', String(params.limit));
+      const qs = q.toString();
+      return request<IncidentList>(
+        `/v1/governance/incidents${qs ? `?${qs}` : ''}`,
+      );
+    },
+
+    /** U6 HITL — re-enter a paused ESCALATE; server signs the post-resume
+     *  verdict & owns the resulting status (the one console WRITE). */
+    resume(
+      incidentId: string,
+      body: { decision: string; payload?: Record<string, unknown> },
+    ): Promise<GovernanceVerdict> {
+      return request<GovernanceVerdict>(
+        `/v1/governance/incidents/${encodeURIComponent(incidentId)}/resume`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+    },
   },
 } as const;
+
+/**
+ * SSE-PRIMARY live governance stream (server bridges Redis Channel-2 →
+ * browser; a browser cannot read Redis). `event: verdict` carries the
+ * LOCKED FLAT 8-string shield:verdicts envelope; `event: action` the
+ * action-record fields. SWR polling of /timeline is the deterministic
+ * pre-recorded-demo fallback (caller's choice), not a replacement.
+ * Returns an unsubscribe; no-op (returns a noop closer) outside the
+ * browser so SSR/build never touches EventSource.
+ */
+export function openGovernanceStream(
+  workflowId: string,
+  handlers: {
+    onVerdict?: (ev: ShieldVerdictEvent) => void;
+    onAction?: (fields: Record<string, string>) => void;
+    onError?: (err: unknown) => void;
+  },
+): () => void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+    return () => {};
+  }
+  const url = `${API_BASE_URL}/v1/governance/stream?workflow_id=${encodeURIComponent(workflowId)}`;
+  const es = new EventSource(url, { withCredentials: true });
+  es.addEventListener('verdict', (e: MessageEvent) => {
+    try {
+      handlers.onVerdict?.(JSON.parse(e.data as string) as ShieldVerdictEvent);
+    } catch (err) {
+      handlers.onError?.(err);
+    }
+  });
+  es.addEventListener('action', (e: MessageEvent) => {
+    try {
+      handlers.onAction?.(JSON.parse(e.data as string) as Record<string, string>);
+    } catch (err) {
+      handlers.onError?.(err);
+    }
+  });
+  es.onerror = (err) => handlers.onError?.(err);
+  return () => es.close();
+}
 
 export { ApiError };
 export type { ErrorResponse };
