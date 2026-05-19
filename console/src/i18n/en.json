@@ -25,13 +25,37 @@
     "allData": "All data",
     "copyToClipboard": "Copy to clipboard",
     "copyJwks": "Copy JWKS",
-    "links": "LINKS"
+    "links": "LINKS",
+    "governance": "Governance",
+    "incidents": "Incidents"
   },
   "sidebar": {
     "overview": "OVERVIEW",
     "management": "MANAGEMENT",
+    "governance": "GOVERNANCE",
     "compliance": "COMPLIANCE",
     "system": "SYSTEM"
+  },
+  "governance": {
+    "title": "Governance",
+    "subtitle": "Layer-2 runtime verdicts, incidents and per-run cost",
+    "stubNotice": "W2 scaffold — the live verdict stream, correlation-id provenance DAG and per-run cost rollup are wired in W3 (G3). Figures below are stub data.",
+    "kpiBlocked": "Blocked",
+    "kpiSaved": "Prevented Loss",
+    "kpiEscalated": "Escalated",
+    "kpiMeanRisk": "Mean Risk",
+    "verdictsTitle": "Recent Verdicts",
+    "colCorrelation": "Correlation ID",
+    "colDecision": "Decision",
+    "colRisk": "Risk",
+    "colPrevented": "Prevented Loss",
+    "emptyVerdicts": "No verdicts yet.",
+    "incidentsTitle": "Incidents",
+    "incidentsSubtitle": "Escalated and blocked Layer-2 events",
+    "incidentsEmpty": "No incidents — the incident stream is wired in W3.",
+    "runTitle": "Run",
+    "runSubtitle": "Per-run cost rollup and verdict timeline",
+    "runStub": "The per-run cost rollup (GET /v1/governance/runs/{run_id}/cost) and the verdict timeline land in W3."
   },
   "dashboard": {
     "title": "Dashboard",

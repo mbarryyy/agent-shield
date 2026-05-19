@@ -70,6 +70,31 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       ],
     },
     {
+      title: t('sidebar.governance'),
+      items: [
+        {
+          label: t('common.governance'),
+          href: '/governance',
+          icon: (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 1l6 2.5v4c0 3.6-2.5 6.4-6 7.5-3.5-1.1-6-3.9-6-7.5v-4z" />
+              <path d="M5.5 8l2 2 3.5-3.5" />
+            </svg>
+          ),
+        },
+        {
+          label: t('common.incidents'),
+          href: '/governance/incidents',
+          icon: (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 1.5l6.5 11.5H1.5z" />
+              <path d="M8 6v3.5M8 11.5h.01" />
+            </svg>
+          ),
+        },
+      ],
+    },
+    {
       title: t('sidebar.compliance'),
       items: [
         {
