@@ -1,0 +1,19 @@
+# Agent Shield CODEOWNERS — maps module dirs to the owning builder agent
+# (the parallel-build ownership firewall). From Research/07_delivery/cicd.md §7.
+# Repo root IS the git root, so the §7 paths are used verbatim. The §7 doc
+# compresses `/infra/ /.github/ /docs/adr/  @team-lead` onto one line for
+# brevity; CODEOWNERS requires one pattern per line, so it is expanded below
+# with the same owner — mapping intent unchanged.
+#
+# `/contracts/` requires review from ALL module owners — the FROZEN-§4
+# integration boundary (cicd.md §7, agent_teams_dev_workflow §3).
+
+/packages/shield-sdk/        @sdk-builder
+/contracts/                  @sdk-builder @server-builder @governance-builder @eval-builder @console-builder
+/packages/shield-server/     @server-builder
+/packages/shield-governance/ @governance-builder
+/packages/shield-eval/       @eval-builder
+/console/                    @console-builder
+/infra/                      @team-lead
+/.github/                    @team-lead
+/docs/adr/                   @team-lead

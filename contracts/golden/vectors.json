@@ -1,0 +1,7 @@
+{
+  "x-status": "W0-STUB — EMPTY. sdk-builder freezes the real vectors at W1: a fixed Ed25519 keypair + fixed ShieldActionRecord/GovernanceVerdict inputs → expected payload_hash / chain_hash / signature, captured from Elydora's reference Python SDK (Related_Work/Elydora-Open-Source-main/sdks/python/elydora), green on py3.11 + py3.12. Until then contracts/test_golden_vectors.py xfails.",
+  "x-genesis-chain-hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "x-genesis-note": "43-char, NO trailing '=' padding — verified byte-identical in Elydora client.py and operation-service.ts. The README's trailing-'=' is wrong; the code value is authoritative.",
+  "keypair": { "x-status": "W1: frozen Ed25519 test keypair goes here" },
+  "vectors": []
+}

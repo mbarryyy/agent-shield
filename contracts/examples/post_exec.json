@@ -1,0 +1,17 @@
+{
+  "shield_version": "1.1",
+  "phase": "post_exec",
+  "correlation_id": "11111111-1111-1111-1111-111111111111",
+  "run_id": "run-0001",
+  "step_index": 0,
+  "issued_at": "2026-06-01T00:00:01Z",
+  "nonce": "BBBBBBBBBBBBBBBBBBBBBB",
+  "tool_name": "send_money",
+  "args_digest": "stub-args-digest",
+  "tool_result": { "status": "ok" },
+  "verdict_ref": "11111111-1111-1111-1111-111111111111",
+  "payload_hash": "STUB",
+  "prev_chain_hash": "STUB",
+  "context": { "checkpoint_id": null, "langgraph_thread_id": null, "env_snapshot_ref": null },
+  "signature": "STUB"
+}

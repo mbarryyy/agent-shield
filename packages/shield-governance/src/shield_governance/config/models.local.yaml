@@ -1,0 +1,9 @@
+# ShieldModelRouter — LOCAL profile (the zero-egress, air-gapped SKU, moat #7).
+# W0 STUB: shape only. governance-builder finalizes at W1. Selecting this profile
+# is the ONLY change needed for air-gapped operation (no dependency swaps).
+profile: local
+guardians:
+  defender:   { served_via: local, model: llamafirewall-promptguard2-86m }
+  evaluator:  { served_via: local, model: vllm:local-evaluator }
+  supervisor: { served_via: local, model: vllm:local-supervisor }
+  auditor:    { served_via: local, model: vllm:local-auditor }

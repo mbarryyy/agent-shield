@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-shield/contracts/shield_action_record.schema.json",
+  "title": "ShieldActionRecord",
+  "x-status": "W0-STUB — frozen at W1 as shield_version 1.1 by sdk-builder (C11/ADR-0007). Field set sourced from sdk_layer_design.md §4; sdk-builder regenerates this snapshot from shield_sdk.schema at W1.",
+  "x-shield-version": "1.1",
+  "type": "object",
+  "required": ["shield_version", "phase", "correlation_id", "run_id", "payload_hash"],
+  "properties": {
+    "shield_version": { "type": "string", "const": "1.1" },
+    "phase": { "type": "string", "enum": ["pre_exec", "post_exec"] },
+    "correlation_id": { "type": "string", "description": "pairs pre_exec ↔ post_exec" },
+    "run_id": { "type": "string" },
+    "step_index": { "type": "integer", "minimum": 0 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "nonce": { "type": "string" },
+    "tool_name": { "type": "string" },
+    "args_digest": { "type": "string" },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "llm": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string" },
+            "prompt_tokens": { "type": "integer", "minimum": 0 },
+            "completion_tokens": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "payload_hash": { "type": "string", "description": "JCS-RFC8785 SHA-256 over the signable projection" },
+    "prev_chain_hash": { "type": "string" },
+    "chain_hash": { "type": "string", "description": "server-derived; never trusted from client" },
+    "tool_result": { "type": ["object", "string", "null"] },
+    "verdict_ref": { "type": ["string", "null"] },
+    "context": {
+      "type": "object",
+      "properties": {
+        "checkpoint_id": { "type": ["string", "null"] },
+        "langgraph_thread_id": { "type": ["string", "null"] },
+        "env_snapshot_ref": { "type": ["string", "null"] }
+      }
+    },
+    "signature": { "type": "string", "description": "Ed25519 over JCS(record − signature)" }
+  },
+  "additionalProperties": true
+}

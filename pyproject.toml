@@ -1,0 +1,81 @@
+# Agent Shield — uv workspace root.
+# Dependency-management decision: uv single workspace + one committed uv.lock
+# (matches the LOCKED AgentDojo worker/eval harness toolchain — see docs/adr/0001).
+# Floors live in each member's pyproject.toml; uv.lock is the reproducible source
+# of truth, used with `uv sync --frozen` in CI.
+
+[project]
+name = "agent-shield"
+version = "0.1.0"
+description = "Agent Shield — two-layer runtime governance for high-risk agentic workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.uv]
+# The root is the workspace coordinator, not a distributable package.
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+# All four workspace members are dev dependencies of the (virtual) root so a
+# plain `uv sync --dev` / `uv sync --frozen --dev` (the cicd.md §2 CI command,
+# verbatim) provisions every member + its runtime deps into ONE env. Without
+# this, a package=false virtual root with no deps installs nothing and
+# `uv run pytest packages` fails to import (pydantic/fastapi/...).
+[tool.uv.sources]
+shield-sdk = { workspace = true }
+shield-server = { workspace = true }
+shield-governance = { workspace = true }
+shield-eval = { workspace = true }
+
+# Shared dev/test toolchain (mirrors AgentDojo's proven dev set; see docs/adr/0002,0003).
+[dependency-groups]
+dev = [
+    "shield-sdk",
+    "shield-server",
+    "shield-governance",
+    "shield-eval",
+    "pytest>=8.0.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5.2",
+    "mypy>=1.8.0",
+    "respx>=0.21",
+    "pytest-httpx>=0.30",
+    "hypothesis>=6.100",
+    "freezegun>=1.5",
+    "jsonschema>=4.22",
+]
+
+# --- shared lint/format: one formatter (ruff format == Black intent; ADR-0002) ---
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["packages"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# --- shared type checking: mypy for our code, not pyright (ADR-0003) ---
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+explicit_package_bases = true
+namespace_packages = true
+# Type-check shipping source only. Per-package `tests/` dirs all expose a
+# top-level module named `tests`, which collides under `mypy packages`
+# ("Duplicate module named tests"); tests are covered by the pytest gates.
+exclude = '/tests/'
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# importlib import-mode + no __init__.py in any tests/ dir: lets the per-package
+# `tests/` trees (all of which would otherwise be the same top-level `tests`
+# package) collect without basename collisions across the monorepo.
+addopts = "--import-mode=importlib"
+markers = [
+    "integration: integration tests requiring docker-compose infra",
+]

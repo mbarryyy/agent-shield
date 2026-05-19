@@ -1,0 +1,10 @@
+# ShieldModelRouter — CLOUD profile (the demo default).
+# W0 STUB: shape only. governance-builder finalizes at W1.
+# Swapping this file for models.local.yaml turns the demo into the zero-egress
+# air-gapped SKU with ZERO dependency replacement (C5 RESOLVED, moat #7).
+profile: cloud
+guardians:
+  defender:   { served_via: local,  model: llamafirewall-promptguard2-86m }
+  evaluator:  { served_via: cloud,  model: claude-sonnet }
+  supervisor: { served_via: cloud,  model: claude-opus }
+  auditor:    { served_via: cloud,  model: claude-haiku }

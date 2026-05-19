@@ -1,0 +1,39 @@
+# --- design corpus: maintained out-of-repo (internal reference); repo is public, build artifacts only ---
+Research/
+# --- vendored research clones: NEVER tracked (huge, not ours, license-separate) ---
+Related_Work
+Related_Work/
+# --- python (AgentDojo .gitignore shape) ---
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+.ipynb_checkpoints/
+# --- node / next (Elydora .gitignore shape) ---
+node_modules/
+.next/
+out/
+# --- runtime/experiment logs ---
+runs/
+*.log
+# --- env & secrets ---
+.env
+.env.*
+!.env.example
+# --- local infra volumes (Elydora .gitignore) ---
+postgres_data/
+redis_data/
+minio_data/
+# --- OS / IDE ---
+.DS_Store
+.idea/
+.vscode/
+# uv.lock and console/package-lock.json ARE committed (reproducibility)

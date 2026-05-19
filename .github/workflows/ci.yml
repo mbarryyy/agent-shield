@@ -1,0 +1,104 @@
+# Transcribed faithfully from Research/07_delivery/cicd.md §2 (the PR gate).
+# ADDED beyond §2 (W0 mandate): the `commit-hygiene` job — a no-AI-attribution
+# commit/author scan + the cicd.md §8 conventional-commit PR-title check.
+name: CI
+on:
+  pull_request: { branches: [main] }
+  push: { branches: [main] }
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Py ${{ matrix.python-version }} — lint/type/unit/contract
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]   # AgentDojo CI matrix shape
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6                 # AgentDojo lint-docs.yaml uses setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"          # exact AgentDojo cache key
+      - name: Sync (frozen lock)
+        run: uv sync --frozen --dev                 # reproducible: uv.lock is source of truth
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+      - name: Format check (Black-compatible; replaces black per ADR-0002)
+        run: uv run ruff format --check .
+      - name: Typecheck
+        run: uv run mypy packages                   # mypy (ADR-0003), not pyright, for our code
+      - name: Unit + contract tests (+coverage)
+        run: >
+          uv run pytest packages contracts
+          --cov=packages --cov-report=xml --cov-report=term-missing
+          --cov-fail-under=80
+      - name: Crypto/schema hard floor
+        run: >
+          uv run pytest packages/shield-sdk/tests/unit/crypto contracts/test_golden_vectors.py
+          contracts/test_schema_frozen.py --cov=shield_sdk --cov-fail-under=90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: "coverage-${{ matrix.python-version }}"
+          path: coverage.xml
+
+  console:
+    name: Console — eslint/tsc/build
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: console } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4                 # Elydora ci.yml shape
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - run: npm run lint        # eslint (added — Elydora ships none)
+      - run: npm run typecheck   # tsc --noEmit  (Elydora script)
+      - run: npm run build       # next build    (Elydora script)
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITLEAKS_LICENSE: "" }
+
+  # ADDED beyond cicd.md §2 — W0 standing constraint #1 (NO-AI-ATTRIBUTION HARD
+  # RULE) + cicd.md §8 conventional-commit title mechanism.
+  commit-hygiene:
+    name: commit-hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: No AI attribution in commits/authors
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: bash .github/scripts/check_no_ai_attribution.sh
+      - name: Conventional-commit PR title (cicd.md §8)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|chore|docs|refactor|test|perf|build|ci|style|revert)(\([a-z0-9-]+\))?!?: .+'
+          if ! printf '%s' "$PR_TITLE" | grep -Eq "$pattern"; then
+            echo "::error::PR title is not a conventional commit: '$PR_TITLE'"
+            echo "Expected 'type(scope): subject' — type ∈ feat|fix|chore|docs|refactor|test|perf|build|ci|style|revert; scope ∈ module names"
+            exit 1
+          fi

@@ -1,0 +1,12 @@
+{
+  "shield_version": "1.1",
+  "decision": "PASS",
+  "correlation_id": "11111111-1111-1111-1111-111111111111",
+  "risk_score": 0.0,
+  "confidence": 1.0,
+  "reasons": [
+    { "code": "OK", "message": "no policy triggered", "guardian": "defender", "model_id": null, "served_via": null }
+  ],
+  "obligations": {},
+  "latency_ms": 12.0
+}

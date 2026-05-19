@@ -1,0 +1,12 @@
+{
+  "name": "@agent-shield/contracts-codegen",
+  "private": true,
+  "type": "module",
+  "description": "JSON-Schema -> TypeScript generator for the FROZEN §4 boundary + Elydora REST DTOs, feeding console/.",
+  "scripts": {
+    "gen": "node gen.mjs"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.0"
+  }
+}

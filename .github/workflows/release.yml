@@ -1,0 +1,25 @@
+# Transcribed faithfully from Research/07_delivery/cicd.md §5
+# (semver, OIDC, no long-lived token — AgentDojo publish.yaml pattern).
+name: Release
+on:
+  push: { tags: ["v*.*.*"] }
+permissions: { contents: write }
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write          # AgentDojo publish.yaml — OIDC trusted, no PyPI token
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true, cache-dependency-glob: "uv.lock" }
+      - run: uv sync --frozen --dev
+      - run: uv run pytest packages contracts -q     # never release a red tree
+      - run: uv build --all-packages
+      - name: Changelog from conventional commits
+        run: uv run python -m shield_eval.changelog --since-last-tag > RELEASE_NOTES.md
+      - uses: softprops/action-gh-release@v2
+        with: { body_path: RELEASE_NOTES.md, files: dist/* }
