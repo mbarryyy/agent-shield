@@ -6,7 +6,9 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "gen": "node ../contracts/codegen/gen.mjs"
   },
   "dependencies": {
     "better-auth": "^1.5.5",
@@ -19,12 +21,18 @@
     "swr": "^2.3.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@next/eslint-plugin-next": "16.2.6",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "25.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "eslint": "9.39.4",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.6.0",
     "postcss": "^8.0.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "8.59.4"
   }
 }
