@@ -23,6 +23,11 @@ PROTOCOL_VERSION = "1.0"
 ELYDORA_KID = "elydora-server-key-v1"
 DEMO_ORG_ID = "demo-org"
 
+# Channel-2 (§4.3) — async action stream + consumer groups.
+SHIELD_KID = "shield-server-key-v1"  # signs GovernanceVerdicts (golden-vector kid)
+ACTIONS_STREAM_PREFIX = "shield:actions"  # XADD shield:actions:{workflow_id}
+CONSUMER_GROUPS = ("shield-evaluator", "shield-auditor")
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:

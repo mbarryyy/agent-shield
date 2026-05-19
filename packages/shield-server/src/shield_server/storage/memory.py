@@ -32,6 +32,8 @@ class MemoryObjectStore:
 class MemoryCache:
     def __init__(self) -> None:
         self._store: dict[str, tuple[str, float | None]] = {}
+        self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
+        self.groups: set[tuple[str, str]] = set()
 
     def _live(self, key: str) -> str | None:
         item = self._store.get(key)
@@ -55,6 +57,16 @@ class MemoryCache:
     async def set(self, key: str, value: str) -> None:
         self._store[key] = (value, None)
 
+    async def ensure_group(self, stream: str, group: str) -> None:
+        self.streams.setdefault(stream, [])
+        self.groups.add((stream, group))
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        entries = self.streams.setdefault(stream, [])
+        msg_id = f"{len(entries) + 1}-0"
+        entries.append((msg_id, dict(fields)))
+        return msg_id
+
 
 class _MemoryTx:
     def __init__(self, db: MemoryDatabase) -> None:
@@ -77,6 +89,7 @@ class MemoryDatabase:
         self.agent_keys: dict[str, dict[str, Any]] = {}
         self.operations: dict[str, dict[str, Any]] = {}
         self.receipts: dict[str, dict[str, Any]] = {}
+        self.intervention_log: list[dict[str, Any]] = []
 
     async def fetchrow(self, sql: str, *args: object) -> dict[str, object] | None:
         s = " ".join(sql.split())
@@ -187,6 +200,23 @@ class MemoryDatabase:
                 del self.agent_keys[kid]
         elif s.startswith("DELETE FROM agents WHERE agent_id"):
             self.agents.pop(str(args[0]), None)
+        elif s.startswith("INSERT INTO intervention_log"):
+            cols = [
+                "verdict_id",
+                "record_id",
+                "correlation_id",
+                "run_id",
+                "decision",
+                "step_index",
+                "triggered_rule_id",
+                "tokens_in",
+                "tokens_out",
+                "model_id",
+                "served_via",
+                "latency_ms",
+                "created_at",
+            ]
+            self.intervention_log.append(dict(zip(cols, args, strict=True)))
         else:  # pragma: no cover - defensive
             raise AssertionError(f"MemoryDatabase: unmodelled execute: {s}")
 

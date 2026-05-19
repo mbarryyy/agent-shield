@@ -125,3 +125,44 @@ def test_epoch_and_export_not_found(client: TestClient) -> None:
     created = client.post("/v1/exports", json={"format": "json"})
     assert created.status_code == 201
     assert created.json()["export"]["status"] == "queued"
+
+
+def test_governance_decide_returns_signed_pass(client: TestClient) -> None:
+    import shield_sdk.canonical as canonical
+    import shield_sdk.crypto as crypto
+    from shield_sdk.schema import ShieldActionRecord
+
+    priv = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    pub = crypto.get_public_key_base64url(priv)
+    reg = client.post(
+        "/v1/agents/register",
+        json={
+            "agent_id": "agentdojo-banking-v1",
+            "keys": [{"kid": "agentdojo-banking-v1-key-v1", "public_key": pub}],
+        },
+    )
+    assert reg.status_code == 201
+
+    rec = ShieldActionRecord(
+        org_id="demo-org",
+        agent_id="agentdojo-banking-v1",
+        agent_pubkey_kid="agentdojo-banking-v1-key-v1",
+        phase="pre_exec",
+        run_id="run-0001",
+    )
+    rec.payload.tool_name = "send_money"
+    rec = canonical.finalize_record(rec, priv)
+
+    r = client.post("/v1/governance/decide", json=rec.model_dump(mode="json"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["decision"] == "PASS"
+    assert body["record_id"] == rec.record_id
+    assert body["signature_by_shield"]
+    assert r.headers["X-Elydora-Protocol-Version"] == "1.0"
+
+
+def test_governance_decide_rejects_garbage(client: TestClient) -> None:
+    r = client.post("/v1/governance/decide", json={"not": "a-record"})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
