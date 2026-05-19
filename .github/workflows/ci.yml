@@ -68,6 +68,32 @@ jobs:
       - run: npm run typecheck   # tsc --noEmit  (Elydora script)
       - run: npm run build       # next build    (Elydora script)
 
+  # ADDED beyond cicd.md §2 (ADR-0008): mechanically enforce that the committed,
+  # generated console/src/types/contracts.d.ts is byte-identical to a fresh
+  # contracts/codegen run from contracts/*.schema.json + contracts/elydora/.
+  # The ci.yml `console` job intentionally never runs codegen; this is the
+  # firewall that catches a stale/hand-edited generated artifact (the
+  # regen-in-same-PR rule, ADR-0008).
+  codegen-sync:
+    name: codegen-sync — contracts -> console/src/types/contracts.d.ts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: contracts/codegen/package-lock.json
+      - run: npm --prefix contracts/codegen ci
+      - run: npm --prefix contracts/codegen run gen
+      - name: Generated types are in sync with contracts/ (regen-in-same-PR rule)
+        run: |
+          if ! git diff --exit-code -- console/src/types/contracts.d.ts; then
+            echo "::error::console/src/types/contracts.d.ts is stale or hand-edited."
+            echo "Regenerate in the SAME PR: (cd contracts/codegen && npm run gen) and commit."
+            exit 1
+          fi
+
   secret-scan:
     runs-on: ubuntu-latest
     permissions:
