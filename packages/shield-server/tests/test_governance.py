@@ -18,7 +18,7 @@ from shield_sdk.schema import (
 from shield_server import agents as agent_svc
 from shield_server.config import CONSUMER_GROUPS, Settings
 from shield_server.errors import AppError
-from shield_server.governance import decide
+from shield_server.governance import decide, record
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage
 
@@ -43,12 +43,14 @@ async def _register(
         storage.db.agent_keys[KID]["status"] = key_status  # type: ignore[attr-defined]
 
 
-def _signed_record(*, prev: str = "A" * 43, **over: object) -> ShieldActionRecord:
+def _signed_record(
+    *, prev: str = "A" * 43, phase: Phase = Phase.PRE_EXEC, **over: object
+) -> ShieldActionRecord:
     rec = ShieldActionRecord(
         org_id=ORG,
         agent_id=AGENT,
         agent_pubkey_kid=KID,
-        phase=Phase.PRE_EXEC,
+        phase=phase,
         run_id="run-0001",
         prev_chain_hash=prev,
         action=ActionRef(tool="send_money", args_digest="sha256:abc"),
@@ -201,3 +203,71 @@ async def test_validation_branches(
     with pytest.raises(AppError) as ei:
         await decide(storage, _signed_record(**over), settings)
     assert ei.value.error_code == code
+
+
+# --- POST /v1/governance/record (Channel-2 post_exec ingest; no verdict) ----
+
+
+async def test_record_post_exec_acks_and_fans_no_verdict(
+    storage: Storage, settings: Settings
+) -> None:
+    await _register(storage)
+    rec = _signed_record(phase=Phase.POST_EXEC, verdict_ref="vrd-123")
+    ack = await record(storage, rec, settings)
+
+    assert ack == {
+        "accepted": True,
+        "record_id": rec.record_id,
+        "correlation_id": rec.correlation_id,
+        "chain_hash": canonical.derive_chain_hash(rec.prev_chain_hash, rec),
+        "seq_no": 1,
+    }
+    op = await storage.db.fetchrow(
+        "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+        rec.record_id,
+        ORG,
+    )
+    assert op is not None and op["seq_no"] == 1
+    # post_exec is async: NO intervention_log row (decision-keyed only).
+    assert storage.db.intervention_log == []  # type: ignore[attr-defined]
+    stream = "shield:actions:banking"
+    entries = storage.cache.streams[stream]  # type: ignore[attr-defined]
+    assert len(entries) == 1
+    assert entries[0][1]["phase"] == "post_exec"
+    assert entries[0][1]["verdict_id"] == "vrd-123"
+    for g in CONSUMER_GROUPS:
+        assert (stream, g) in storage.cache.groups  # type: ignore[attr-defined]
+
+
+async def test_record_rejects_pre_exec(storage: Storage, settings: Settings) -> None:
+    await _register(storage)
+    with pytest.raises(AppError) as ei:
+        await record(storage, _signed_record(phase=Phase.PRE_EXEC), settings)
+    assert ei.value.error_code == "VALIDATION_ERROR"
+
+
+async def test_decide_then_post_exec_share_one_chain(storage: Storage, settings: Settings) -> None:
+    await _register(storage)
+    v = await decide(storage, _signed_record(), settings)
+    op1 = await storage.db.fetchrow(
+        "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+        v.record_id,
+        ORG,
+    )
+    post = _signed_record(
+        phase=Phase.POST_EXEC,
+        prev=str(op1["chain_hash"]),
+        nonce="POSTnoncePOSTnoncePOST",
+        verdict_ref=v.verdict_id,
+    )
+    ack = await record(storage, post, settings)
+    assert ack["seq_no"] == 2  # pre_exec(1) → post_exec(2) on the same chain
+
+
+async def test_record_invalid_signature_rejected(storage: Storage, settings: Settings) -> None:
+    await _register(storage)
+    rec = _signed_record(phase=Phase.POST_EXEC)
+    rec.signature = "tampered" + (rec.signature or "")[8:]
+    with pytest.raises(AppError) as ei:
+        await record(storage, rec, settings)
+    assert ei.value.error_code == "INVALID_SIGNATURE"

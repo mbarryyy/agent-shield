@@ -168,6 +168,21 @@ async def governance_decide(request: Request, ctx: Ctx) -> GovernanceVerdict:
     return await governance_svc.decide(get_storage(request), rec, request.app.state.settings)
 
 
+@router.post("/v1/governance/record", status_code=202)
+async def governance_record(request: Request, ctx: Ctx) -> dict[str, object]:
+    """Channel-2 ingest for the async post_exec ShieldActionRecord (the
+    `record_path` ShieldRecorder targets). Chains + fans to shield:actions;
+    NO verdict (async). org_id is bound from auth."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise AppError(400, "VALIDATION_ERROR", "Invalid record body.")
+    try:
+        rec = ShieldActionRecord.model_validate({**body, "org_id": ctx.org_id})
+    except ValidationError as exc:
+        raise AppError(400, "VALIDATION_ERROR", "Malformed ShieldActionRecord.") from exc
+    return await governance_svc.record(get_storage(request), rec, request.app.state.settings)
+
+
 # --- epochs (W4 produces real epochs; W1 = empty list / not-found) ---------
 @router.get("/v1/epochs")
 async def list_epochs(request: Request, ctx: Ctx) -> ListEpochsResponse:
