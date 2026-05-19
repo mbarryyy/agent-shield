@@ -253,3 +253,59 @@ class JWKSResponse(BaseModel):
 class IssueTokenResponseModel(BaseModel):
     token: str
     expires_at: int | None = None
+
+
+# --- W3 PR-S2: console governance READ contract (additive /v1/governance/*).
+# console-pact typed; NOT a frozen-§4 contracts/*.schema.json change. The
+# verdict/record bodies are the FROZEN §4 types (shield_sdk.schema), carried
+# opaque (dict) so this module never duplicates/redefines a §4 type.
+
+
+class TimelineRow(BaseModel):
+    """One gate decision in a run's live-monitor feed."""
+
+    verdict_id: str
+    record_id: str
+    correlation_id: str
+    run_id: str | None = None
+    decision: str
+    risk_score: float
+    latency_ms: float | None = None
+    created_at: int
+
+
+class TimelineResponse(BaseModel):
+    rows: list[TimelineRow]
+    cursor: str | None = None
+    total_count: int
+
+
+class VerdictView(BaseModel):
+    """Verdict tab: the signed §4 GovernanceVerdict + the paired pre/post §4
+    ShieldActionRecord envelopes — all opaque (frozen §4, not redefined)."""
+
+    correlation_id: str
+    verdict: dict[str, Any] | None = None
+    pre_exec: dict[str, Any] | None = None
+    post_exec: dict[str, Any] | None = None
+
+
+class ProvenanceNode(BaseModel):
+    record_id: str
+    phase: str | None = None
+    correlation_id: str | None = None
+    decision: str | None = None
+    seq_no: int
+    chain_hash: str
+
+
+class ProvenanceEdge(BaseModel):
+    src: str
+    dst: str
+    kind: Literal["chain", "correlation"]
+
+
+class ProvenanceGraph(BaseModel):
+    run_id: str
+    nodes: list[ProvenanceNode]
+    edges: list[ProvenanceEdge]

@@ -26,6 +26,7 @@ DEMO_ORG_ID = "demo-org"
 # Channel-2 (§4.3) — async action stream + consumer groups.
 SHIELD_KID = "shield-server-key-v1"  # signs GovernanceVerdicts (golden-vector kid)
 ACTIONS_STREAM_PREFIX = "shield:actions"  # XADD shield:actions:{workflow_id}
+VERDICTS_STREAM_PREFIX = "shield:verdicts"  # XADD shield:verdicts:{workflow_id} (PR-S3)
 CONSUMER_GROUPS = ("shield-evaluator", "shield-auditor")
 
 

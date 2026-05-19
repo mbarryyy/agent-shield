@@ -125,6 +125,37 @@ CREATE TABLE IF NOT EXISTS intervention_log (
 CREATE INDEX IF NOT EXISTS idx_intervention_run ON intervention_log (run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_intervention_corr ON intervention_log (correlation_id);
 
+-- W3 PR-S2: §4 correlation/run/phase made queryable on the per-agent chain.
+-- ADDITIVE nullable columns — the W1 Elydora-EOR ingest leaves them NULL;
+-- the §4 /decide + /record paths populate them so the console READ contract
+-- (timeline / verdicts-by-correlation_id / provenance DAG) can query the
+-- chain directly. NOT a §4 schema change (server-owned PG, not contracts/).
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS correlation_id TEXT;
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS run_id         TEXT;
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS phase          TEXT;
+CREATE INDEX IF NOT EXISTS idx_operations_corr ON operations (correlation_id);
+CREATE INDEX IF NOT EXISTS idx_operations_run  ON operations (org_id, run_id, created_at);
+
+-- W3 PR-S2: signed-verdict store backing the console verdict tab. The full
+-- signed GovernanceVerdict envelope is object-stored (r2_verdict_key); this
+-- row indexes it by correlation_id/run_id for the console READ contract.
+-- Distinct from intervention_log (the cost hook#3 SINK) — no token columns.
+CREATE TABLE IF NOT EXISTS governance_verdicts (
+  verdict_id      TEXT    NOT NULL PRIMARY KEY,
+  record_id       TEXT    NOT NULL,
+  correlation_id  TEXT    NOT NULL,
+  run_id          TEXT,
+  org_id          TEXT    NOT NULL,
+  agent_id        TEXT    NOT NULL,
+  decision        TEXT    NOT NULL,
+  risk_score      DOUBLE PRECISION NOT NULL DEFAULT 0,
+  latency_ms      DOUBLE PRECISION,
+  r2_verdict_key  TEXT    NOT NULL,
+  created_at      BIGINT  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gv_run  ON governance_verdicts (org_id, run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_gv_corr ON governance_verdicts (correlation_id);
+
 INSERT INTO schema_versions (version, applied_at, description)
 VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema (Elydora 001 port)')
 ON CONFLICT (version) DO NOTHING;
@@ -133,6 +164,13 @@ VALUES (
   2,
   EXTRACT(EPOCH FROM NOW())::BIGINT * 1000,
   'W2: Channel-2 intervention_log (cost hook #3)'
+)
+ON CONFLICT (version) DO NOTHING;
+INSERT INTO schema_versions (version, applied_at, description)
+VALUES (
+  3,
+  EXTRACT(EPOCH FROM NOW())::BIGINT * 1000,
+  'W3 PR-S2: operations correlation/run/phase + governance_verdicts (console READ)'
 )
 ON CONFLICT (version) DO NOTHING;
 """

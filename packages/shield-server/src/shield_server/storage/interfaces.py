@@ -56,3 +56,10 @@ class Cache(Protocol):
     async def xadd(self, stream: str, fields: dict[str, str]) -> str:
         """Append one entry to the stream; returns the message id."""
         ...
+
+    async def xrange(
+        self, stream: str, *, count: int | None = None
+    ) -> list[tuple[str, dict[str, str]]]:
+        """Read stream entries oldest→newest (W3 PR-S2 SSE bridge READ side).
+        Returns ``[(message_id, fields), ...]``; empty if the stream is absent."""
+        ...
