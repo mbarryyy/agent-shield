@@ -22,7 +22,14 @@ node_modules/
 .next/
 out/
 # --- runtime/experiment logs ---
+# Broad: keep experiment/run output untracked wherever it lands (top-level
+# <root>/runs/ AND per-package packages/*/runs/). console/ is the Next.js app —
+# no experiment logs ever live there, so re-include console route `runs` dirs
+# (the design-locked /v1/governance/runs/{run_id} console route, possibly under
+# a Next.js route group) without exposing any experiment-log runs/.
 runs/
+!console/**/runs/
+!console/**/runs/**
 *.log
 # --- env & secrets ---
 .env
