@@ -6,6 +6,8 @@ MemoryStorage, so the HARD-GATE projection is exercised end-to-end.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
@@ -283,3 +285,38 @@ async def test_record_invalid_signature_rejected(storage: Storage, settings: Set
     with pytest.raises(AppError) as ei:
         await record(storage, rec, settings)
     assert ei.value.error_code == "INVALID_SIGNATURE"
+
+
+async def test_shield_verdicts_producer_locked_field_map(
+    storage: Storage, settings: Settings
+) -> None:
+    """W3 PR-S3: the LOCKED FLAT 8-field shield:verdicts envelope (mirrors the
+    W2 shield:actions discipline — str values, exact keys, no re-guessing)."""
+    await _register(storage)
+    rec = _signed_record()
+    verdict = await _decide(storage, rec, settings)
+
+    entries = storage.cache.streams["shield:verdicts:banking"]  # type: ignore[attr-defined]
+    assert len(entries) == 1
+    fields = entries[0][1]
+    assert set(fields) == {
+        "verdict_id",
+        "record_id",
+        "correlation_id",
+        "run_id",
+        "decision",
+        "risk_score",
+        "phase",
+        "verdict",
+    }
+    assert all(isinstance(v, str) for v in fields.values())  # str values only
+    assert fields["verdict_id"] == verdict.verdict_id
+    assert fields["record_id"] == rec.record_id
+    assert fields["correlation_id"] == rec.correlation_id
+    assert fields["run_id"] == rec.run_id
+    assert fields["decision"] == "PASS"
+    assert fields["risk_score"] == str(verdict.risk_score)
+    assert fields["phase"] == "pre_exec"
+    assert json.loads(fields["verdict"])["signature_by_shield"]  # signed §4 JSON
+    for g in CONSUMER_GROUPS:
+        assert ("shield:verdicts:banking", g) in storage.cache.groups  # type: ignore[attr-defined]
