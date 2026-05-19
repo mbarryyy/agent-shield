@@ -42,6 +42,7 @@ from ...canonical import derive_chain_hash, finalize_record
 from ...crypto import GENESIS_CHAIN_HASH, generate_uuidv7, jcs_canonicalize, sha256_base64url
 from ...policy import FailMode, FailPolicy, synthetic_degraded_verdict
 from ...schema import (
+    ActionContext,
     ActionPayload,
     ActionRef,
     ActionType,
@@ -66,6 +67,11 @@ class ShieldElementConfig:
     agent_id: str = "agentdojo-banking-v1"
     workflow_id: str = "banking"
     run_id: str | None = None
+    # W3 dual-substrate ROLLBACK (C2): the Layer-2-owned LangGraph thread for
+    # this run. The SDK only STAMPS it onto context.langgraph_thread_id so the
+    # signed chain carries the rewind correlation key; governance OWNS/actuates
+    # the checkpointer rewind and emits obligations.rollback.langgraph_checkpoint_id.
+    langgraph_thread_id: str | None = None
     decision_budget_ms: int = 500
     fail_policy: FailPolicy = dataclasses.field(default_factory=FailPolicy.ratified)
     # Non-interactive batch degradation for ESCALATE (live HITL interrupt() is
@@ -157,8 +163,9 @@ class ShieldGuard(BasePipelineElement):  # type: ignore[misc]  # agentdojo base 
         for idx, tc in enumerate(messages[-1]["tool_calls"]):
             key = _tool_call_key(tc, idx)
             args = dict(tc.args)
+            rec_id = generate_uuidv7()
             pre = ShieldActionRecord(
-                record_id=generate_uuidv7(),
+                record_id=rec_id,
                 correlation_id=generate_uuidv7(),
                 org_id=cfg.org_id,
                 agent_id=cfg.agent_id,
@@ -170,6 +177,18 @@ class ShieldGuard(BasePipelineElement):  # type: ignore[misc]  # agentdojo base 
                 subject={"agentdojo_tool_call_id": tc.id},
                 action=ActionRef(tool=tc.function, args_digest=_args_digest(args)),
                 payload=ActionPayload(tool_name=tc.function, tool_args=args),
+                # W3 dual-substrate ROLLBACK keys (C2 / §4.1 L149-153):
+                #  - env_snapshot_ref = this record_id  -> Layer-1-owned key for
+                #    the env.model_copy snapshot restored on ROLLBACK.
+                #  - langgraph_thread_id -> Layer-2-owned thread (SDK stamps it
+                #    so the signed chain carries the rewind correlation key).
+                #  - checkpoint_id stays None: governance OWNS/actuates the
+                #    LangGraph checkpointer rewind and emits the target via
+                #    verdict.obligations.rollback.langgraph_checkpoint_id.
+                context=ActionContext(
+                    env_snapshot_ref=rec_id,
+                    langgraph_thread_id=cfg.langgraph_thread_id,
+                ),
                 prev_chain_hash=state["_chain_head"],
                 agent_pubkey_kid=cfg.agent_pubkey_kid,
             )
@@ -312,10 +331,36 @@ class ShieldedToolsExecutor(ToolsExecutor):  # type: ignore[misc]  # agentdojo b
             # skip + synthesize (the :75-96 precedent applied before :103)
             if decision is Decision.ROLLBACK:
                 glyph, verb, outcome = "↩", "Rolled back", {"rolled_back": True}
+                # Dual-substrate ROLLBACK (C2 / master §2.2 L134): BOTH fire.
+                # (1) Layer-1-owned: restore the env.model_copy snapshot, keyed
+                #     by the pre_exec record_id (= context.env_snapshot_ref).
+                layer1_restored = False
                 if dec is not None and hasattr(dec.env_snapshot, "model_copy"):
                     out_env = dec.env_snapshot.model_copy(deep=True)
-                if st is not None and obligations and obligations.rollback is not None:
-                    st["_rollback_signals"].append(obligations.rollback.model_dump(mode="json"))
+                    layer1_restored = True
+                # (2) Layer-2-owned: governance actuates the LangGraph
+                #     checkpointer rewind; the SDK only carries the correlation
+                #     keys + the gov-emitted target. ALWAYS record a structured
+                #     dual-substrate signal (even if obligations.rollback is
+                #     None/partial) so "both substrates fire" is auditable and
+                #     eval/console can assert it.
+                if st is not None and dec is not None:
+                    ctx = dec.pre_record.context
+                    ckpt = (
+                        obligations.rollback.langgraph_checkpoint_id
+                        if obligations and obligations.rollback is not None
+                        else None
+                    )
+                    st["_rollback_signals"].append(
+                        {
+                            "record_id": dec.pre_record.record_id,
+                            "correlation_id": dec.pre_record.correlation_id,
+                            "env_snapshot_ref": ctx.env_snapshot_ref,
+                            "layer1_env_restored": layer1_restored,
+                            "langgraph_thread_id": ctx.langgraph_thread_id,
+                            "langgraph_checkpoint_id": ckpt,
+                        }
+                    )
             elif decision is Decision.ESCALATE:
                 glyph, verb, outcome = "🛑", "Escalated", {"escalated": True}
             else:

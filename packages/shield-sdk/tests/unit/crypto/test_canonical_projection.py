@@ -146,3 +146,34 @@ def test_finalize_and_verify_verdict_with_rollback() -> None:
 def test_unsigned_verdict_does_not_verify() -> None:
     v = GovernanceVerdict(correlation_id="c", decision=Decision.PASS)
     assert canonical.verify_verdict(v, _PUB) is False
+
+
+# --------------------------------------------------------------------------- #
+# W3 U3 — verify_ingest is a PURE byte-identical pass-through to verify_record
+# (HG#1 server single-ingest call-site; parity guaranteed by construction).
+# --------------------------------------------------------------------------- #
+
+
+def test_verify_ingest_is_pure_passthrough() -> None:
+    signed = canonical.finalize_record(
+        _rec(payload=ActionPayload(tool_name="send_money", tool_args={"amount": 30000.0})),
+        _PRIV,
+    )
+    tampered = signed.model_copy(deep=True)
+    tampered.payload.tool_args["amount"] = 1.0
+    unsigned = _rec()
+    wrong_pub = crypto.get_public_key_base64url(crypto.base64url_encode(bytes(range(1, 33))))
+
+    # Identical result to verify_record for every case (valid / tamper /
+    # unsigned / wrong key) — no independent logic in verify_ingest.
+    for rec, pub in [
+        (signed, _PUB),
+        (tampered, _PUB),
+        (unsigned, _PUB),
+        (signed, wrong_pub),
+    ]:
+        assert canonical.verify_ingest(rec, pub) == canonical.verify_record(rec, pub)
+
+    assert canonical.verify_ingest(signed, _PUB) is True
+    assert canonical.verify_ingest(tampered, _PUB) is False
+    assert canonical.verify_ingest(unsigned, _PUB) is False
