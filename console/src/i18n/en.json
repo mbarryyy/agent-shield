@@ -384,6 +384,7 @@
     "supported": "Supported (one-command install)",
     "sdkIntegration": "SDK Integration",
     "install": "Install",
+    "prereleaseNotice": "Pre-release: the Agent Shield SDK packages shown above are not yet published to public registries; agent distribution ships with the public release.",
     "backToList": "Back",
     "sdkTutorial": "SDK Tutorial",
     "aiReadyPrompt": "AI-Ready Prompt",
