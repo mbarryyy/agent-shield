@@ -15,9 +15,14 @@ from typing import Any
 
 import httpx
 import respx
+from agentdojo.agent_pipeline.tool_execution import ToolsExecutionLoop
 from agentdojo.functions_runtime import FunctionCall, TaskEnvironment
 from shield_sdk import crypto
-from shield_sdk.instrument.agentdojo import ShieldElementConfig, build_shield_elements
+from shield_sdk.instrument.agentdojo import (
+    ShieldElementConfig,
+    build_shield_elements,
+    shield_loop_elements,
+)
 from shield_sdk.schema import (
     Decision,
     GovernanceVerdict,
@@ -259,3 +264,65 @@ def test_cost_fields_survive_real_client_http_decode() -> None:
     assert got.obligations.prevented_loss == 12345.67
     assert got.reasons[0].model_id == "m"
     assert got.reasons[0].served_via is ServedVia.LOCAL
+
+
+# ---- SEAM-#3: canonical ToolsExecutionLoop order (no double-generate) ----- #
+
+
+class _MockLLM:
+    """A terminal LLM element: appends one assistant message with NO
+    tool_calls so the real ToolsExecutionLoop breaks after processing."""
+
+    name = "mock_llm"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def query(
+        self, q: str, rt: Any, env: Any, msgs: Any, extra: Any
+    ) -> tuple[str, Any, Any, Any, Any]:
+        self.calls += 1
+        terminal = {"role": "assistant", "content": [], "tool_calls": None}
+        return q, rt, env, [*msgs, terminal], extra
+
+
+def _drive_loop(cfg: ShieldElementConfig, rt: Any, env: Any, tc: FunctionCall) -> tuple[Any, Any]:
+    llm = _MockLLM()
+    loop = ToolsExecutionLoop(shield_loop_elements(cfg, llm))
+    msgs: Any = [{"role": "assistant", "content": None, "tool_calls": [tc]}]
+    _, _, env, msgs, _ = loop.query("q", rt, env, msgs, {})
+    return (msgs, llm), env
+
+
+def test_canonical_order_processes_pending_call_exactly_once() -> None:
+    """Real ToolsExecutionLoop @ the canonical order: the pre-loop
+    assistant+tool_calls is executed exactly once (no double-generate, not
+    skipped) and the loop terminates."""
+    rt = _Rt(["send_money"])
+    cfg = _cfg(_FakeClient(_verdict(Decision.PASS)))
+    (msgs, llm), _ = _drive_loop(
+        cfg,
+        rt,
+        TaskEnvironment(),
+        FunctionCall(function="send_money", args={"amount": 5.0}, id="c"),
+    )
+    assert rt.calls == [("send_money", {"amount": 5.0})]  # exactly once
+    assert llm.calls == 1  # llm generated AFTER processing (process-then-generate)
+    roles = [m["role"] for m in msgs]
+    assert roles == ["assistant", "tool", "assistant"]  # no double-generate
+
+
+def test_canonical_order_enforces_before_execute_and_terminates() -> None:
+    """BLOCK consulted BEFORE the executor's money-line: tool never runs, a
+    synthesized result is emitted, loop still terminates via the llm."""
+    rt = _Rt(["send_money"])
+    cfg = _cfg(_FakeClient(_verdict(Decision.BLOCK)))
+    (msgs, llm), _ = _drive_loop(
+        cfg,
+        rt,
+        TaskEnvironment(),
+        FunctionCall(function="send_money", args={"amount": 30000.0}, id="c"),
+    )
+    assert rt.calls == []  # ShieldGuard verdict enforced before :103
+    assert any("Agent Shield: Blocked" in (m.get("error") or "") for m in msgs)
+    assert llm.calls == 1 and [m["role"] for m in msgs][-1] == "assistant"
