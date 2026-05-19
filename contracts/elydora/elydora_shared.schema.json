@@ -1,0 +1,771 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-shield/contracts/elydora/elydora_shared.schema.json",
+  "x-source": {
+    "upstream": "Elydora Open Source distribution `Elydora-Open-Source-main` (package.json version 0.1.0)",
+    "files": "packages/server/src/shared/{index.ts,types/enums.ts,types/entities.ts,types/protocol.ts,types/api.ts}",
+    "fidelity": "1:1 transcription of the public `@elydora/shared` surface, code-verified (§5b) by console-builder; reviewer-confirmed (ADR-0008 / PR #4)",
+    "pinned-ref": "source distribution, not a git checkout — no upstream commit hash exists to pin; provenance identity is the named distribution + version above",
+    "note": "non-standard annotation keyword; ignored by JSON-Schema validators and by contracts/codegen (json-schema-to-typescript) — present for public-repo audit provenance only"
+  },
+  "title": "ElydoraSharedSurface",
+  "description": "Drop-in replacement for the Elydora `@elydora/shared` TypeScript surface. Transcribed 1:1 (code-verified by console-builder) from Related_Work/Elydora-Open-Source-main/packages/server/src/shared/{index.ts,types/enums.ts,types/entities.ts,types/protocol.ts,types/api.ts}. The Hono server that provided these types is replaced by the Python FastAPI backend, so the console now consumes these types via contracts/codegen -> console/src/types/contracts.d.ts. Mirrors exactly the public symbols re-exported by shared/index.ts. The root object exists only so json-schema-to-typescript (no unreachableDefinitions option set in contracts/codegen/gen.mjs) emits every $def as an exported named type.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "AgentStatus": { "$ref": "#/$defs/AgentStatus" },
+    "KeyStatus": { "$ref": "#/$defs/KeyStatus" },
+    "ExportStatus": { "$ref": "#/$defs/ExportStatus" },
+    "AdminAction": { "$ref": "#/$defs/AdminAction" },
+    "RbacRole": { "$ref": "#/$defs/RbacRole" },
+    "ErrorCode": { "$ref": "#/$defs/ErrorCode" },
+    "EOR": { "$ref": "#/$defs/EOR" },
+    "ECH": { "$ref": "#/$defs/ECH" },
+    "EAR": { "$ref": "#/$defs/EAR" },
+    "EER": { "$ref": "#/$defs/EER" },
+    "Agent": { "$ref": "#/$defs/Agent" },
+    "AgentKey": { "$ref": "#/$defs/AgentKey" },
+    "Operation": { "$ref": "#/$defs/Operation" },
+    "Receipt": { "$ref": "#/$defs/Receipt" },
+    "Epoch": { "$ref": "#/$defs/Epoch" },
+    "AdminEvent": { "$ref": "#/$defs/AdminEvent" },
+    "Export": { "$ref": "#/$defs/Export" },
+    "Organization": { "$ref": "#/$defs/Organization" },
+    "User": { "$ref": "#/$defs/User" },
+    "RegisterAgentRequest": { "$ref": "#/$defs/RegisterAgentRequest" },
+    "RegisterAgentResponse": { "$ref": "#/$defs/RegisterAgentResponse" },
+    "GetAgentResponse": { "$ref": "#/$defs/GetAgentResponse" },
+    "ListAgentsResponse": { "$ref": "#/$defs/ListAgentsResponse" },
+    "FreezeAgentRequest": { "$ref": "#/$defs/FreezeAgentRequest" },
+    "UnfreezeAgentRequest": { "$ref": "#/$defs/UnfreezeAgentRequest" },
+    "RevokeAgentRequest": { "$ref": "#/$defs/RevokeAgentRequest" },
+    "UpdateAgentRequest": { "$ref": "#/$defs/UpdateAgentRequest" },
+    "SubmitOperationRequest": { "$ref": "#/$defs/SubmitOperationRequest" },
+    "SubmitOperationResponse": { "$ref": "#/$defs/SubmitOperationResponse" },
+    "GetOperationResponse": { "$ref": "#/$defs/GetOperationResponse" },
+    "VerifyOperationResponse": { "$ref": "#/$defs/VerifyOperationResponse" },
+    "AuditQueryRequest": { "$ref": "#/$defs/AuditQueryRequest" },
+    "AuditQueryResponse": { "$ref": "#/$defs/AuditQueryResponse" },
+    "GetEpochResponse": { "$ref": "#/$defs/GetEpochResponse" },
+    "ListEpochsResponse": { "$ref": "#/$defs/ListEpochsResponse" },
+    "CreateExportRequest": { "$ref": "#/$defs/CreateExportRequest" },
+    "CreateExportResponse": { "$ref": "#/$defs/CreateExportResponse" },
+    "GetExportResponse": { "$ref": "#/$defs/GetExportResponse" },
+    "ListExportsResponse": { "$ref": "#/$defs/ListExportsResponse" },
+    "AuthRegisterRequest": { "$ref": "#/$defs/AuthRegisterRequest" },
+    "AuthRegisterResponse": { "$ref": "#/$defs/AuthRegisterResponse" },
+    "AuthLoginRequest": { "$ref": "#/$defs/AuthLoginRequest" },
+    "AuthLoginResponse": { "$ref": "#/$defs/AuthLoginResponse" },
+    "AuthMeResponse": { "$ref": "#/$defs/AuthMeResponse" },
+    "AuthRefreshResponse": { "$ref": "#/$defs/AuthRefreshResponse" },
+    "IssueTokenRequest": { "$ref": "#/$defs/IssueTokenRequest" },
+    "IssueTokenResponse": { "$ref": "#/$defs/IssueTokenResponse" },
+    "JWK": { "$ref": "#/$defs/JWK" },
+    "JWKSResponse": { "$ref": "#/$defs/JWKSResponse" },
+    "ErrorResponse": { "$ref": "#/$defs/ErrorResponse" }
+  },
+  "$defs": {
+    "AgentStatus": {
+      "title": "AgentStatus",
+      "type": "string",
+      "enum": ["active", "frozen", "revoked"]
+    },
+    "KeyStatus": {
+      "title": "KeyStatus",
+      "type": "string",
+      "enum": ["active", "retired", "revoked"]
+    },
+    "ExportStatus": {
+      "title": "ExportStatus",
+      "type": "string",
+      "enum": ["queued", "running", "done", "failed"]
+    },
+    "AdminAction": {
+      "title": "AdminAction",
+      "type": "string",
+      "enum": [
+        "agent.register",
+        "agent.update",
+        "agent.freeze",
+        "agent.unfreeze",
+        "agent.revoke",
+        "agent.delete",
+        "key.revoke",
+        "export.create"
+      ]
+    },
+    "RbacRole": {
+      "title": "RbacRole",
+      "type": "string",
+      "enum": [
+        "org_owner",
+        "security_admin",
+        "compliance_auditor",
+        "readonly_investigator",
+        "integration_engineer"
+      ]
+    },
+    "ErrorCode": {
+      "title": "ErrorCode",
+      "type": "string",
+      "enum": [
+        "INVALID_SIGNATURE",
+        "UNKNOWN_AGENT",
+        "KEY_REVOKED",
+        "AGENT_FROZEN",
+        "TTL_EXPIRED",
+        "REPLAY_DETECTED",
+        "PREV_HASH_MISMATCH",
+        "PAYLOAD_TOO_LARGE",
+        "RATE_LIMITED",
+        "INTERNAL_ERROR",
+        "UNAUTHORIZED",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "VALIDATION_ERROR"
+      ]
+    },
+    "EOR": {
+      "title": "EOR",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op_version",
+        "operation_id",
+        "org_id",
+        "agent_id",
+        "issued_at",
+        "ttl_ms",
+        "nonce",
+        "operation_type",
+        "subject",
+        "action",
+        "payload",
+        "payload_hash",
+        "prev_chain_hash",
+        "agent_pubkey_kid",
+        "signature"
+      ],
+      "properties": {
+        "op_version": { "type": "string", "enum": ["1.0"] },
+        "operation_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "issued_at": { "type": "number" },
+        "ttl_ms": { "type": "number" },
+        "nonce": { "type": "string" },
+        "operation_type": { "type": "string" },
+        "subject": { "type": "object", "additionalProperties": true },
+        "action": { "type": "object", "additionalProperties": true },
+        "payload": { "type": ["object", "string", "null"], "additionalProperties": true },
+        "payload_hash": { "type": "string" },
+        "prev_chain_hash": { "type": "string" },
+        "agent_pubkey_kid": { "type": "string" },
+        "signature": { "type": "string" }
+      }
+    },
+    "ECH": {
+      "title": "ECH",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prev_ech", "payload_hash", "operation_id", "issued_at", "chain_hash"],
+      "properties": {
+        "prev_ech": { "type": "string" },
+        "payload_hash": { "type": "string" },
+        "operation_id": { "type": "string" },
+        "issued_at": { "type": "number" },
+        "chain_hash": { "type": "string" }
+      }
+    },
+    "EAR": {
+      "title": "EAR",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_version",
+        "receipt_id",
+        "operation_id",
+        "org_id",
+        "agent_id",
+        "server_received_at",
+        "seq_no",
+        "chain_hash",
+        "queue_message_id",
+        "receipt_hash",
+        "elydora_kid",
+        "elydora_signature"
+      ],
+      "properties": {
+        "receipt_version": { "type": "string" },
+        "receipt_id": { "type": "string" },
+        "operation_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "server_received_at": { "type": "number" },
+        "seq_no": { "type": "number" },
+        "chain_hash": { "type": "string" },
+        "queue_message_id": { "type": "string" },
+        "receipt_hash": { "type": "string" },
+        "elydora_kid": { "type": "string" },
+        "elydora_signature": { "type": "string" }
+      }
+    },
+    "EER": {
+      "title": "EER",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "epoch_id",
+        "org_id",
+        "start_time",
+        "end_time",
+        "leaf_count",
+        "root_hash",
+        "hash_alg",
+        "signature_by_elydora"
+      ],
+      "properties": {
+        "epoch_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "leaf_count": { "type": "number" },
+        "root_hash": { "type": "string" },
+        "hash_alg": { "type": "string" },
+        "signature_by_elydora": { "type": "string" }
+      }
+    },
+    "Agent": {
+      "title": "Agent",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "org_id",
+        "display_name",
+        "responsible_entity",
+        "integration_type",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "agent_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "responsible_entity": { "type": "string" },
+        "integration_type": { "type": "string" },
+        "status": { "$ref": "#/$defs/AgentStatus" },
+        "created_at": { "type": "number" },
+        "updated_at": { "type": "number" }
+      }
+    },
+    "AgentKey": {
+      "title": "AgentKey",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kid", "agent_id", "public_key", "algorithm", "status", "created_at", "retired_at"],
+      "properties": {
+        "kid": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "public_key": { "type": "string" },
+        "algorithm": { "type": "string", "enum": ["ed25519"] },
+        "status": { "$ref": "#/$defs/KeyStatus" },
+        "created_at": { "type": "number" },
+        "retired_at": { "type": ["number", "null"] }
+      }
+    },
+    "Operation": {
+      "title": "Operation",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "org_id",
+        "agent_id",
+        "seq_no",
+        "operation_type",
+        "issued_at",
+        "ttl_ms",
+        "nonce",
+        "subject",
+        "action",
+        "payload_hash",
+        "prev_chain_hash",
+        "chain_hash",
+        "agent_pubkey_kid",
+        "signature",
+        "r2_payload_key",
+        "created_at"
+      ],
+      "properties": {
+        "operation_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "seq_no": { "type": "number" },
+        "operation_type": { "type": "string" },
+        "issued_at": { "type": "number" },
+        "ttl_ms": { "type": "number" },
+        "nonce": { "type": "string" },
+        "subject": { "type": "string" },
+        "action": { "type": "string" },
+        "payload_hash": { "type": "string" },
+        "prev_chain_hash": { "type": "string" },
+        "chain_hash": { "type": "string" },
+        "agent_pubkey_kid": { "type": "string" },
+        "signature": { "type": "string" },
+        "r2_payload_key": { "type": ["string", "null"] },
+        "created_at": { "type": "number" }
+      }
+    },
+    "Receipt": {
+      "title": "Receipt",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "operation_id", "r2_receipt_key", "created_at"],
+      "properties": {
+        "receipt_id": { "type": "string" },
+        "operation_id": { "type": "string" },
+        "r2_receipt_key": { "type": "string" },
+        "created_at": { "type": "number" }
+      }
+    },
+    "Epoch": {
+      "title": "Epoch",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "epoch_id",
+        "org_id",
+        "start_time",
+        "end_time",
+        "root_hash",
+        "leaf_count",
+        "r2_epoch_key",
+        "created_at"
+      ],
+      "properties": {
+        "epoch_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "root_hash": { "type": "string" },
+        "leaf_count": { "type": "number" },
+        "r2_epoch_key": { "type": "string" },
+        "created_at": { "type": "number" }
+      }
+    },
+    "AdminEvent": {
+      "title": "AdminEvent",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "org_id",
+        "actor",
+        "action",
+        "target_type",
+        "target_id",
+        "details",
+        "created_at"
+      ],
+      "properties": {
+        "event_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "actor": { "type": "string" },
+        "action": { "type": "string" },
+        "target_type": { "type": "string" },
+        "target_id": { "type": "string" },
+        "details": { "type": ["string", "null"] },
+        "created_at": { "type": "number" }
+      }
+    },
+    "Export": {
+      "title": "Export",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "export_id",
+        "org_id",
+        "status",
+        "query_params",
+        "r2_export_key",
+        "created_at",
+        "completed_at"
+      ],
+      "properties": {
+        "export_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "status": { "$ref": "#/$defs/ExportStatus" },
+        "query_params": { "type": "string" },
+        "r2_export_key": { "type": ["string", "null"] },
+        "created_at": { "type": "number" },
+        "completed_at": { "type": ["number", "null"] }
+      }
+    },
+    "Organization": {
+      "title": "Organization",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "name", "created_at", "updated_at"],
+      "properties": {
+        "org_id": { "type": "string" },
+        "name": { "type": "string" },
+        "created_at": { "type": "number" },
+        "updated_at": { "type": "number" }
+      }
+    },
+    "User": {
+      "title": "User",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "org_id", "email", "display_name", "role", "status", "created_at", "updated_at"],
+      "properties": {
+        "user_id": { "type": "string" },
+        "org_id": { "type": "string" },
+        "email": { "type": "string" },
+        "display_name": { "type": "string" },
+        "role": { "$ref": "#/$defs/RbacRole" },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "created_at": { "type": "number" },
+        "updated_at": { "type": "number" }
+      }
+    },
+    "RegisterAgentRequest": {
+      "title": "RegisterAgentRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "keys"],
+      "properties": {
+        "agent_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "responsible_entity": { "type": "string" },
+        "integration_type": { "type": "string" },
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kid", "public_key", "algorithm"],
+            "properties": {
+              "kid": { "type": "string" },
+              "public_key": { "type": "string" },
+              "algorithm": { "type": "string", "enum": ["ed25519"] }
+            }
+          }
+        }
+      }
+    },
+    "RegisterAgentResponse": {
+      "title": "RegisterAgentResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "keys"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/Agent" },
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/AgentKey" } }
+      }
+    },
+    "GetAgentResponse": {
+      "title": "GetAgentResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "keys"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/Agent" },
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/AgentKey" } }
+      }
+    },
+    "ListAgentsResponse": {
+      "title": "ListAgentsResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agents"],
+      "properties": {
+        "agents": { "type": "array", "items": { "$ref": "#/$defs/Agent" } }
+      }
+    },
+    "FreezeAgentRequest": {
+      "title": "FreezeAgentRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": { "reason": { "type": "string" } }
+    },
+    "UnfreezeAgentRequest": {
+      "title": "UnfreezeAgentRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": { "reason": { "type": "string" } }
+    },
+    "RevokeAgentRequest": {
+      "title": "RevokeAgentRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kid", "reason"],
+      "properties": {
+        "kid": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "UpdateAgentRequest": {
+      "title": "UpdateAgentRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integration_type"],
+      "properties": { "integration_type": { "type": "string" } }
+    },
+    "SubmitOperationRequest": {
+      "title": "SubmitOperationRequest",
+      "$ref": "#/$defs/EOR"
+    },
+    "SubmitOperationResponse": {
+      "title": "SubmitOperationResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt"],
+      "properties": { "receipt": { "$ref": "#/$defs/EAR" } }
+    },
+    "GetOperationResponse": {
+      "title": "GetOperationResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation"],
+      "properties": {
+        "operation": { "$ref": "#/$defs/Operation" },
+        "receipt": { "$ref": "#/$defs/Receipt" },
+        "payload": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "VerifyOperationResponse": {
+      "title": "VerifyOperationResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "checks"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["signature", "chain", "receipt"],
+          "properties": {
+            "signature": { "type": "boolean" },
+            "chain": { "type": "boolean" },
+            "receipt": { "type": "boolean" },
+            "merkle": { "type": "boolean" }
+          }
+        },
+        "errors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "AuditQueryRequest": {
+      "title": "AuditQueryRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "org_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "operation_type": { "type": "string" },
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "cursor": { "type": "string" },
+        "limit": { "type": "number" }
+      }
+    },
+    "AuditQueryResponse": {
+      "title": "AuditQueryResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operations", "total_count"],
+      "properties": {
+        "operations": { "type": "array", "items": { "$ref": "#/$defs/Operation" } },
+        "cursor": { "type": "string" },
+        "total_count": { "type": "number" }
+      }
+    },
+    "GetEpochResponse": {
+      "title": "GetEpochResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch"],
+      "properties": {
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tsa_token": { "type": "string" },
+            "tsa_url": { "type": "string" },
+            "anchored_at": { "type": "number" }
+          }
+        }
+      }
+    },
+    "ListEpochsResponse": {
+      "title": "ListEpochsResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epochs"],
+      "properties": {
+        "epochs": { "type": "array", "items": { "$ref": "#/$defs/Epoch" } }
+      }
+    },
+    "CreateExportRequest": {
+      "title": "CreateExportRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_time", "end_time", "format"],
+      "properties": {
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "agent_id": { "type": "string" },
+        "operation_type": { "type": "string" },
+        "format": { "type": "string", "enum": ["json", "pdf"] }
+      }
+    },
+    "CreateExportResponse": {
+      "title": "CreateExportResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["export"],
+      "properties": { "export": { "$ref": "#/$defs/Export" } }
+    },
+    "GetExportResponse": {
+      "title": "GetExportResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["export"],
+      "properties": {
+        "export": { "$ref": "#/$defs/Export" },
+        "download_url": { "type": "string" }
+      }
+    },
+    "ListExportsResponse": {
+      "title": "ListExportsResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exports"],
+      "properties": {
+        "exports": { "type": "array", "items": { "$ref": "#/$defs/Export" } }
+      }
+    },
+    "AuthRegisterRequest": {
+      "title": "AuthRegisterRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "password"],
+      "properties": {
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "display_name": { "type": "string" },
+        "org_name": { "type": "string" }
+      }
+    },
+    "AuthRegisterResponse": {
+      "title": "AuthRegisterResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "organization", "token"],
+      "properties": {
+        "user": { "$ref": "#/$defs/User" },
+        "organization": { "$ref": "#/$defs/Organization" },
+        "token": { "type": "string" }
+      }
+    },
+    "AuthLoginRequest": {
+      "title": "AuthLoginRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "password"],
+      "properties": {
+        "email": { "type": "string" },
+        "password": { "type": "string" }
+      }
+    },
+    "AuthLoginResponse": {
+      "title": "AuthLoginResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "token"],
+      "properties": {
+        "user": { "$ref": "#/$defs/User" },
+        "token": { "type": "string" }
+      }
+    },
+    "AuthMeResponse": {
+      "title": "AuthMeResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user"],
+      "properties": { "user": { "$ref": "#/$defs/User" } }
+    },
+    "AuthRefreshResponse": {
+      "title": "AuthRefreshResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token"],
+      "properties": { "token": { "type": "string" } }
+    },
+    "IssueTokenRequest": {
+      "title": "IssueTokenRequest",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ttl_seconds": { "type": ["number", "null"] }
+      }
+    },
+    "IssueTokenResponse": {
+      "title": "IssueTokenResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "expires_at"],
+      "properties": {
+        "token": { "type": "string" },
+        "expires_at": { "type": ["number", "null"] }
+      }
+    },
+    "JWK": {
+      "title": "JWK",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kty", "kid", "use", "alg"],
+      "properties": {
+        "kty": { "type": "string" },
+        "crv": { "type": "string" },
+        "x": { "type": "string" },
+        "kid": { "type": "string" },
+        "use": { "type": "string" },
+        "alg": { "type": "string" }
+      }
+    },
+    "JWKSResponse": {
+      "title": "JWKSResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keys"],
+      "properties": {
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/JWK" } }
+      }
+    },
+    "ErrorResponse": {
+      "title": "ErrorResponse",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "request_id"],
+          "properties": {
+            "code": { "$ref": "#/$defs/ErrorCode" },
+            "message": { "type": "string" },
+            "request_id": { "type": "string" },
+            "details": { "type": "object", "additionalProperties": true }
+          }
+        }
+      }
+    }
+  }
+}
