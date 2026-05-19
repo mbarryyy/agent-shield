@@ -178,9 +178,8 @@ class Arm:
         resolve cleanly (no mismatch) once aligned + merged.
         """
         try:
-            # attr-defined ignored on purpose: these symbols do not exist on
-            # the W0/W1 stub modules until sdk-w2 (PR #11) merges; this is
-            # runtime-guarded by `except ImportError` → ArmUnavailable (SKIP).
+            # Runtime-guarded: the canonical sdk Shield API ships with sdk-w2;
+            # on a pre-merge tree this ImportError → ArmUnavailable (SKIP).
             from shield_sdk.instrument.agentdojo import (
                 ShieldElementConfig,
                 shield_loop_elements,
