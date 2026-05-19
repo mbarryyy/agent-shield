@@ -444,11 +444,51 @@ class ShieldRecorder(BasePipelineElement):  # type: ignore[misc]  # agentdojo ba
 def build_shield_elements(
     config: ShieldElementConfig,
 ) -> tuple[ShieldGuard, ShieldedToolsExecutor, ShieldRecorder]:
-    """The 3 elements in pipeline order: insert into ``ToolsExecutionLoop``
-    as ``[..., LLM, ShieldGuard, ShieldedToolsExecutor, ShieldRecorder]``
-    (ShieldGuard BEFORE the executor; ShieldRecorder AFTER it)."""
+    """The 3 Shield elements (ShieldGuard, ShieldedToolsExecutor,
+    ShieldRecorder), in their relative order.
+
+    CANONICAL ``ToolsExecutionLoop`` composition (seam-#3, §5b-verified
+    against agentdojo HEAD 18b501a ``agent_pipeline.py.from_config``)::
+
+        ToolsExecutionLoop([ShieldGuard, ShieldedToolsExecutor,
+                            ShieldRecorder, llm])
+
+    Every native ``from_config`` loop is ``[ToolsExecutor(...), <optional
+    defense>, llm]`` — executor FIRST, **llm LAST** (`from_config` L203
+    no-defense, L208 tool_filter, L225-236 transformers_pi_detector with the
+    post-executor detector slot, L249 repeat_user_prompt; top-level pipeline
+    is always ``[system, init_query, llm, tools_loop]`` so the pre-loop llm
+    emits the first assistant+tool_calls and the loop is *process-then-
+    generate*, ``tool_execution.py:146-157``). ``ShieldedToolsExecutor``
+    IS-A ``ToolsExecutor`` so it occupies that native executor slot;
+    ``ShieldGuard`` immediately before it preserves the invariant "enforce
+    BEFORE the money-line ``:103``"; ``ShieldRecorder`` immediately after it
+    is the post-executor slot (same position as ``transformers_pi_detector``,
+    `from_config` L228); ``llm`` LAST.
+
+    DO NOT place the llm first: ``[..., llm, ShieldGuard, ...]`` regenerates
+    on the still-pending tool_calls (the loop enters with the last message =
+    assistant+tool_calls from the pre-loop llm) → double-generate / pending
+    tool_calls skipped / ``last_message["role"] == "assistant"`` invariant
+    broken (``tool_execution.py:148-153``). Use ``shield_loop_elements`` to
+    get the full ordered list (incl. ``llm``) by construction.
+    """
     return (
         ShieldGuard(config),
         ShieldedToolsExecutor(config),
         ShieldRecorder(config),
     )
+
+
+def shield_loop_elements(config: ShieldElementConfig, llm: Any) -> list[Any]:
+    """The CANONICAL ``ToolsExecutionLoop`` element list, by construction:
+    ``[ShieldGuard, ShieldedToolsExecutor, ShieldRecorder, llm]`` (seam-#3,
+    §5b-verified vs agentdojo 18b501a ``from_config``). Pass the SAME ``llm``
+    element AgentDojo would use; wrap as
+    ``ToolsExecutionLoop(shield_loop_elements(cfg, llm))`` inside the
+    top-level ``AgentPipeline([system, init_query, llm, tools_loop])``.
+    Prevents the llm-first double-generate foot-gun for every consumer
+    (eval/console/future) — see ``build_shield_elements`` for the derivation.
+    """
+    guard, executor, recorder = build_shield_elements(config)
+    return [guard, executor, recorder, llm]

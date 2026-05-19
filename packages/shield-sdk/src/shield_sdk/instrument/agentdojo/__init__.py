@@ -14,6 +14,7 @@ from .elements import (
     ShieldGuard,
     ShieldRecorder,
     build_shield_elements,
+    shield_loop_elements,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ShieldRecorder",
     "ShieldedToolsExecutor",
     "build_shield_elements",
+    "shield_loop_elements",
 ]
