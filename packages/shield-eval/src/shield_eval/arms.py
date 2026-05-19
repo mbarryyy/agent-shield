@@ -39,11 +39,25 @@ built-in baselines + the Axis-C governance moat" — never "beat SOTA".
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+
+from .decide import DecideProvider, mock_transport
+
+# Frozen Ed25519 test keypair shipped in the repo (W0 golden vectors). Used to
+# sign records in DETERMINISTIC shield runs only (offline demo-safety path);
+# it is a test fixture, never a secret, consumed read-only.
+_GOLDEN = Path(__file__).resolve().parents[4] / "contracts" / "golden" / "vectors.json"
+
+
+def _frozen_test_key() -> str:
+    return str(json.loads(_GOLDEN.read_text(encoding="utf-8"))["keypair"]["private_key_b64url"])
+
 
 # A0b: the exact 4 built-ins from agentdojo/agent_pipeline/agent_pipeline.py:DEFENSES.
 NATIVE_BASELINES: tuple[str, ...] = (
@@ -90,6 +104,16 @@ class ShieldWiring:
     decide_path: str = "/v1/governance/decide"  # server-confirmed (team-lead)
     record_path: str = "/v1/governance/record"  # server-confirmed (team-lead, PR#12)
     agent_private_key_b64url: str | None = None
+    # Deterministic demo-safety path: when set, the unchanged sdk ShieldClient
+    # is driven in-process via httpx.MockTransport over this eval-owned
+    # provider (no live server). None ⇒ real HTTP path (needs base_url+key).
+    local_provider: DecideProvider | None = None
+    # Pre-built httpx transport (eval-owned). Highest precedence: used as-is on
+    # the unchanged sdk ShieldClient. This is how the REAL-graph run drives the
+    # real gov 4-guardian decide() in-process (decide.real_gov_transport()),
+    # and how the deterministic path could pass a ready transport. None ⇒
+    # fall back to local_provider (mock) or real external HTTP (base_url).
+    transport: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -159,10 +183,10 @@ class Arm:
             # runtime-guarded by `except ImportError` → ArmUnavailable (SKIP).
             from shield_sdk.instrument.agentdojo import (
                 ShieldElementConfig,
-                build_shield_elements,
+                shield_loop_elements,
             )
             from shield_sdk.sdk import ShieldClient
-        except ImportError as e:  # pragma: no cover - until sdk-w2 lands
+        except ImportError as e:  # pragma: no cover - pre sdk-w2 trees only
             raise ArmUnavailable(
                 f"{self.key}: canonical Shield API lands with sdk-w2 "
                 f"(shield_sdk.instrument.agentdojo + shield_sdk.sdk.ShieldClient) "
@@ -170,36 +194,58 @@ class Arm:
             ) from e
 
         w = wiring or ShieldWiring()
-        if not w.base_url or not w.agent_private_key_b64url:
+        in_process = w.transport is not None or w.local_provider is not None
+        if not in_process and (not w.base_url or not w.agent_private_key_b64url):
             raise ArmUnavailable(
-                f"{self.key}: shield wiring not configured "
-                "(needs --decide-url + --shield-agent-key; live at W3 once "
-                "server-w2 /decide is up) — SKIP, never faked"
+                f"{self.key}: real shield wiring not configured "
+                "(needs --decide-url + --shield-agent-key for the live server; "
+                "or a deterministic/real in-process transport) — SKIP, never faked"
             )
         try:
             from agentdojo.agent_pipeline.tool_execution import ToolsExecutionLoop
 
             # Server-confirmed route strings (team-lead relay): pre_exec
             # /v1/governance/decide, post_exec/Channel-2 /v1/governance/record.
-            # **kwargs construction: the canonical ShieldClient signature
-            # (base_url/decide_path/record_path) ships with sdk-w2 (PR #11);
-            # main's stub differs, so we build against the canonical API
-            # without a static signature dependency on the stub.
+            # **kwargs construction: build against the canonical ShieldClient
+            # signature without a static dependency on it.
             client_kw: dict[str, Any] = {
-                "base_url": w.base_url,
                 "decide_path": w.decide_path,
                 "record_path": w.record_path,
             }
+            if w.transport is not None:
+                # Highest precedence: an eval-owned pre-built transport on the
+                # UNCHANGED sdk ShieldClient. This is the REAL-graph path
+                # (decide.real_gov_transport() → the real gov 4-guardian
+                # decide()); also accepts any ready transport. Frozen golden
+                # test key signs the records (test fixture; keyless).
+                client_kw["base_url"] = w.base_url or "http://shield.local"
+                client_kw["transport"] = w.transport
+                agent_key = w.agent_private_key_b64url or _frozen_test_key()
+            elif w.local_provider is not None:
+                # Deterministic demo-safety path: eval-owned provider served
+                # in-process to the UNCHANGED sdk ShieldClient via MockTransport.
+                client_kw["base_url"] = w.base_url or "http://shield.local"
+                client_kw["transport"] = mock_transport(w.local_provider)
+                agent_key = w.agent_private_key_b64url or _frozen_test_key()
+            else:
+                client_kw["base_url"] = w.base_url
+                agent_key = w.agent_private_key_b64url or ""
             cfg = ShieldElementConfig(
                 client=ShieldClient(**client_kw),
-                agent_private_key_b64url=w.agent_private_key_b64url,
+                agent_private_key_b64url=agent_key,
                 run_id=None,  # org_id/agent_id/workflow_id/budget/fail_policy: defaults OK
             )
-            guard, executor, recorder = build_shield_elements(cfg)
 
+            # Canonical loop composition via the sdk's correct-by-construction
+            # helper (seam-#3 LOCKED order [ShieldGuard, ShieldedToolsExecutor,
+            # ShieldRecorder, llm] — §5b-verified vs agentdojo 18b501a
+            # from_config; the eval-found, reviewer-source-confirmed,
+            # team-lead-locked order). Adopting shield_loop_elements kills the
+            # hand-assembly drift foot-gun (zero logic change vs the prior
+            # hand-form, which was byte-identical to this list).
             base = self._build_native(llm, mock=isinstance(llm, BasePipelineElement))
             sysmsg, initq, worker = base.elements[0], base.elements[1], base.elements[2]
-            loop = ToolsExecutionLoop([worker, guard, executor, recorder])
+            loop = ToolsExecutionLoop(shield_loop_elements(cfg, worker))
             pipeline = AgentPipeline([sysmsg, initq, worker, loop])
             pipeline.name = f"{getattr(worker, 'name', 'shield')}-{self.key.lower()}"
             return pipeline
