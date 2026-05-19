@@ -34,6 +34,7 @@ from ..models import (
     ExportModel,
     FreezeAgentRequest,
     GetExportResponseModel,
+    IncidentsResponse,
     IssueTokenResponseModel,
     JWKSResponse,
     ListEpochsResponse,
@@ -227,6 +228,23 @@ async def governance_cost(run_id: str, request: Request, ctx: Ctx) -> CostRollup
     return await reads_svc.cost(get_storage(request), ctx.org_id, run_id)
 
 
+@router.get("/v1/governance/incidents")
+async def governance_incidents(
+    request: Request,
+    ctx: Ctx,
+    run_id: str | None = None,
+    status: str | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> IncidentsResponse:
+    """Console U6 HITL view — list ESCALATE incidents + server-authoritative
+    pending/resolved state. `incident_id` == the verdict_id consumed by
+    POST /v1/governance/incidents/{incident_id}/resume."""
+    return await reads_svc.incidents(
+        get_storage(request), ctx.org_id, run_id, status, cursor, limit
+    )
+
+
 def _sse(event: str, data: str) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
@@ -271,6 +289,7 @@ async def governance_resume(incident_id: str, request: Request, ctx: Ctx) -> Gov
     if payload is not None and not isinstance(payload, dict):
         raise AppError(400, "VALIDATION_ERROR", "resume payload must be an object.")
     return await governance_svc.resume(
+        get_storage(request),
         request.app.state.settings,
         request.app.state.governance,
         incident_id,

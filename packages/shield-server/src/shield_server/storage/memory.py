@@ -250,6 +250,11 @@ class MemoryDatabase:
             ]
             row = dict(zip(cols, args, strict=True))
             self.governance_verdicts[str(row["verdict_id"])] = row
+        elif s.startswith("UPDATE governance_verdicts SET resolution"):
+            gv = self.governance_verdicts.get(str(args[-1]))
+            if gv is not None:  # tolerant: no-op if the incident isn't recorded
+                gv["resolution"] = args[0]
+                gv["resolved_at"] = args[1]
         else:  # pragma: no cover - defensive
             raise AssertionError(f"MemoryDatabase: unmodelled execute: {s}")
 

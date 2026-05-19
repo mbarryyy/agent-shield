@@ -331,3 +331,26 @@ class CostRollup(BaseModel):
     prevented_loss_total: float  # USD; Σ obligations.prevented_loss (MEASURED)
     latency_p50_ms: float
     latency_p95_ms: float
+
+
+# --- W3 incidents-list (companion to S5 resume; console U6 HITL view).
+# Additive /v1/governance/*, console-pact; server-authoritative HITL state.
+# `incident_id` == the ESCALATE gate verdict_id (the SAME id
+# POST /v1/governance/incidents/{incident_id}/resume consumes).
+
+
+class IncidentRow(BaseModel):
+    incident_id: str  # == ESCALATE gate verdict_id
+    correlation_id: str
+    run_id: str | None = None
+    decision: str
+    risk_score: float
+    status: Literal["pending", "resolved"]
+    resolution: Literal["accept", "edit", "response", "ignore"] | None = None
+    created_at: int
+
+
+class IncidentsResponse(BaseModel):
+    incidents: list[IncidentRow]
+    cursor: str | None = None
+    total_count: int

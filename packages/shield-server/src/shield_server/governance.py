@@ -373,6 +373,7 @@ RESUME_DECISIONS = ("accept", "edit", "response", "ignore")
 
 
 async def resume(
+    storage: Storage,
     settings: Settings,
     gov_app: GovernanceApp,
     incident_id: str,
@@ -380,9 +381,10 @@ async def resume(
     payload: dict[str, object] | None,
 ) -> GovernanceVerdict:
     """W3 PR-S5 — thin HITL resume gate. Server owns route+auth+validation +
-    SIGNING; governance owns the semantics (LangGraph ``Command(resume=…)``
-    re-entry of the paused incident, gov §3.3). Returns the server-signed
-    post-resume verdict."""
+    SIGNING + the server-authoritative resume-STATE (the incidents-list
+    status); governance owns the semantics (LangGraph ``Command(resume=…)``
+    re-entry of the paused incident, gov §3.3). ``incident_id`` is the
+    ESCALATE gate verdict_id. Returns the server-signed post-resume verdict."""
     from .config import SHIELD_KID
 
     if decision not in RESUME_DECISIONS:
@@ -398,4 +400,14 @@ async def resume(
     verdict.shield_kid = SHIELD_KID
     # Server owns signing (the shield-server key) — verdict arrives UNSIGNED.
     verdict = canonical.finalize_verdict(verdict, settings.server_signing_key)
+
+    # Server-authoritative resume-STATE: mark the incident (= the ESCALATE gate
+    # verdict_id) resolved so GET /v1/governance/incidents flips pending→
+    # resolved on the SAME id. Tolerant: no-op if the incident isn't recorded.
+    await storage.db.execute(
+        "UPDATE governance_verdicts SET resolution = $1, resolved_at = $2 WHERE verdict_id = $3",
+        decision,
+        _now_ms(),
+        incident_id,
+    )
     return verdict
