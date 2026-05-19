@@ -299,8 +299,8 @@ async def decide(
         await tx.execute(
             "INSERT INTO governance_verdicts (verdict_id, record_id, "
             "correlation_id, run_id, org_id, agent_id, decision, risk_score, "
-            "latency_ms, r2_verdict_key, created_at) VALUES "
-            "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            "latency_ms, prevented_loss, r2_verdict_key, created_at) VALUES "
+            "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
             verdict.verdict_id,
             rec.record_id,
             rec.correlation_id,
@@ -310,6 +310,9 @@ async def decide(
             verdict.decision.value,
             verdict.risk_score,
             verdict.latency_ms,
+            # Server STORES (never computes) the §4 obligations.prevented_loss
+            # gov/sdk set — the MEASURED env-diff; /cost read-rolls it up.
+            verdict.obligations.prevented_loss or 0.0,
             verdict_key,
             received_at,
         )
