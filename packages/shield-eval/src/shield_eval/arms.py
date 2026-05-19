@@ -161,8 +161,8 @@ class Arm:
           base_url=…, decide_path=…, [record_path=…]),
           agent_private_key_b64url=…, …defaults OK…))`` →
           ``(ShieldGuard, ShieldedToolsExecutor, ShieldRecorder)``.
-        * Loop element order is ``[…, <LLM>, ShieldGuard,
-          ShieldedToolsExecutor, ShieldRecorder]``.
+        * Canonical inner-loop element order (seam-#3, LLM-LAST) is
+          ``[ShieldGuard, ShieldedToolsExecutor, ShieldRecorder, <LLM>]``.
         * A1 Free vs A2 Paid = WHERE ``ShieldClient`` points (A1 → stub
           ``/decide`` PASS; A2 → real Layer-2 / eval mock fallback). ZERO
           element changes — ``decide.py`` providers map cleanly as the
