@@ -157,7 +157,7 @@ class Arm:
             # attr-defined ignored on purpose: these symbols do not exist on
             # the W0/W1 stub modules until sdk-w2 (PR #11) merges; this is
             # runtime-guarded by `except ImportError` → ArmUnavailable (SKIP).
-            from shield_sdk.instrument.agentdojo import (  # type: ignore[attr-defined]
+            from shield_sdk.instrument.agentdojo import (
                 ShieldElementConfig,
                 build_shield_elements,
             )
