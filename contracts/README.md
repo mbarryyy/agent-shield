@@ -15,13 +15,16 @@ This directory holds the **frozen artifacts** CI diffs on every PR:
 | `golden/vectors.json`              | cross-impl crypto vectors vs Elydora's reference Python SDK |
 | `codegen/`                         | JSON-Schema → TypeScript generator feeding `console/` |
 
-## Status: W0 STUBS
+## Status: FROZEN at shield_version 1.1 (ADR-0007)
 
-Everything here is a **W0 compile-unblock stub**. The real freeze happens at
-**W1**: `sdk-builder` finalizes `shield_sdk.schema` as `shield_version` **1.1**
-(the §4 baseline *including* the three optional cost fields) and regenerates
-these snapshots. The `1.0 → 1.1` MINOR bump is the **single planned all-owner
-contract ritual** (ADR-0007), executed once at W1 *before* any consumer builds.
+These artifacts are regenerated from the single pydantic source of truth
+`packages/shield-sdk/src/shield_sdk/schema.py` via
+`packages/shield-sdk/tests/_tools/gen_contract_snapshots.py`
+(`additionalProperties: false` on every closed object — O5; `payload.tool_args`
+/ `subject` stay open by design). The `1.0 → 1.1` MINOR bump (the three
+optional cost fields + the W0-stub→§4 corrections) is the **single planned
+all-owner contract ritual** (ADR-0007), ratified once *before* any consumer
+builds. After this, §4 is frozen at v1.1.
 
 ## Change ritual (after W1 freeze — the only place a mistake propagates)
 

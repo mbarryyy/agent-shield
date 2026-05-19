@@ -2,50 +2,328 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-shield/contracts/governance_verdict.schema.json",
   "title": "GovernanceVerdict",
-  "x-status": "W0-STUB — frozen at W1 as shield_version 1.1 by sdk-builder (C11/ADR-0007). The three cost fields (reasons[].model_id, reasons[].served_via, obligations.prevented_loss) are part of the v1.1 baseline from W1, NOT a later additive.",
+  "x-status": "FROZEN \u00a74 v1.1 (C11/ADR-0007). Regenerated from shield_sdk.schema (the single pydantic source of truth) via packages/shield-sdk/tests/_tools/gen_contract_snapshots.py. additionalProperties:false on every closed object; tool_args/subject are intentionally open maps.",
   "x-shield-version": "1.1",
-  "type": "object",
-  "required": ["shield_version", "decision", "correlation_id"],
-  "properties": {
-    "shield_version": { "type": "string", "const": "1.1" },
-    "decision": {
-      "type": "string",
-      "enum": ["PASS", "ALERT", "BLOCK", "ESCALATE", "ROLLBACK", "REWRITE"]
+  "$defs": {
+    "Decision": {
+      "enum": [
+        "PASS",
+        "ALERT",
+        "BLOCK",
+        "ESCALATE",
+        "ROLLBACK",
+        "REWRITE"
+      ],
+      "title": "Decision",
+      "type": "string"
     },
-    "correlation_id": { "type": "string" },
-    "risk_score": { "type": "number", "minimum": 0, "maximum": 1 },
-    "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-    "reasons": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "code": { "type": "string" },
-          "message": { "type": "string" },
-          "guardian": { "type": "string", "enum": ["defender", "evaluator", "supervisor", "auditor"] },
-          "model_id": { "type": ["string", "null"], "description": "v1.1 cost field" },
-          "served_via": { "type": ["string", "null"], "enum": ["cloud", "local", null], "description": "v1.1 cost field" }
+    "Guardian": {
+      "enum": [
+        "defender",
+        "evaluator",
+        "supervisor",
+        "auditor"
+      ],
+      "title": "Guardian",
+      "type": "string"
+    },
+    "Obligations": {
+      "additionalProperties": false,
+      "description": "Locally-enforced obligations. ``prevented_loss`` is a v1.1 cost field.",
+      "properties": {
+        "mask_args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mask Args"
         },
-        "required": ["code"]
-      }
+        "rewrite_args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rewrite Args"
+        },
+        "require_human": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Require Human"
+        },
+        "rollback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RollbackObligation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prevented_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prevented Loss"
+        }
+      },
+      "title": "Obligations",
+      "type": "object"
+    },
+    "RollbackObligation": {
+      "additionalProperties": false,
+      "description": "Dual-substrate rollback target (C2): BOTH fire on a ROLLBACK verdict.",
+      "properties": {
+        "langgraph_checkpoint_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Langgraph Checkpoint Id"
+        },
+        "env_snapshot_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env Snapshot Ref"
+        }
+      },
+      "title": "RollbackObligation",
+      "type": "object"
+    },
+    "ServedVia": {
+      "enum": [
+        "cloud",
+        "local"
+      ],
+      "title": "ServedVia",
+      "type": "string"
+    },
+    "VerdictReason": {
+      "additionalProperties": false,
+      "description": "One per-guardian reason. ``model_id``/``served_via`` are v1.1 cost\nfields (C11 / ADR-0007).",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Guardian"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "served_via": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServedVia"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "VerdictReason",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Synchronous verdict returned by ``POST /v1/governance/decide``.\n\nFROZEN \u00a74.2 baseline, v1.1. Signed by the shield server key\n(``signature_by_shield``), offline-verifiable like an Elydora EAR; the\nsignable projection excludes ``signature_by_shield`` only.",
+  "properties": {
+    "shield_version": {
+      "default": "1.1",
+      "title": "Shield Version",
+      "type": "string"
+    },
+    "verdict_id": {
+      "title": "Verdict Id",
+      "type": "string"
+    },
+    "record_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Record Id"
+    },
+    "correlation_id": {
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "decision": {
+      "$ref": "#/$defs/Decision"
+    },
+    "risk_score": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Risk Score",
+      "type": "number"
+    },
+    "reasons": {
+      "items": {
+        "$ref": "#/$defs/VerdictReason"
+      },
+      "title": "Reasons",
+      "type": "array"
     },
     "obligations": {
-      "type": "object",
-      "properties": {
-        "rewrite_args": { "type": ["object", "null"] },
-        "mask_args": { "type": ["array", "null"], "items": { "type": "string" } },
-        "require_human": { "type": ["boolean", "null"] },
-        "rollback": {
-          "type": ["object", "null"],
-          "properties": {
-            "langgraph_checkpoint_id": { "type": ["string", "null"] },
-            "env_snapshot_ref": { "type": ["string", "null"] }
-          }
-        },
-        "prevented_loss": { "type": ["number", "null"], "description": "v1.1 cost field — $ value of prevented action" }
-      }
+      "$ref": "#/$defs/Obligations"
     },
-    "latency_ms": { "type": ["number", "null"] }
+    "latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latency Ms"
+    },
+    "served_at": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Served At"
+    },
+    "shield_kid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Shield Kid"
+    },
+    "signature_by_shield": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Signature By Shield"
+    }
   },
-  "additionalProperties": true
+  "required": [
+    "correlation_id",
+    "decision"
+  ],
+  "type": "object"
 }
