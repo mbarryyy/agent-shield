@@ -67,6 +67,12 @@ class MemoryCache:
         entries.append((msg_id, dict(fields)))
         return msg_id
 
+    async def xrange(
+        self, stream: str, *, count: int | None = None
+    ) -> list[tuple[str, dict[str, str]]]:
+        entries = [(mid, dict(f)) for mid, f in self.streams.get(stream, [])]
+        return entries if count is None else entries[:count]
+
 
 class _MemoryTx:
     def __init__(self, db: MemoryDatabase) -> None:
@@ -90,6 +96,7 @@ class MemoryDatabase:
         self.operations: dict[str, dict[str, Any]] = {}
         self.receipts: dict[str, dict[str, Any]] = {}
         self.intervention_log: list[dict[str, Any]] = []
+        self.governance_verdicts: dict[str, dict[str, Any]] = {}
 
     async def fetchrow(self, sql: str, *args: object) -> dict[str, object] | None:
         s = " ".join(sql.split())
@@ -122,6 +129,8 @@ class MemoryDatabase:
 
     async def fetch(self, sql: str, *args: object) -> list[dict[str, object]]:
         # Only used by audit.query_audit, which sorts/filters in Python.
+        if "FROM governance_verdicts" in sql:
+            return [dict(v) for v in self.governance_verdicts.values()]
         if "FROM operations" in sql:
             return [dict(o) for o in self.operations.values()]
         if "FROM agent_keys" in sql:
@@ -154,8 +163,13 @@ class MemoryDatabase:
                 "signature",
                 "r2_payload_key",
                 "created_at",
+                # W3 PR-S2 additive (nullable) — present only on §4 ingest,
+                # absent on the 17-col W1 Elydora-EOR insert (zip strict=False).
+                "correlation_id",
+                "run_id",
+                "phase",
             ]
-            row = dict(zip(cols, args, strict=True))
+            row = dict(zip(cols, args, strict=False))
             self.operations[str(row["operation_id"])] = row
         elif s.startswith("INSERT INTO receipts"):
             cols = ["receipt_id", "operation_id", "r2_receipt_key", "created_at"]
@@ -217,6 +231,22 @@ class MemoryDatabase:
                 "created_at",
             ]
             self.intervention_log.append(dict(zip(cols, args, strict=True)))
+        elif s.startswith("INSERT INTO governance_verdicts"):
+            cols = [
+                "verdict_id",
+                "record_id",
+                "correlation_id",
+                "run_id",
+                "org_id",
+                "agent_id",
+                "decision",
+                "risk_score",
+                "latency_ms",
+                "r2_verdict_key",
+                "created_at",
+            ]
+            row = dict(zip(cols, args, strict=True))
+            self.governance_verdicts[str(row["verdict_id"])] = row
         else:  # pragma: no cover - defensive
             raise AssertionError(f"MemoryDatabase: unmodelled execute: {s}")
 

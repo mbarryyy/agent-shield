@@ -7,11 +7,13 @@ governance surface (`POST /v1/governance/decide`, Channel-2 streams) lands at W2
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 from shield_sdk.schema import GovernanceVerdict, ShieldActionRecord
 
@@ -19,9 +21,11 @@ from .. import agents as agent_svc
 from .. import audit as audit_svc
 from .. import governance as governance_svc
 from .. import ingest as ingest_svc
+from .. import reads as reads_svc
 from .._crypto import CryptoProvider
 from .._ids import generate_uuid7
 from ..auth import AuthContext, auth_context
+from ..config import ACTIONS_STREAM_PREFIX, VERDICTS_STREAM_PREFIX
 from ..errors import AppError
 from ..models import (
     AuditQueryRequest,
@@ -34,11 +38,14 @@ from ..models import (
     ListEpochsResponse,
     ListExportsResponse,
     OperationRecord,
+    ProvenanceGraph,
     RegisterAgentRequest,
     RevokeAgentRequest,
     SubmitOperationResponse,
+    TimelineResponse,
     UnfreezeAgentRequest,
     UpdateAgentRequest,
+    VerdictView,
 )
 from ..storage import Storage
 
@@ -187,6 +194,56 @@ async def governance_record(request: Request, ctx: Ctx) -> dict[str, object]:
     except ValidationError as exc:
         raise AppError(400, "VALIDATION_ERROR", "Malformed ShieldActionRecord.") from exc
     return await governance_svc.record(get_storage(request), rec, request.app.state.settings)
+
+
+# --- governance READ contract (W3 PR-S2; additive /v1/governance/*, ---------
+#     console-pact typed, NOT a frozen-§4 contracts/*.schema.json change) -----
+@router.get("/v1/governance/runs/{run_id}/timeline")
+async def governance_timeline(
+    run_id: str,
+    request: Request,
+    ctx: Ctx,
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> TimelineResponse:
+    return await reads_svc.timeline(get_storage(request), ctx.org_id, run_id, cursor, limit)
+
+
+@router.get("/v1/governance/verdicts/{correlation_id}")
+async def governance_verdict(correlation_id: str, request: Request, ctx: Ctx) -> VerdictView:
+    return await reads_svc.verdict_by_correlation(get_storage(request), ctx.org_id, correlation_id)
+
+
+@router.get("/v1/governance/runs/{run_id}/provenance")
+async def governance_provenance(run_id: str, request: Request, ctx: Ctx) -> ProvenanceGraph:
+    return await reads_svc.provenance(get_storage(request), ctx.org_id, run_id)
+
+
+def _sse(event: str, data: str) -> str:
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+@router.get("/v1/governance/stream")
+async def governance_stream(
+    request: Request,
+    ctx: Ctx,
+    workflow_id: str = "banking",
+) -> StreamingResponse:
+    """SSE bridge Redis Channel-2 → browser (a browser cannot read Redis).
+    Drains the current shield:actions/shield:verdicts snapshot for the
+    workflow and closes — bounded + docker-free-testable; continuous tailing
+    is the prod/CI path (real Redis XRANGE)."""
+    storage = get_storage(request)
+    actions = f"{ACTIONS_STREAM_PREFIX}:{workflow_id}"
+    verdicts = f"{VERDICTS_STREAM_PREFIX}:{workflow_id}"
+
+    async def _gen() -> AsyncIterator[str]:
+        for _mid, fields in await storage.cache.xrange(actions):
+            yield _sse("action", json.dumps(fields))
+        for _mid, fields in await storage.cache.xrange(verdicts):
+            yield _sse("verdict", json.dumps(fields))
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
 # --- epochs (W4 produces real epochs; W1 = empty list / not-found) ---------

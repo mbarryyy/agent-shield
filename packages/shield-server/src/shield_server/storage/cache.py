@@ -45,3 +45,9 @@ class RedisCache:  # pragma: no cover - integration-only network glue
 
     async def xadd(self, stream: str, fields: dict[str, str]) -> str:
         return str(await self._client.xadd(stream, fields))  # type: ignore[arg-type]
+
+    async def xrange(
+        self, stream: str, *, count: int | None = None
+    ) -> list[tuple[str, dict[str, str]]]:
+        entries = await self._client.xrange(stream, count=count)
+        return [(str(mid), {str(k): str(v) for k, v in fields.items()}) for mid, fields in entries]

@@ -168,8 +168,9 @@ def _operations_insert(
         "INSERT INTO operations (operation_id, org_id, agent_id, seq_no, "
         "operation_type, issued_at, ttl_ms, nonce, subject, action, "
         "payload_hash, prev_chain_hash, chain_hash, agent_pubkey_kid, "
-        "signature, r2_payload_key, created_at) VALUES "
-        "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"
+        "signature, r2_payload_key, created_at, correlation_id, run_id, "
+        "phase) VALUES "
+        "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"
     )
     args: tuple[object, ...] = (
         rec.record_id,
@@ -189,6 +190,9 @@ def _operations_insert(
         rec.signature,
         r2_key,
         received_at,
+        rec.correlation_id,  # W3 PR-S2: queryable for the console READ contract
+        rec.run_id,
+        rec.phase.value,
     )
     return sql, args
 
@@ -256,9 +260,33 @@ async def decide(
     # Server owns signing (the shield-server key) — verdict arrives UNSIGNED.
     verdict = canonical.finalize_verdict(verdict, settings.server_signing_key)
 
+    # W3 PR-S2: object-store the signed verdict envelope (backs the console
+    # verdict tab; offline-verifiable like the record/EAR envelopes).
+    verdict_key = f"{rec.org_id}/{rec.agent_id}/verdicts/{verdict.verdict_id}"
+    await storage.objects.put(
+        verdict_key, verdict.model_dump_json().encode("utf-8"), "application/json"
+    )
+
     async with storage.db.transaction() as tx:
         sql, args = _operations_insert(rec, next_seq, chain_hash, r2_key, received_at)
         await tx.execute(sql, *args)
+        await tx.execute(
+            "INSERT INTO governance_verdicts (verdict_id, record_id, "
+            "correlation_id, run_id, org_id, agent_id, decision, risk_score, "
+            "latency_ms, r2_verdict_key, created_at) VALUES "
+            "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            verdict.verdict_id,
+            rec.record_id,
+            rec.correlation_id,
+            rec.run_id,
+            rec.org_id,
+            rec.agent_id,
+            verdict.decision.value,
+            verdict.risk_score,
+            verdict.latency_ms,
+            verdict_key,
+            received_at,
+        )
         await tx.execute(
             "INSERT INTO intervention_log (verdict_id, record_id, correlation_id, "
             "run_id, decision, step_index, triggered_rule_id, tokens_in, "

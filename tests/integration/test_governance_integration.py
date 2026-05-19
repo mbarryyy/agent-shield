@@ -15,11 +15,22 @@ import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
 from shield_sdk.schema import ActionRef, ShieldActionRecord
 from shield_server import agents as agent_svc
+from shield_server import reads as reads_svc
 from shield_server.config import CONSUMER_GROUPS, Settings
-from shield_server.governance import decide
+from shield_server.governance import decide as _decide_real
+from shield_server.governance import record
+from shield_server.govseam import NullGovernanceApp
 from shield_server.migrate import apply as apply_migrations
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage, build_storage
+
+_GOV = NullGovernanceApp()
+
+
+async def decide(storage: Storage, rec: ShieldActionRecord, settings: Settings):  # type: ignore[no-untyped-def]
+    """Integration shim: W3 decide-seam with the honest Null gov app."""
+    return await _decide_real(storage, rec, settings, _GOV)
+
 
 pytestmark = pytest.mark.integration
 
@@ -146,8 +157,6 @@ async def test_decide_replay_rejected_real_redis(storage: Storage) -> None:
 
 
 async def test_post_exec_record_fans_channel2_real_redis(storage: Storage) -> None:
-    from shield_server.governance import record
-
     settings = Settings.from_env()
     agent_id = _uid("agentdojo-banking")
     kid = _uid("k")
@@ -189,3 +198,65 @@ async def test_post_exec_record_fans_channel2_real_redis(storage: Storage) -> No
     # Channel-2: REAL Redis stream carries the post_exec entry.
     redis = storage.cache._client  # type: ignore[attr-defined]
     assert await redis.xlen("shield:actions:banking") >= 1
+
+
+async def test_w3_read_contract_real_infra(storage: Storage) -> None:
+    """W3 PR-S2: timeline / verdict-by-correlation / provenance over REAL
+    Postgres (governance_verdicts + operations correlation/run/phase) + MinIO
+    envelopes, after a real decide()+record()."""
+    settings = Settings.from_env()
+    agent_id = _uid("agentdojo-banking")
+    kid = _uid("k")
+    run_id = _uid("run")
+    await agent_svc.register_agent(
+        storage,
+        RegisterAgentRequest(
+            agent_id=agent_id,
+            keys=[{"kid": kid, "public_key": PUB}],  # type: ignore[list-item]
+        ),
+        ORG,
+    )
+    pre = ShieldActionRecord(
+        org_id=ORG,
+        agent_id=agent_id,
+        agent_pubkey_kid=kid,
+        workflow_id="banking",
+        phase="pre_exec",
+        run_id=run_id,
+        nonce=_uid("n").replace("-", "")[:22],
+    )
+    pre.payload.tool_name = "send_money"
+    pre = canonical.finalize_record(pre, PRIV)
+    v = await decide(storage, pre, settings)
+
+    op = await storage.db.fetchrow(
+        "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+        pre.record_id,
+        ORG,
+    )
+    post = ShieldActionRecord(
+        org_id=ORG,
+        agent_id=agent_id,
+        agent_pubkey_kid=kid,
+        workflow_id="banking",
+        phase="post_exec",
+        run_id=run_id,
+        correlation_id=pre.correlation_id,
+        verdict_ref=v.verdict_id,
+        prev_chain_hash=str(op["chain_hash"]),
+        nonce=_uid("n").replace("-", "")[:22],
+    )
+    post.payload.tool_name = "send_money"
+    post = canonical.finalize_record(post, PRIV)
+    await record(storage, post, settings)
+
+    tl = await reads_svc.timeline(storage, ORG, run_id)
+    assert tl.total_count == 1 and tl.rows[0].decision == "PASS"
+
+    view = await reads_svc.verdict_by_correlation(storage, ORG, pre.correlation_id)
+    assert view.verdict is not None and view.verdict["signature_by_shield"]
+    assert view.pre_exec is not None and view.post_exec is not None
+
+    g = await reads_svc.provenance(storage, ORG, run_id)
+    assert {n.phase for n in g.nodes} == {"pre_exec", "post_exec"}
+    assert {e.kind for e in g.edges} >= {"chain", "correlation"}
