@@ -153,11 +153,12 @@ async def audit_query(req: AuditQueryRequest, request: Request, ctx: Ctx) -> obj
     return await audit_svc.query_audit(get_storage(request), req, ctx.org_id)
 
 
-# --- governance (§4 Channel-1: sync decision gate, W2 STUB -> PASS) --------
+# --- governance (§4 Channel-1: sync decision gate; W3 = real gov via seam) --
 @router.post("/v1/governance/decide")
 async def governance_decide(request: Request, ctx: Ctx) -> GovernanceVerdict:
     """One round-trip: ingest the pre_exec ShieldActionRecord + return the
-    signed GovernanceVerdict (STUB PASS in W2). org_id is bound from auth."""
+    server-signed GovernanceVerdict. The decision comes from the pre-warmed
+    in-process governance app (app.state.governance); org_id bound from auth."""
     body = await request.json()
     if not isinstance(body, dict):
         raise AppError(400, "VALIDATION_ERROR", "Invalid record body.")
@@ -165,7 +166,12 @@ async def governance_decide(request: Request, ctx: Ctx) -> GovernanceVerdict:
         rec = ShieldActionRecord.model_validate({**body, "org_id": ctx.org_id})
     except ValidationError as exc:
         raise AppError(400, "VALIDATION_ERROR", "Malformed ShieldActionRecord.") from exc
-    return await governance_svc.decide(get_storage(request), rec, request.app.state.settings)
+    return await governance_svc.decide(
+        get_storage(request),
+        rec,
+        request.app.state.settings,
+        request.app.state.governance,
+    )
 
 
 @router.post("/v1/governance/record", status_code=202)

@@ -1,0 +1,109 @@
+"""W3 PR-S1 — gov↔server decide-seam + pre-warm.
+
+Proves the ownership split: GOVERNANCE owns the (UNSIGNED) decision; SERVER
+owns ingest + the chained-record identity + signing (shield-server key) +
+intervention_log + Channel-2. Default = honest NullGovernanceApp (UNSIGNED
+PASS, explicitly a staged stub) until gov Task #21 lands.
+"""
+
+from __future__ import annotations
+
+import shield_sdk.canonical as canonical
+import shield_sdk.crypto as crypto
+from shield_sdk.schema import (
+    Decision,
+    GovernanceVerdict,
+    Guardian,
+    ShieldActionRecord,
+    VerdictReason,
+)
+from shield_server import agents as agent_svc
+from shield_server.config import Settings
+from shield_server.governance import decide
+from shield_server.govseam import NullGovernanceApp, load_governance_app
+from shield_server.models import RegisterAgentRequest
+from shield_server.storage import Storage, build_memory_storage
+
+PRIV = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+PUB = crypto.get_public_key_base64url(PRIV)
+
+
+async def test_null_gov_app_returns_unsigned_pass() -> None:
+    rec = ShieldActionRecord(
+        org_id="demo-org",
+        agent_id="a",
+        agent_pubkey_kid="k",
+        phase="pre_exec",
+        run_id="r",
+    )
+    v = await NullGovernanceApp().decide(rec)
+    assert v.decision is Decision.PASS
+    assert v.signature_by_shield is None  # UNSIGNED — server signs
+    assert v.reasons[0].label == "STUB_PASS"
+    assert v.record_id == rec.record_id
+
+
+def test_loader_falls_back_to_null_when_gov_surface_absent() -> None:
+    # gov Task #21 hasn't shipped build_decide_app/decide yet → honest Null.
+    app = load_governance_app()
+    assert isinstance(app, NullGovernanceApp)
+
+
+class _FakeBlockGov:
+    """A gov stand-in returning an UNSIGNED BLOCK with deliberately WRONG ids,
+    to prove the server forces the chained-record identity and signs."""
+
+    async def decide(self, rec: ShieldActionRecord) -> GovernanceVerdict:
+        return GovernanceVerdict(
+            record_id="WRONG",
+            correlation_id="WRONG",
+            run_id="WRONG",
+            decision=Decision.BLOCK,
+            risk_score=0.93,
+            reasons=[
+                VerdictReason(agent=Guardian.DEFENDER, label="RECIPIENT_NOT_ALLOWLISTED", score=0.9)
+            ],
+        )
+
+
+async def test_server_signs_and_forces_identity_on_gov_verdict() -> None:
+    storage: Storage = build_memory_storage()
+    await agent_svc.register_agent(
+        storage,
+        RegisterAgentRequest(
+            agent_id="agentdojo-banking-v1",
+            keys=[{"kid": "k", "public_key": PUB}],  # type: ignore[list-item]
+        ),
+        "demo-org",
+    )
+    rec = ShieldActionRecord(
+        org_id="demo-org",
+        agent_id="agentdojo-banking-v1",
+        agent_pubkey_kid="k",
+        phase="pre_exec",
+        run_id="run-0001",
+    )
+    rec.payload.tool_name = "send_money"
+    rec = canonical.finalize_record(rec, PRIV)
+
+    settings = Settings.from_env()
+    verdict = await decide(storage, rec, settings, _FakeBlockGov())
+
+    # Governance owns the DECISION ...
+    assert verdict.decision is Decision.BLOCK
+    assert verdict.risk_score == 0.93
+    # ... server owns the chained-record IDENTITY (gov's WRONG ids overridden) ...
+    assert verdict.record_id == rec.record_id
+    assert verdict.correlation_id == rec.correlation_id
+    assert verdict.run_id == rec.run_id
+    # ... and SIGNING (gov returned it UNSIGNED; server attaches the sig).
+    assert verdict.shield_kid == "shield-server-key-v1"
+    assert verdict.latency_ms is not None and verdict.served_at is not None
+    server_pub = crypto.get_public_key_base64url(settings.server_signing_key)
+    assert verdict.signature_by_shield is not None
+    assert canonical.verify_verdict(verdict, server_pub) is True
+
+    # The decision is logged + chained under the server-forced identity.
+    log = storage.db.intervention_log  # type: ignore[attr-defined]
+    assert len(log) == 1
+    assert log[0]["decision"] == "BLOCK" and log[0]["record_id"] == rec.record_id

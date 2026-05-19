@@ -12,6 +12,7 @@ import shield_sdk.crypto as crypto
 from shield_sdk.schema import (
     ActionRef,
     Decision,
+    GovernanceVerdict,
     Phase,
     ShieldActionRecord,
 )
@@ -19,8 +20,19 @@ from shield_server import agents as agent_svc
 from shield_server.config import CONSUMER_GROUPS, Settings
 from shield_server.errors import AppError
 from shield_server.governance import decide, record
+from shield_server.govseam import NullGovernanceApp
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage
+
+_GOV = NullGovernanceApp()  # honest UNSIGNED PASS; server signs
+
+
+async def _decide(
+    storage: Storage, rec: ShieldActionRecord, settings: Settings
+) -> GovernanceVerdict:
+    """W3 decide-seam shim: inject the deterministic Null gov app."""
+    return await decide(storage, rec, settings, _GOV)
+
 
 ORG = "demo-org"
 PRIV = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"  # golden keypair
@@ -72,7 +84,7 @@ async def test_decide_returns_signed_pass_one_round_trip(
 ) -> None:
     await _register(storage)
     rec = _signed_record()
-    verdict = await decide(storage, rec, settings)
+    verdict = await _decide(storage, rec, settings)
 
     assert verdict.decision is Decision.PASS
     assert verdict.record_id == rec.record_id
@@ -104,14 +116,14 @@ async def test_decide_returns_signed_pass_one_round_trip(
 
 async def test_chain_links_second_record(storage: Storage, settings: Settings) -> None:
     await _register(storage)
-    v1 = await decide(storage, _signed_record(), settings)
+    v1 = await _decide(storage, _signed_record(), settings)
     op1 = await storage.db.fetchrow(
         "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
         v1.record_id,
         ORG,
     )
     rec2 = _signed_record(prev=str(op1["chain_hash"]), nonce="NONCE2nonce2nonce2non")
-    await decide(storage, rec2, settings)
+    await _decide(storage, rec2, settings)
     op2 = await storage.db.fetchrow(
         "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
         rec2.record_id,
@@ -123,7 +135,7 @@ async def test_chain_links_second_record(storage: Storage, settings: Settings) -
 async def test_replay_detected(storage: Storage, settings: Settings) -> None:
     await _register(storage)
     rec = _signed_record()
-    await decide(storage, rec, settings)
+    await _decide(storage, rec, settings)
     rec2 = _signed_record(
         prev=str(
             (
@@ -138,27 +150,27 @@ async def test_replay_detected(storage: Storage, settings: Settings) -> None:
     rec2.nonce = rec.nonce  # same nonce -> replay
     rec2 = canonical.finalize_record(rec2, PRIV)
     with pytest.raises(AppError) as ei:
-        await decide(storage, rec2, settings)
+        await _decide(storage, rec2, settings)
     assert ei.value.error_code == "REPLAY_DETECTED"
 
 
 async def test_unknown_agent(storage: Storage, settings: Settings) -> None:
     with pytest.raises(AppError) as ei:
-        await decide(storage, _signed_record(), settings)
+        await _decide(storage, _signed_record(), settings)
     assert ei.value.error_code == "UNKNOWN_AGENT"
 
 
 async def test_agent_frozen(storage: Storage, settings: Settings) -> None:
     await _register(storage, status="frozen")
     with pytest.raises(AppError) as ei:
-        await decide(storage, _signed_record(), settings)
+        await _decide(storage, _signed_record(), settings)
     assert ei.value.error_code == "AGENT_FROZEN"
 
 
 async def test_key_revoked(storage: Storage, settings: Settings) -> None:
     await _register(storage, key_status="revoked")
     with pytest.raises(AppError) as ei:
-        await decide(storage, _signed_record(), settings)
+        await _decide(storage, _signed_record(), settings)
     assert ei.value.error_code == "KEY_REVOKED"
 
 
@@ -167,14 +179,14 @@ async def test_invalid_signature_rejected(storage: Storage, settings: Settings) 
     rec = _signed_record()
     rec.signature = "tampered" + (rec.signature or "")[8:]
     with pytest.raises(AppError) as ei:
-        await decide(storage, rec, settings)
+        await _decide(storage, rec, settings)
     assert ei.value.error_code == "INVALID_SIGNATURE"
 
 
 async def test_prev_hash_mismatch(storage: Storage, settings: Settings) -> None:
     await _register(storage)
     with pytest.raises(AppError) as ei:
-        await decide(storage, _signed_record(prev="WRONG"), settings)
+        await _decide(storage, _signed_record(prev="WRONG"), settings)
     assert ei.value.error_code == "PREV_HASH_MISMATCH"
     assert ei.value.details == {"expected": "A" * 43, "actual": "WRONG"}
 
@@ -184,7 +196,7 @@ async def test_phase_must_be_pre_exec(storage: Storage, settings: Settings) -> N
     rec = _signed_record()
     rec.phase = Phase.POST_EXEC
     with pytest.raises(AppError) as ei:
-        await decide(storage, rec, settings)
+        await _decide(storage, rec, settings)
     assert ei.value.error_code == "VALIDATION_ERROR"
 
 
@@ -201,7 +213,7 @@ async def test_validation_branches(
 ) -> None:
     await _register(storage)
     with pytest.raises(AppError) as ei:
-        await decide(storage, _signed_record(**over), settings)
+        await _decide(storage, _signed_record(**over), settings)
     assert ei.value.error_code == code
 
 
@@ -248,7 +260,7 @@ async def test_record_rejects_pre_exec(storage: Storage, settings: Settings) -> 
 
 async def test_decide_then_post_exec_share_one_chain(storage: Storage, settings: Settings) -> None:
     await _register(storage)
-    v = await decide(storage, _signed_record(), settings)
+    v = await _decide(storage, _signed_record(), settings)
     op1 = await storage.db.fetchrow(
         "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
         v.record_id,

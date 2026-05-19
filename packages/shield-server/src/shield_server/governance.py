@@ -33,14 +33,7 @@ import time
 
 import shield_sdk.canonical as canonical
 from shield_sdk.crypto import GENESIS_CHAIN_HASH
-from shield_sdk.schema import (
-    Decision,
-    GovernanceVerdict,
-    Guardian,
-    Phase,
-    ShieldActionRecord,
-    VerdictReason,
-)
+from shield_sdk.schema import GovernanceVerdict, Phase, ShieldActionRecord
 
 from .config import (
     ACTIONS_STREAM_PREFIX,
@@ -52,6 +45,7 @@ from .config import (
     Settings,
 )
 from .errors import AppError
+from .govseam import GovernanceApp
 from .storage import Storage
 
 _REQUIRED = (
@@ -225,32 +219,22 @@ async def _fan_channel2(
     await storage.cache.set(f"chain:{rec.agent_id}:latest", chain_hash)
 
 
-def _stub_pass_verdict(rec: ShieldActionRecord, latency_ms: float) -> GovernanceVerdict:
-    """W2 stub gate. W3 swaps this for the LangGraph 4-guardian aggregate."""
-    return GovernanceVerdict(
-        record_id=rec.record_id,
-        correlation_id=rec.correlation_id,
-        run_id=rec.run_id,
-        decision=Decision.PASS,
-        risk_score=0.0,
-        reasons=[
-            VerdictReason(
-                agent=Guardian.DEFENDER,
-                label="STUB_PASS",
-                detail="W2 stub gate — real LangGraph multi-agent verdict lands W3.",
-                score=0.0,
-            )
-        ],
-        served_at=_now_ms(),
-        latency_ms=latency_ms,
-    )
-
-
 async def decide(
-    storage: Storage, rec: ShieldActionRecord, settings: Settings
+    storage: Storage,
+    rec: ShieldActionRecord,
+    settings: Settings,
+    gov_app: GovernanceApp,
 ) -> GovernanceVerdict:
-    """Channel-1 sync gate (pre_exec): ingest+chain, fan to Channel-2, return
-    the signed (STUB PASS) GovernanceVerdict in one round-trip."""
+    """Channel-1 sync gate (pre_exec), one round-trip:
+
+      ingest+chain (server) → gov_app.decide(rec) returns the UNSIGNED verdict
+      (governance owns the decision) → server attaches served_at/latency/
+      shield_kid, forces the chained-record identity, and SIGNS with the
+      shield-server key (server owns signing) → intervention_log + Channel-2.
+
+    Default ``gov_app`` is the honest ``NullGovernanceApp`` (UNSIGNED PASS,
+    explicitly a staged-delivery stub) until gov Task #21 lands.
+    """
     from .config import SHIELD_KID
 
     received_at = _now_ms()
@@ -259,9 +243,17 @@ async def decide(
         storage, rec, received_at, Phase.PRE_EXEC
     )
 
-    latency_ms = (time.perf_counter() - started) * 1000.0
-    verdict = _stub_pass_verdict(rec, latency_ms)
+    # Governance owns the DECISION (UNSIGNED). Server owns the chained-record
+    # identity → force the id fields so intervention_log / XADD keys always
+    # match the ingested record regardless of what gov returns.
+    verdict = await gov_app.decide(rec)
+    verdict.record_id = rec.record_id
+    verdict.correlation_id = rec.correlation_id
+    verdict.run_id = rec.run_id
+    verdict.served_at = _now_ms()
+    verdict.latency_ms = (time.perf_counter() - started) * 1000.0
     verdict.shield_kid = SHIELD_KID
+    # Server owns signing (the shield-server key) — verdict arrives UNSIGNED.
     verdict = canonical.finalize_verdict(verdict, settings.server_signing_key)
 
     async with storage.db.transaction() as tx:

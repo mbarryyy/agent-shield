@@ -21,6 +21,7 @@ from shield_server import agents as agent_svc
 from shield_server.config import Settings
 from shield_server.errors import AppError
 from shield_server.governance import decide, record
+from shield_server.govseam import NullGovernanceApp
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage, build_memory_storage
 
@@ -87,7 +88,7 @@ async def test_decide_delegates_to_canonical_not_a_re_derivation(
 
     # (a) FROZEN-rule signature -> accepted by the server's canonical.verify_record.
     good = canonical.finalize_record(base.model_copy(deep=True), agent_priv)
-    v = await decide(storage, good, settings_env)
+    v = await decide(storage, good, settings_env, NullGovernanceApp())
     assert v.decision.value == "PASS"
 
     # (b) WRONG projection (raw JCS of the *full* model incl. None + signature)
@@ -98,7 +99,7 @@ async def test_decide_delegates_to_canonical_not_a_re_derivation(
     wrong_string = crypto.jcs_canonicalize(bad.model_dump(mode="json"))
     bad.signature = crypto.sign_ed25519(agent_priv, wrong_string.encode("utf-8"))
     with pytest.raises(AppError) as ei:
-        await decide(storage, bad, settings_env)
+        await decide(storage, bad, settings_env, NullGovernanceApp())
     assert ei.value.error_code == "INVALID_SIGNATURE"
 
 

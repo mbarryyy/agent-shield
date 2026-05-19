@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from shield_server.app import create_app
 from shield_server.config import Settings
+from shield_server.govseam import NullGovernanceApp
 from shield_server.storage import Storage, build_memory_storage
 
 
@@ -68,7 +69,18 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-def client(storage: Storage, crypto: FakeCrypto, settings: Settings) -> Iterator[TestClient]:
-    app = create_app(storage=storage, crypto=crypto, settings=settings)
+def gov_app() -> NullGovernanceApp:
+    """Deterministic decide-seam: honest UNSIGNED PASS (server signs)."""
+    return NullGovernanceApp()
+
+
+@pytest.fixture
+def client(
+    storage: Storage,
+    crypto: FakeCrypto,
+    settings: Settings,
+    gov_app: NullGovernanceApp,
+) -> Iterator[TestClient]:
+    app = create_app(storage=storage, crypto=crypto, settings=settings, governance=gov_app)
     with TestClient(app) as c:
         yield c
