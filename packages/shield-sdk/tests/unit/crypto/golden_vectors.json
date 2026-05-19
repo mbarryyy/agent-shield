@@ -1,0 +1,232 @@
+{
+  "x-status": "FROZEN at W1 by sdk-builder. Primitive vectors are the Elydora reference SDK output (cross-verified byte-exact at generation time); Shield record/verdict vectors use the frozen §4 projection in shield_sdk.canonical. Regenerate via packages/shield-sdk/tests/_tools/gen_golden_vectors.py.",
+  "x-genesis-chain-hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "x-genesis-note": "43-char, NO trailing '=' — byte-identical in Elydora client.py and operation-service.ts; README trailing-'=' is wrong.",
+  "x-signable-projection": "model_dump(mode='json', exclude_none=True) minus signature(+chain_hash for records); present-null == absent == omitted; see shield_sdk.canonical.",
+  "keypair": {
+    "alg": "Ed25519",
+    "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "private_key_b64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "public_key_b64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+  },
+  "jcs": [
+    {
+      "input": {
+        "b": 1,
+        "a": 2
+      },
+      "canonical": "{\"a\":2,\"b\":1}"
+    },
+    {
+      "input": {
+        "z": [
+          3,
+          2,
+          1
+        ],
+        "a": {
+          "d": true,
+          "c": null
+        }
+      },
+      "canonical": "{\"a\":{\"c\":null,\"d\":true},\"z\":[3,2,1]}"
+    },
+    {
+      "input": {
+        "unicode": "café — ñ — 漢字",
+        "emoji": "🛡"
+      },
+      "canonical": "{\"emoji\":\"🛡\",\"unicode\":\"café — ñ — 漢字\"}"
+    },
+    {
+      "input": [
+        1,
+        2.5,
+        -0.0,
+        0.0,
+        true,
+        false,
+        null,
+        "x"
+      ],
+      "canonical": "[1,2.5,0,0,true,false,null,\"x\"]"
+    },
+    {
+      "input": {
+        "nested": {
+          "k": {
+            "deep": [
+              1,
+              {
+                "q": "r"
+              }
+            ]
+          }
+        }
+      },
+      "canonical": "{\"nested\":{\"k\":{\"deep\":[1,{\"q\":\"r\"}]}}}"
+    },
+    {
+      "input": {
+        "num": 1747526400000,
+        "f": 10000.0,
+        "neg": -12.34
+      },
+      "canonical": "{\"f\":10000.0,\"neg\":-12.34,\"num\":1747526400000}"
+    },
+    {
+      "input": "bare-string",
+      "canonical": "\"bare-string\""
+    },
+    {
+      "input": 12345,
+      "canonical": "12345"
+    },
+    {
+      "input": {
+        "present_null": null,
+        "kept": 0
+      },
+      "canonical": "{\"kept\":0,\"present_null\":null}"
+    }
+  ],
+  "payload_hash": [
+    {
+      "payload": {
+        "tool_name": "send_money",
+        "tool_args": {
+          "amount": 10000.0,
+          "recipient": "X"
+        }
+      },
+      "payload_hash": "u7j9Bqiba5NFxcGzpHlri1IGIF2lnl6kVlgn4nMhsgU"
+    },
+    {
+      "payload": {
+        "a": 1
+      },
+      "payload_hash": "AVq9f1zFei3ZS3WQ8ErYCEJzkF7jPsXOvq5iJ2qX-GI"
+    },
+    {
+      "payload": {},
+      "payload_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+    }
+  ],
+  "chain_hash": [
+    {
+      "prev": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload_hash": "u7j9Bqiba5NFxcGzpHlri1IGIF2lnl6kVlgn4nMhsgU",
+      "operation_id": "0193aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+      "issued_at": 1747526400000,
+      "chain_hash": "2OxyLR10CXKdX5fWpRI_ELMjw9BP4xkTYgnnmk_3sQ4"
+    },
+    {
+      "prev": "someprevhash",
+      "payload_hash": "somepayloadhash",
+      "operation_id": "op-2",
+      "issued_at": 1747526400999,
+      "chain_hash": "cSjWo6fLWpHGIhl8duNGcq_JwcdHFh_V13pdj7lzhHs"
+    }
+  ],
+  "ed25519": {
+    "message_b64url": "YWdlbnQtc2hpZWxkIGZyb3plbiBnb2xkZW4gbWVzc2FnZSDwn5uh",
+    "signature": "--qbw_sWQOX-I-o3ugEfcXXtLopVrhocIrgX-tFIGoXGVyHWxJlnqXrXXqsAOicA6FmB0ivuqS9jol0z19cxCw",
+    "public_key_b64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+  },
+  "sign_eor": {
+    "eor": {
+      "operation_id": "0193aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+      "agent_id": "agentdojo-banking-v1",
+      "payload_hash": "u7j9Bqiba5NFxcGzpHlri1IGIF2lnl6kVlgn4nMhsgU",
+      "prev_chain_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "issued_at": 1747526400000,
+      "signature": "MUST-BE-IGNORED"
+    },
+    "signature": "iQ8HsuBlVQ1w1FCT_6umxS-yQ5IPd7cyR4iZkEq4dlBVTWuP4D7mDLTTbnIaac9kqWWsOSBLlNFIYW3OI5J4BA"
+  },
+  "record": {
+    "model": {
+      "shield_version": "1.1",
+      "record_id": "0193aaaa-bbbb-7ccc-8ddd-000000000001",
+      "correlation_id": "0193aaaa-bbbb-7ccc-8ddd-000000000002",
+      "org_id": "demo-org",
+      "agent_id": "agentdojo-banking-v1",
+      "workflow_id": "banking",
+      "run_id": "run-0001",
+      "step_index": 4,
+      "issued_at": 1747526400000,
+      "ttl_ms": 30000,
+      "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+      "phase": "pre_exec",
+      "action_type": "tool_call",
+      "operation_type": "tool_call",
+      "subject": {},
+      "action": {
+        "tool": "send_money",
+        "args_digest": "sha256:deadbeef"
+      },
+      "payload": {
+        "tool_name": "send_money",
+        "tool_args": {
+          "recipient": "ATTACKER-IBAN",
+          "amount": 10000.0,
+          "subject": "exfil",
+          "date": "2026-05-18"
+        },
+        "tool_result": null,
+        "tool_error": null,
+        "llm": null,
+        "confidence": null
+      },
+      "context": {
+        "checkpoint_id": null,
+        "langgraph_thread_id": null,
+        "env_snapshot_ref": null
+      },
+      "payload_hash": "R8oSjeSeOKIZx3mi0ZUKVUruuCRPVr4nm6qv3M0IB_0",
+      "prev_chain_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "chain_hash": null,
+      "agent_pubkey_kid": "agentdojo-banking-v1-key-v1",
+      "verdict_ref": null,
+      "signature": "F8EhQWfN1IESJdbsMw2YwJTQq4gMTU1DyfjsdqvJQH9k2Vfe2Ufmbjr15A6gJjpetkOM8T0DntYpE6iYiG4KDg"
+    },
+    "signable_string": "{\"action\":{\"args_digest\":\"sha256:deadbeef\",\"tool\":\"send_money\"},\"action_type\":\"tool_call\",\"agent_id\":\"agentdojo-banking-v1\",\"agent_pubkey_kid\":\"agentdojo-banking-v1-key-v1\",\"context\":{},\"correlation_id\":\"0193aaaa-bbbb-7ccc-8ddd-000000000002\",\"issued_at\":1747526400000,\"nonce\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"operation_type\":\"tool_call\",\"org_id\":\"demo-org\",\"payload\":{\"tool_args\":{\"amount\":10000.0,\"date\":\"2026-05-18\",\"recipient\":\"ATTACKER-IBAN\",\"subject\":\"exfil\"},\"tool_name\":\"send_money\"},\"payload_hash\":\"R8oSjeSeOKIZx3mi0ZUKVUruuCRPVr4nm6qv3M0IB_0\",\"phase\":\"pre_exec\",\"prev_chain_hash\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"record_id\":\"0193aaaa-bbbb-7ccc-8ddd-000000000001\",\"run_id\":\"run-0001\",\"shield_version\":\"1.1\",\"step_index\":4,\"subject\":{},\"ttl_ms\":30000,\"workflow_id\":\"banking\"}",
+    "payload_hash": "R8oSjeSeOKIZx3mi0ZUKVUruuCRPVr4nm6qv3M0IB_0",
+    "signature": "F8EhQWfN1IESJdbsMw2YwJTQq4gMTU1DyfjsdqvJQH9k2Vfe2Ufmbjr15A6gJjpetkOM8T0DntYpE6iYiG4KDg",
+    "derived_chain_hash": "PLlRogPgSn5K75XnWL6BnflpmqXai1jg0IT-EvYwgmo"
+  },
+  "verdict": {
+    "model": {
+      "shield_version": "1.1",
+      "verdict_id": "0193aaaa-bbbb-7ccc-8ddd-000000000003",
+      "record_id": "0193aaaa-bbbb-7ccc-8ddd-000000000001",
+      "correlation_id": "0193aaaa-bbbb-7ccc-8ddd-000000000002",
+      "run_id": "run-0001",
+      "decision": "BLOCK",
+      "risk_score": 0.93,
+      "reasons": [
+        {
+          "agent": "defender",
+          "label": "RECIPIENT_NOT_ALLOWLISTED",
+          "detail": "IBAN never seen",
+          "score": 0.9,
+          "model_id": null,
+          "served_via": "local"
+        }
+      ],
+      "obligations": {
+        "mask_args": null,
+        "rewrite_args": null,
+        "require_human": true,
+        "rollback": null,
+        "prevented_loss": 10000.0
+      },
+      "latency_ms": null,
+      "served_at": 1747526400740,
+      "shield_kid": "shield-server-key-v1",
+      "signature_by_shield": "UJNxwseV6xh5D4wVoBBU1RNuPCcFn5EGTxqT_umekKQi40imz0V_VcyIC-VOstYnGyI5PnvvOr8zHy6yaSm0Bw"
+    },
+    "signable_string": "{\"correlation_id\":\"0193aaaa-bbbb-7ccc-8ddd-000000000002\",\"decision\":\"BLOCK\",\"obligations\":{\"prevented_loss\":10000.0,\"require_human\":true},\"reasons\":[{\"agent\":\"defender\",\"detail\":\"IBAN never seen\",\"label\":\"RECIPIENT_NOT_ALLOWLISTED\",\"score\":0.9,\"served_via\":\"local\"}],\"record_id\":\"0193aaaa-bbbb-7ccc-8ddd-000000000001\",\"risk_score\":0.93,\"run_id\":\"run-0001\",\"served_at\":1747526400740,\"shield_kid\":\"shield-server-key-v1\",\"shield_version\":\"1.1\",\"verdict_id\":\"0193aaaa-bbbb-7ccc-8ddd-000000000003\"}",
+    "signature_by_shield": "UJNxwseV6xh5D4wVoBBU1RNuPCcFn5EGTxqT_umekKQi40imz0V_VcyIC-VOstYnGyI5PnvvOr8zHy6yaSm0Bw"
+  }
+}
