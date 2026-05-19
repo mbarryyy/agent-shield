@@ -20,7 +20,7 @@ from shield_sdk.schema import GovernanceVerdict, ShieldActionRecord
 from shield_server import agents as agent_svc
 from shield_server.config import Settings
 from shield_server.errors import AppError
-from shield_server.governance import decide
+from shield_server.governance import decide, record
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage, build_memory_storage
 
@@ -99,6 +99,56 @@ async def test_decide_delegates_to_canonical_not_a_re_derivation(
     bad.signature = crypto.sign_ed25519(agent_priv, wrong_string.encode("utf-8"))
     with pytest.raises(AppError) as ei:
         await decide(storage, bad, settings_env)
+    assert ei.value.error_code == "INVALID_SIGNATURE"
+
+
+async def test_record_post_exec_delegates_to_canonical_not_a_re_derivation(
+    settings_env: Settings,
+) -> None:
+    """HARD-GATE on the /record (post_exec) path too: the §4 post_exec record
+    bytes go through FROZEN shield_sdk.canonical VERBATIM. A canonical-signed
+    post_exec record is ACCEPTED by `record()`; the same record signed over a
+    different projection (raw JCS incl. None + signature) is REJECTED. The
+    post_exec signing string IS the frozen `record_signing_string` (the rule is
+    phase-agnostic; `phase` is just a signed field) — no re-derivation."""
+    storage: Storage = build_memory_storage()
+    agent_priv = _V["keypair"]["private_key_b64url"]
+    agent_pub = crypto.get_public_key_base64url(agent_priv)
+    await agent_svc.register_agent(
+        storage,
+        RegisterAgentRequest(
+            agent_id="agentdojo-banking-v1",
+            keys=[{"kid": "k", "public_key": agent_pub}],  # type: ignore[list-item]
+        ),
+        "demo-org",
+    )
+
+    base = ShieldActionRecord(
+        org_id="demo-org",
+        agent_id="agentdojo-banking-v1",
+        agent_pubkey_kid="k",
+        phase="post_exec",
+        run_id="run-0001",
+        verdict_ref="vrd-1",
+    )
+    base.payload.tool_name = "send_money"
+
+    # The post_exec record's signed bytes are the FROZEN canonical projection
+    # (same module/rule as pre_exec; `phase` is a signed field, not a new rule).
+    good = canonical.finalize_record(base.model_copy(deep=True), agent_priv)
+    assert canonical.verify_record(good, agent_pub) is True
+    ack = await record(storage, good, settings_env)
+    assert ack["accepted"] is True and ack["record_id"] == good.record_id
+
+    # WRONG projection (raw JCS of the full model incl. None + signature) ->
+    # /record rejects (proves it verifies the canonical bytes, not these).
+    bad = base.model_copy(deep=True)
+    bad.payload_hash = canonical.compute_record_payload_hash(bad)
+    bad.nonce = "different-nonce-postxx"
+    wrong = crypto.jcs_canonicalize(bad.model_dump(mode="json"))
+    bad.signature = crypto.sign_ed25519(agent_priv, wrong.encode("utf-8"))
+    with pytest.raises(AppError) as ei:
+        await record(storage, bad, settings_env)
     assert ei.value.error_code == "INVALID_SIGNATURE"
 
 
