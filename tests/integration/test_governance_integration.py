@@ -143,3 +143,49 @@ async def test_decide_replay_rejected_real_redis(storage: Storage) -> None:
     with pytest.raises(AppError) as ei:
         await decide(storage, dup, settings)
     assert ei.value.error_code == "REPLAY_DETECTED"
+
+
+async def test_post_exec_record_fans_channel2_real_redis(storage: Storage) -> None:
+    from shield_server.governance import record
+
+    settings = Settings.from_env()
+    agent_id = _uid("agentdojo-banking")
+    kid = _uid("k")
+    await agent_svc.register_agent(
+        storage,
+        RegisterAgentRequest(
+            agent_id=agent_id,
+            keys=[{"kid": kid, "public_key": PUB}],  # type: ignore[list-item]
+        ),
+        ORG,
+    )
+    rec = ShieldActionRecord(
+        org_id=ORG,
+        agent_id=agent_id,
+        agent_pubkey_kid=kid,
+        workflow_id="banking",
+        phase="post_exec",
+        run_id="run-0001",
+        verdict_ref="vrd-int-1",
+        nonce=_uid("n").replace("-", "")[:22],
+    )
+    rec.payload.tool_name = "send_money"
+    rec = canonical.finalize_record(rec, PRIV)
+
+    ack = await record(storage, rec, settings)
+    assert ack["accepted"] is True and ack["seq_no"] == 1
+
+    op = await storage.db.fetchrow(
+        "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+        rec.record_id,
+        ORG,
+    )
+    assert op is not None
+    # post_exec is async → NO intervention_log row for this record.
+    il = await storage.db.fetchrow(
+        "SELECT * FROM intervention_log WHERE record_id = $1", rec.record_id
+    )
+    assert il is None
+    # Channel-2: REAL Redis stream carries the post_exec entry.
+    redis = storage.cache._client  # type: ignore[attr-defined]
+    assert await redis.xlen("shield:actions:banking") >= 1

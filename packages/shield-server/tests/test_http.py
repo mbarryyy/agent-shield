@@ -166,3 +166,41 @@ def test_governance_decide_rejects_garbage(client: TestClient) -> None:
     r = client.post("/v1/governance/decide", json={"not": "a-record"})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_governance_record_post_exec_acks_202(client: TestClient) -> None:
+    import shield_sdk.canonical as canonical
+    import shield_sdk.crypto as crypto
+    from shield_sdk.schema import Phase, ShieldActionRecord
+
+    priv = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    pub = crypto.get_public_key_base64url(priv)
+    assert (
+        client.post(
+            "/v1/agents/register",
+            json={
+                "agent_id": "agentdojo-banking-v1",
+                "keys": [{"kid": "agentdojo-banking-v1-key-v1", "public_key": pub}],
+            },
+        ).status_code
+        == 201
+    )
+
+    rec = ShieldActionRecord(
+        org_id="demo-org",
+        agent_id="agentdojo-banking-v1",
+        agent_pubkey_kid="agentdojo-banking-v1-key-v1",
+        phase=Phase.POST_EXEC,
+        run_id="run-0001",
+        verdict_ref="vrd-1",
+    )
+    rec.payload.tool_name = "send_money"
+    rec = canonical.finalize_record(rec, priv)
+
+    r = client.post("/v1/governance/record", json=rec.model_dump(mode="json"))
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["record_id"] == rec.record_id
+    assert body["seq_no"] == 1
+    assert "signature_by_shield" not in body  # async post_exec: no verdict
