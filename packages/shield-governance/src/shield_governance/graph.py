@@ -1,42 +1,56 @@
-"""LangGraph 1.2.0 governance graph.
+"""LangGraph 1.2.0 governance graph — W3 real 4-guardian.
 
-W2: the spine is LIVE and wired to consume Channel-2. The **Defender** node
-runs the real :class:`~shield_governance.defender.engine.DefenderEngine`
-(deterministic + LlamaFirewall + Invariant ``LocalPolicy``) BEHIND ITS FLAG and
-emits a real frozen §4 ``GovernanceVerdict``. Evaluator / Supervisor / Auditor
-remain W3 (kept here as the documented topology contract). ``decide()`` is NOT
-yet swapped into ``POST /v1/governance/decide`` — that is W3 (server stub still
-returns PASS).
+* **Sync /decide hot path** (``build_decide_app`` → ``decide``): model-free
+  ``DefenderEngine`` (UN-FLAGGED, ``enabled=True``) → deterministic
+  ``Supervisor``. NO Evaluator/Auditor, NO LLM, NO arbiter on this path —
+  **HG#5**: the model-free InjectionTask6 defeat is preserved THROUGH real
+  ``/decide`` with the same deterministic predicate and **0 LLM tokens** on
+  decide→BLOCK. Returns a FROZEN §4.2 v1.1 ``GovernanceVerdict`` **UNSIGNED**,
+  canonical-stable via ``shield_sdk.canonical.verdict_signable_dict`` — the
+  shield server owns Ed25519 signing (gov NEVER signs / NEVER redeclares §4).
+* **Async Channel-2 path** (``make_async_channel2_handler``): Evaluator
+  (Invariant cross-step + exfil + hallucination) + Auditor (chain/Merkle +
+  provenance) → Supervisor re-aggregate → publish ``shield:verdicts``.
+* **HITL** (``resume`` — server PR-S5): an ``escalate`` ``interrupt()`` node
+  (side-effect-free, re-runs on resume — langgraph ``types.py:801/:814``);
+  ``Command(resume=...)`` (``types.py:749``) + checkpointer (dev
+  ``InMemorySaver`` / prod ``PostgresSaver``).
 
-§5b primitives — verified first-hand against ``Related_Work/`` clones
-(2026-05-19), and re-probed live in the W2 env:
+§5b primitives verified first-hand vs ``Related_Work`` clones AND probed live
+in-env (langgraph 1.2.0): ``StateGraph/START/END`` (graph/state.py:130);
+``interrupt``/``Command`` (types.py:801/:749); ``get_state_history``/
+``update_state`` (pregel/main.py:1478/:2486) for time-travel rollback;
+``InMemorySaver`` (checkpoint.memory). ADR-0009: guardian LLM nodes use the
+``model=Callable`` factory (``create_react_agent`` deprecated → ``langchain.
+agents.create_agent``; the ShieldModelRouter Callable seam is unchanged).
 
-* ``StateGraph`` / ``START`` / ``END`` —
-  ``langgraph/libs/langgraph/langgraph/graph/state.py:130``; build+``invoke``
-  confirmed on langgraph **1.2.0** in this env.
-* Guardian nodes (W3) = ``create_react_agent``/``create_agent``
-  ``model=Callable`` factory from :class:`ShieldModelRouter`
-  (``…/prebuilt/chat_agent_executor.py:278-307``). DRIFT (already reported,
-  ADR-0009 W3): ``create_react_agent`` deprecated -> ``langchain.agents.
-  create_agent``; the Callable seam is unchanged.
-* Supervisor routing ``Command(goto,update)`` ``types.py:749``; HITL
-  ``interrupt()`` ``types.py:801``; rollback ``get_state_history`` /
-  ``update_state`` ``pregel/main.py:1478`` / ``:2486`` — W3.
-
-``langgraph`` is imported lazily inside :func:`build_graph` so importing this
-module never pulls the framework.
+``langgraph`` is imported lazily inside the builders so importing this module
+never pulls the framework.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
-from shield_sdk.schema import GovernanceVerdict, ShieldActionRecord  # frozen §4 — never redeclared
+from shield_sdk.schema import (
+    Decision,
+    GovernanceVerdict,
+    Phase,
+    ShieldActionRecord,
+)
 
-from shield_governance.defender.engine import DefenderEngine
+from shield_governance.auditor import Auditor
+from shield_governance.defender.engine import DefenderConfig, DefenderEngine
+from shield_governance.evaluator import Evaluator
+from shield_governance.supervisor import (
+    GuardianSignals,
+    Supervisor,
+    signals_from_defender,
+)
 
-#: Full guardian topology (W3 wires Evaluator/Supervisor/Auditor + edges).
+#: Full guardian topology (governance_design §4 loop).
 GUARDIAN_TOPOLOGY: tuple[str, ...] = ("defender", "evaluator", "supervisor", "auditor")
 
 
@@ -44,22 +58,27 @@ class GovernanceState(TypedDict, total=False):
     """Shared LangGraph state threaded through the guardians."""
 
     record: ShieldActionRecord  # incoming frozen §4 ShieldActionRecord
-    defender: dict[str, Any]  # deterministic + scanner + invariant findings
-    evaluator: dict[str, Any]  # async semantic findings (W3)
-    auditor: dict[str, Any]  # chain/Merkle/provenance integrity (W3)
-    conflict: bool  # Defender<->Evaluator disagreement -> arbitrate() (W3)
+    defender: dict[str, Any]
+    evaluator: dict[str, Any]
+    auditor: dict[str, Any]
+    supervisor: dict[str, Any]
+    conflict: bool
     risk_score: float
     verdict: GovernanceVerdict
+
+
+# --------------------------------------------------------------------------- #
+# Nodes
+# --------------------------------------------------------------------------- #
 
 
 def make_defender_node(
     engine: DefenderEngine,
 ) -> Callable[[GovernanceState], Awaitable[dict[str, Any]]]:
-    """Bind the real Defender engine into an async LangGraph node."""
+    """Bind the real (W3: un-flagged) Defender engine into an async node."""
 
     async def defender_node(state: GovernanceState) -> dict[str, Any]:
-        record = state["record"]
-        verdict = await engine.assess(record)
+        verdict = await engine.assess(state["record"])
         return {
             "verdict": verdict,
             "risk_score": verdict.risk_score,
@@ -72,37 +91,97 @@ def make_defender_node(
     return defender_node
 
 
+def make_supervisor_node(
+    supervisor: Supervisor,
+) -> Callable[[GovernanceState], Awaitable[dict[str, Any]]]:
+    """Compose the Defender (hot path) verdict via the deterministic
+    Supervisor. No LLM unless Defender<->Evaluator conflict (absent on the sync
+    path) — HG#5: 0 LLM tokens on decide→BLOCK."""
+
+    async def supervisor_node(state: GovernanceState) -> dict[str, Any]:
+        record = state["record"]
+        defender_verdict = state["verdict"]
+        signals = signals_from_defender(defender_verdict, phase=record.phase)
+        final = supervisor.decide(signals, record=record)
+        return {
+            "verdict": final,
+            "risk_score": final.risk_score,
+            "supervisor": {"decision": final.decision.value},
+        }
+
+    return supervisor_node
+
+
+def make_escalate_node() -> Callable[[GovernanceState], dict[str, Any]]:
+    """Side-effect-free HITL pause. Re-runs on resume (langgraph types.py:814)
+    so it does NO irreversible work — it surfaces the pending verdict and folds
+    the human decision back in."""
+
+    def escalate_node(state: GovernanceState) -> dict[str, Any]:
+        from langgraph.types import interrupt
+
+        verdict = state["verdict"]
+        if verdict.decision != Decision.ESCALATE:
+            return {}
+        human = interrupt(
+            {
+                "verdict_id": verdict.verdict_id,
+                "decision": verdict.decision.value,
+                "risk_score": verdict.risk_score,
+                "reasons": [r.label for r in verdict.reasons],
+            }
+        )
+        resolved = _coerce_decision(human, default=verdict.decision)
+        # 4-arg resume threads `payload` (edit|response data) — surfaced for
+        # server/console; W3 does not auto-mutate gov-owned verdict fields from
+        # free-form payload (unsound) — decision drives; payload is recorded.
+        payload = human.get("payload") if isinstance(human, dict) else None
+        new = verdict.model_copy(update={"decision": resolved})
+        return {
+            "verdict": new,
+            "supervisor": {"decision": resolved.value, "hitl": True, "payload": payload},
+        }
+
+    return escalate_node
+
+
+def _coerce_decision(value: object, *, default: Decision) -> Decision:
+    if isinstance(value, Decision):
+        return value
+    if isinstance(value, str):
+        try:
+            return Decision(value)
+        except ValueError:
+            return default
+    if isinstance(value, dict):
+        return _coerce_decision(value.get("decision", ""), default=default)
+    return default
+
+
+# Topology placeholders (kept importable for agents/__init__ + the W3 contract).
 def defender_node(state: GovernanceState) -> dict[str, Any]:  # pragma: no cover
-    """Topology placeholder — the live W2 node is built by
-    :func:`make_defender_node` (it needs a bound :class:`DefenderEngine`)."""
-    raise NotImplementedError("W2: use make_defender_node(engine) to bind the live Defender")
+    raise NotImplementedError("use make_defender_node(engine)")
 
 
 def evaluator_node(state: GovernanceState) -> dict[str, Any]:  # pragma: no cover
-    """Async semantic guardian — W3 (behaviour-drift, exfil, hallucination,
-    AgentSafe ReviewMemory; LLM via ShieldModelRouter.model_factory)."""
-    raise NotImplementedError("W3: Evaluator node")
+    raise NotImplementedError("Evaluator runs async (make_async_channel2_handler)")
 
 
 def supervisor_node(state: GovernanceState) -> dict[str, Any]:  # pragma: no cover
-    """Deterministic risk + hard overrides; Command routing; interrupt() HITL;
-    time-travel rollback; arbitrate() on conflict — W3."""
-    raise NotImplementedError("W3: Supervisor node")
+    raise NotImplementedError("use make_supervisor_node(supervisor)")
 
 
 def auditor_node(state: GovernanceState) -> dict[str, Any]:  # pragma: no cover
-    """Parallel integrity: chain/Merkle verify, provenance DAG, compliance —
-    W3."""
-    raise NotImplementedError("W3: Auditor node")
+    raise NotImplementedError("Auditor runs async (make_async_channel2_handler)")
+
+
+# --------------------------------------------------------------------------- #
+# W2 back-compat (defender-only graph + Channel-2 handler)
+# --------------------------------------------------------------------------- #
 
 
 def build_graph(engine: DefenderEngine, *, checkpointer: object | None = None) -> Any:
-    """Compile the W2 governance graph: ``START -> defender -> END``.
-
-    W3 adds Evaluator/Supervisor/Auditor nodes + edges, the Postgres
-    checkpointer (HITL/rollback) and the ``/decide`` swap. ``langgraph`` is
-    imported lazily here.
-    """
+    """W2-compatible defender-only graph (START -> defender -> END)."""
     from langgraph.graph import END, START, StateGraph
 
     g: Any = StateGraph(GovernanceState)
@@ -115,10 +194,7 @@ def build_graph(engine: DefenderEngine, *, checkpointer: object | None = None) -
 def make_channel2_handler(
     engine: DefenderEngine,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
-    """The Channel-2 wiring: a handler that runs each consumed record through
-    the live graph. Pass this to
-    :meth:`shield_governance.channel2.Channel2Consumer.run_once`.
-    """
+    """W2-compatible Channel-2 handler (defender-only graph)."""
     app = build_graph(engine)
 
     async def handle(record: ShieldActionRecord) -> None:
@@ -127,7 +203,143 @@ def make_channel2_handler(
     return handle
 
 
-def decide(record: object) -> GovernanceVerdict:
-    """Synchronous entry for ``POST /v1/governance/decide``. W3 (not yet
-    swapped in — server still stub->PASS)."""
-    raise NotImplementedError("W3: real multi-guardian verdict + /decide swap")  # pragma: no cover
+# --------------------------------------------------------------------------- #
+# W3 — real /decide app (pre-warmed, in-process; server PR-S1 seam)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(slots=True)
+class GovApp:
+    """Pre-warmed governance app the shield server holds on
+    ``request.app.state`` and invokes per ``/decide`` round-trip (no cold start
+    in the 500 ms budget — master_design §1.2 step 3)."""
+
+    app: Any
+    defender: DefenderEngine
+    supervisor: Supervisor
+    has_checkpointer: bool
+
+
+def build_decide_app(
+    *,
+    defender_config: DefenderConfig | None = None,
+    supervisor: Supervisor | None = None,
+    defender: DefenderEngine | None = None,
+    checkpointer: object | None = None,
+) -> GovApp:
+    """Pre-warm the sync /decide graph: START → defender → supervisor [→
+    escalate] → END. Defender is UN-FLAGGED here (``enabled=True``) — this is
+    the real verdict path. Construct ONCE at server startup."""
+    from langgraph.graph import END, START, StateGraph
+
+    eng = defender or DefenderEngine(defender_config or DefenderConfig(enabled=True))
+    sup = supervisor or Supervisor()
+
+    g: Any = StateGraph(GovernanceState)
+    g.add_node("defender", make_defender_node(eng))
+    g.add_node("supervisor", make_supervisor_node(sup))
+    g.add_edge(START, "defender")
+    g.add_edge("defender", "supervisor")
+    if checkpointer is not None:
+        g.add_node("escalate", make_escalate_node())
+        g.add_edge("supervisor", "escalate")
+        g.add_edge("escalate", END)
+        compiled = g.compile(checkpointer=checkpointer)
+    else:
+        g.add_edge("supervisor", END)
+        compiled = g.compile()
+    return GovApp(
+        app=compiled,
+        defender=eng,
+        supervisor=sup,
+        has_checkpointer=checkpointer is not None,
+    )
+
+
+async def decide(app: GovApp, record: ShieldActionRecord) -> GovernanceVerdict:
+    """Server PR-S1 seam: sync /decide → UNSIGNED frozen §4 GovernanceVerdict
+    (canonical-stable; server signs). Model-free hot path (HG#5)."""
+    config = {"configurable": {"thread_id": record.run_id}} if app.has_checkpointer else None
+    out = await app.app.ainvoke({"record": record}, config)
+    verdict = out["verdict"]
+    assert isinstance(verdict, GovernanceVerdict)
+    return verdict
+
+
+async def resume(
+    gov_app: GovApp,
+    incident_id: str,
+    decision: Decision,
+    payload: dict[str, Any] | None = None,
+) -> GovernanceVerdict:
+    """Server PR-S5 HITL seam (LOCKED 4-arg signature:
+    ``async resume(app, incident_id, decision, payload) -> GovernanceVerdict``,
+    UNSIGNED — server signs). ``incident_id`` is the LangGraph thread id (= the
+    run_id used at ``decide``). ``payload`` carries the edit|response data for
+    the accept|edit|response|ignore human decision (langgraph resume schema
+    prebuilt/interrupt.py:87-105). Requires a checkpointer-backed app
+    (``build_decide_app(checkpointer=…)``)."""
+    if not gov_app.has_checkpointer:
+        raise RuntimeError(
+            "resume() requires a checkpointer-backed app "
+            "(build_decide_app(checkpointer=InMemorySaver()|PostgresSaver()))"
+        )
+    from langgraph.types import Command
+
+    out = await gov_app.app.ainvoke(
+        Command(resume={"decision": decision.value, "payload": payload}),
+        {"configurable": {"thread_id": incident_id}},
+    )
+    verdict = out["verdict"]
+    assert isinstance(verdict, GovernanceVerdict)
+    return verdict
+
+
+# --------------------------------------------------------------------------- #
+# W3 — async Channel-2 path (Evaluator + Auditor → Supervisor → shield:verdicts)
+# --------------------------------------------------------------------------- #
+
+
+def make_async_channel2_handler(
+    *,
+    evaluator: Evaluator,
+    auditor: Auditor,
+    supervisor: Supervisor,
+    on_verdict: Callable[[GovernanceVerdict, str], Awaitable[None]] | None = None,
+) -> Callable[[ShieldActionRecord], Awaitable[None]]:
+    """The async (post-exec) Channel-2 path. Pass to
+    ``Channel2Consumer.run_once`` with an explicit ``group=`` per the W3
+    consumer-group contract: callers MUST pass ``shield-evaluator`` /
+    ``shield-auditor``; the ``shield-governance`` DEFAULT must NOT reach prod
+    fan-out (governance_design §4 / ADR-0010 sibling note).
+
+    **Part-2 ruling = Option C (ADR-0012):** at W3 this COMPUTES the
+    Evaluator/Auditor/Supervisor verdict but does **NOT** publish
+    ``shield:verdicts``. The shield server's gate-path ``_fan_verdicts`` is the
+    SOLE W3 ``shield:verdicts`` publisher (it signs then fans — the locked
+    seam-1 invariant: server sole publisher, all published verdicts SIGNED).
+    Gov never signs, never publishes, no double-publish, no unsigned verdict on
+    the stream. ``on_verdict`` is a test/W4 sink (default ``None`` =
+    compute-only); W4 wires the async fan with the signing division resolved."""
+
+    async def handle(record: ShieldActionRecord) -> None:
+        eval_result = await evaluator.evaluate(record)
+        audit_result = auditor.audit([record], agent_pubkey_b64url=record.agent_pubkey_kid)
+        signals = GuardianSignals(
+            defender_decision=Decision.PASS,
+            evaluator_anomaly=eval_result.anomaly,
+            evaluator_reasons=eval_result.reasons,
+            evaluator_ran=True,  # async path — Evaluator has run (conflict is meaningful)
+            auditor_integrity=audit_result.integrity,
+            auditor_reasons=audit_result.reasons,
+            structuring_or_exfil=eval_result.structuring_or_exfil,
+            chain_broken=audit_result.chain_broken,
+            post_exec=record.phase == Phase.POST_EXEC,
+        )
+        verdict = supervisor.decide(signals, record=record)
+        # W3 (ADR-0012, Option C): compute-only. NO shield:verdicts publish —
+        # server gate-path is the sole signed publisher; W4 wires async fan.
+        if on_verdict is not None:
+            await on_verdict(verdict, record.phase.value)
+
+    return handle
