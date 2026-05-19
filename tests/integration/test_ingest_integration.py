@@ -129,34 +129,39 @@ async def test_unknown_agent_real_db(storage: Storage) -> None:
 @pytest.mark.skipif(
     not crypto_frozen(),
     reason=(
-        "W1 HARD DEP: shield_sdk.crypto (JCS/Ed25519/chain-hash) is the W0 stub "
-        "until sdk-builder Task #2 / ADR-0007 v1.1 freezes it + golden vectors; "
-        "rebase feat/server onto v1.1 to enable the crypto e2e."
+        "shield_sdk.crypto is the pre-v1.1 stub on this branch; rebase onto the "
+        "v1.1 main (byte-exact crypto + golden vectors) to enable the crypto e2e."
     ),
 )
 async def test_full_12_step_ingest_with_real_crypto(storage: Storage) -> None:
-    from shield_server._b64 import b64url_encode
+    """Post-v1.1: the FULL 12-step ingest with REAL Ed25519/JCS/chain-hash
+    against docker PG/Redis/MinIO. The EOR is signed with the frozen
+    ``shield_sdk.crypto.sign_eor`` — exactly the rule the server verifies."""
+    import shield_sdk.crypto as sdk_crypto
 
     crypto = ShieldSdkCrypto()
+    # contracts/golden/vectors.json keypair seed -> real Ed25519 public key.
+    agent_priv = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    agent_pub = sdk_crypto.get_public_key_base64url(agent_priv)
+
     agent_id = _uid("agentdojo-banking")
     kid = _uid("k")
-    pubkey = b64url_encode(b"\x01" * 32)
     await agent_svc.register_agent(
         storage,
         RegisterAgentRequest(
             agent_id=agent_id,
-            keys=[{"kid": kid, "public_key": pubkey}],  # type: ignore[list-item]
+            keys=[{"kid": kid, "public_key": agent_pub}],  # type: ignore[list-item]
         ),
         ORG,
     )
     rec = _record(agent_id, agent_pubkey_kid=kid)
-    # Once crypto is frozen, sign the signable projection with the real port.
-    from shield_server.ingest import _signable
+    # Frozen Elydora-EOR signer (JCS over EOR dict minus "signature") — the
+    # exact projection the server's step-5 verify reproduces.
+    rec.signature = sdk_crypto.sign_eor(rec.model_dump(mode="json"), agent_priv)
 
-    rec.signature = crypto.sign_ed25519(  # placeholder until a signing helper lands
-        b"\x01" * 32, crypto.canonical(_signable(rec))
-    )
-    ear = await submit_operation(storage, crypto, rec, b64url_encode(b"\x02" * 32))
+    ear = await submit_operation(storage, crypto, rec, agent_priv)
     assert ear.seq_no >= 1
-    valid, checks, _errors = await verify_operation(storage, crypto, rec.operation_id, ORG)
-    assert checks["chain"] is True and valid is True
+    assert ear.elydora_signature  # EAR signed with the (b64url) server key
+    valid, checks, errors = await verify_operation(storage, crypto, rec.operation_id, ORG)
+    assert checks == {"signature": True, "chain": True, "receipt": True}
+    assert valid is True and errors == []

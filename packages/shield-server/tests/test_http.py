@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from fastapi.testclient import TestClient
-from shield_server._b64 import b64url_decode, b64url_encode
+from shield_server._b64 import b64url_encode
 from shield_server.ingest import _signable
 from shield_server.models import OperationRecord
 
@@ -32,7 +32,7 @@ def _signed_body(crypto: FakeCrypto) -> dict[str, object]:
         agent_pubkey_kid="k1",
         signature="x",
     )
-    rec.signature = fake_signature(b64url_decode(PUBKEY), crypto.canonical(_signable(rec)))
+    rec.signature = fake_signature(PUBKEY, crypto.canonical(_signable(rec)).encode("utf-8"))
     return rec.model_dump()
 
 
