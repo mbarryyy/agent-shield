@@ -155,8 +155,16 @@ CREATE TABLE IF NOT EXISTS governance_verdicts (
   -- env-diff). /cost is a pure READ-rollup of this — NO server recompute.
   prevented_loss  DOUBLE PRECISION NOT NULL DEFAULT 0,
   r2_verdict_key  TEXT    NOT NULL,
-  created_at      BIGINT  NOT NULL
+  created_at      BIGINT  NOT NULL,
+  -- W3 incidents-list (companion to S5 resume): server-authoritative HITL
+  -- resume-state. An ESCALATE gate verdict is an incident; status is
+  -- "resolved" once POST /incidents/{verdict_id}/resume sets these, else
+  -- "pending". Additive, server-owned (NOT §4); incident_id == verdict_id.
+  resolution      TEXT,
+  resolved_at     BIGINT
 );
+CREATE INDEX IF NOT EXISTS idx_gv_incident
+  ON governance_verdicts (org_id, decision, created_at);
 CREATE INDEX IF NOT EXISTS idx_gv_run  ON governance_verdicts (org_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_gv_corr ON governance_verdicts (correlation_id);
 

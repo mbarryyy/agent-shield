@@ -120,7 +120,8 @@ async def test_null_resume_unsigned_stub() -> None:
 
 async def test_resume_signs_and_validates_decision() -> None:
     settings = Settings.from_env()
-    v = await resume(settings, NullGovernanceApp(), "inc-9", "accept", {"note": "ok"})
+    storage = build_memory_storage()
+    v = await resume(storage, settings, NullGovernanceApp(), "inc-9", "accept", {"note": "ok"})
     assert v.decision.value == "PASS"
     assert v.shield_kid == "shield-server-key-v1"
     assert v.served_at is not None and v.latency_ms is not None
@@ -131,5 +132,5 @@ async def test_resume_signs_and_validates_decision() -> None:
     import pytest
 
     with pytest.raises(AppError) as ei:
-        await resume(settings, NullGovernanceApp(), "inc-9", "not-a-decision", None)
+        await resume(storage, settings, NullGovernanceApp(), "inc-9", "not-a-decision", None)
     assert ei.value.error_code == "VALIDATION_ERROR"

@@ -17,7 +17,7 @@ from shield_server import agents as agent_svc
 from shield_server import reads as reads_svc
 from shield_server.config import Settings
 from shield_server.errors import AppError
-from shield_server.governance import decide, record
+from shield_server.governance import decide, record, resume
 from shield_server.govseam import NullGovernanceApp
 from shield_server.models import RegisterAgentRequest
 from shield_server.storage import Storage
@@ -299,3 +299,91 @@ def test_cost_http_locked_pact(client: TestClient) -> None:
     assert isinstance(body["prevented_loss_total"], (int, float))
     assert isinstance(body["latency_p50_ms"], (int, float))
     assert isinstance(body["latency_p95_ms"], (int, float))
+
+
+class _FakeEscalateGov:
+    """gov stand-in returning an UNSIGNED ESCALATE (a HITL incident)."""
+
+    async def decide(self, rec):  # type: ignore[no-untyped-def]
+        from shield_sdk.schema import Decision, GovernanceVerdict
+
+        return GovernanceVerdict(
+            record_id=rec.record_id,
+            correlation_id=rec.correlation_id,
+            run_id=rec.run_id,
+            decision=Decision.ESCALATE,
+            risk_score=0.42,
+        )
+
+
+async def _chain_decide(storage: Storage, settings: Settings, gov, prev: str, nonce: str):  # type: ignore[no-untyped-def]
+    """decide() on the agent chain; returns (verdict, new prev chain_hash)."""
+    r = _rec(phase=Phase.PRE_EXEC, prev=prev, nonce=nonce)
+    v = await decide(storage, r, settings, gov)
+    op = await storage.db.fetchrow(
+        "SELECT * FROM operations WHERE operation_id = $1 AND org_id = $2",
+        v.record_id,
+        ORG,
+    )
+    return v, str(op["chain_hash"])
+
+
+async def test_incidents_list_pending_then_resolved(storage: Storage, settings: Settings) -> None:
+    await _register(storage)
+    r = _rec(phase=Phase.PRE_EXEC, prev="A" * 43, nonce="iESC00000000000000000")
+    v = await decide(storage, r, settings, _FakeEscalateGov())  # type: ignore[arg-type]
+    inc_id = v.verdict_id  # incident_id == ESCALATE gate verdict_id
+
+    lst = await reads_svc.incidents(storage, ORG, "run-0001")
+    assert lst.total_count == 1
+    row = lst.incidents[0]
+    assert row.incident_id == inc_id
+    assert row.decision == "ESCALATE" and row.status == "pending"
+    assert row.resolution is None
+    assert row.correlation_id == r.correlation_id
+
+    # Operator resumes on the SAME id → status flips resolved (server-auth).
+    await resume(storage, settings, NullGovernanceApp(), inc_id, "accept", None)
+    after = await reads_svc.incidents(storage, ORG, "run-0001")
+    assert after.incidents[0].status == "resolved"
+    assert after.incidents[0].resolution == "accept"
+
+    # status filter
+    assert (await reads_svc.incidents(storage, ORG, "run-0001", "pending")).total_count == 0
+    assert (await reads_svc.incidents(storage, ORG, "run-0001", "resolved")).total_count == 1
+
+
+async def test_incidents_excludes_non_escalate_and_scopes(
+    storage: Storage, settings: Settings
+) -> None:
+    await _register(storage)
+    # A PASS gate is NOT an incident.
+    _v, prev = await _chain_decide(
+        storage, settings, NullGovernanceApp(), "A" * 43, "iPASS0000000000000000"
+    )
+    assert (await reads_svc.incidents(storage, ORG, "run-0001")).total_count == 0
+    # An ESCALATE on the same chain IS an incident — but org-scoped out for others.
+    await _chain_decide(
+        storage,
+        settings,
+        _FakeEscalateGov(),  # type: ignore[arg-type]
+        prev,
+        "iESC20000000000000000",
+    )
+    assert (await reads_svc.incidents(storage, ORG, "run-0001")).total_count == 1
+    assert (await reads_svc.incidents(storage, "other-org", "run-0001")).total_count == 0
+    with pytest.raises(AppError) as ei:
+        await reads_svc.incidents(storage, ORG, "run-0001", "bogus")
+    assert ei.value.error_code == "VALIDATION_ERROR"
+
+
+def test_incidents_http_locked_pact(client: TestClient) -> None:
+    r = client.get("/v1/governance/incidents?run_id=none&status=pending")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"incidents", "cursor", "total_count"}
+    assert body["total_count"] == 0
+    # row shape contract (asserted on a seeded incident via the route below)
+    bad = client.get("/v1/governance/incidents?status=nope")
+    assert bad.status_code == 400
+    assert bad.json()["error"]["code"] == "VALIDATION_ERROR"

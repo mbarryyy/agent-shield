@@ -25,6 +25,8 @@ from .errors import AppError
 from .models import (
     CostRollup,
     CostTokens,
+    IncidentRow,
+    IncidentsResponse,
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
@@ -222,4 +224,79 @@ async def cost(storage: Storage, org_id: str, run_id: str) -> CostRollup:
         prevented_loss_total=float(prevented),
         latency_p50_ms=_pct(latencies, 0.50),
         latency_p95_ms=_pct(latencies, 0.95),
+    )
+
+
+_RESOLUTIONS = {"accept", "edit", "response", "ignore"}
+
+
+async def incidents(
+    storage: Storage,
+    org_id: str,
+    run_id: str | None = None,
+    status: str | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> IncidentsResponse:
+    """W3 incidents-list (companion to S5 resume; console U6). An ESCALATE
+    gate verdict IS an incident; status is server-authoritative ("resolved"
+    once resume set governance_verdicts.resolution, else "pending").
+    org-scoped, optional run_id/status filter, keyset like timeline.
+    incident_id == the ESCALATE gate verdict_id (same id resume consumes)."""
+    if status is not None and status not in ("pending", "resolved"):
+        raise AppError(400, "VALIDATION_ERROR", "status must be pending|resolved.")
+    clamped = min(max(limit or DEFAULT_QUERY_LIMIT, 1), MAX_QUERY_LIMIT)
+    gv = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    rows = [
+        r
+        for r in gv
+        if r["org_id"] == org_id
+        and str(r["decision"]) == "ESCALATE"
+        and (run_id is None or r.get("run_id") == run_id)
+    ]
+
+    def _status(r: dict[str, object]) -> str:
+        return "resolved" if r.get("resolution") else "pending"
+
+    if status is not None:
+        rows = [r for r in rows if _status(r) == status]
+    total = len(rows)
+    rows.sort(key=lambda r: (_i(r["created_at"]), str(r["verdict_id"])), reverse=True)
+
+    cur = decode_cursor(cursor) if cursor else None
+    if cursor and cur is None:
+        raise AppError(400, "VALIDATION_ERROR", "Invalid cursor.")
+    if cur is not None:
+        c_created, c_id = cur
+        rows = [
+            r
+            for r in rows
+            if _i(r["created_at"]) < c_created
+            or (_i(r["created_at"]) == c_created and str(r["verdict_id"]) < c_id)
+        ]
+
+    page = rows[: clamped + 1]
+    has_more = len(page) > clamped
+    out = page[:clamped] if has_more else page
+    next_cursor = (
+        encode_cursor(_i(out[-1]["created_at"]), str(out[-1]["verdict_id"]))
+        if has_more and out
+        else None
+    )
+    return IncidentsResponse(
+        incidents=[
+            IncidentRow(
+                incident_id=str(r["verdict_id"]),  # == the id resume consumes
+                correlation_id=str(r["correlation_id"]),
+                run_id=r.get("run_id"),
+                decision=str(r["decision"]),
+                risk_score=_f(r["risk_score"]),
+                status="resolved" if r.get("resolution") else "pending",
+                resolution=(str(r["resolution"]) if r.get("resolution") in _RESOLUTIONS else None),
+                created_at=_i(r["created_at"]),
+            )
+            for r in out
+        ],
+        cursor=next_cursor,
+        total_count=total,
     )
