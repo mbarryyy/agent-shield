@@ -5,14 +5,15 @@ state + free-text scanning. It is intentionally model-free so the blocking gate
 is fast and exact, and so the air-gapped profile needs no model here at all
 (governance_design.md §3.1; local_deployment_moat.md §2).
 
-W1 ships the deterministic rule engine + its unit tests + the InjectionTask6
-oracle test (the thesis as a model-free unit test). The LangGraph node that
-wraps these rules, the LlamaFirewall scanners and the Invariant ``LocalPolicy``
-land at W2/W3.
+W1 shipped the deterministic rule engine + the InjectionTask6 thesis test.
+W2 adds :class:`DefenderEngine` (the real, flag-gated hot path emitting a
+frozen §4 ``GovernanceVerdict``) wrapping the W1 rules + LlamaFirewall
+``scan_async`` + Invariant ``LocalPolicy``.
 """
 
 from __future__ import annotations
 
+from shield_governance.defender.engine import DefenderConfig, DefenderEngine
 from shield_governance.defender.rules import (
     ATTACKER_IBAN_EXAMPLE,
     CumulativeRecipientTracker,
@@ -26,12 +27,32 @@ from shield_governance.defender.rules import (
     is_valid_iban,
     scan_subject_secrets,
 )
+from shield_governance.defender.scanners import (
+    FakeInjectionScanner,
+    FakeStructuringAnalyzer,
+    InjectionScanner,
+    LlamaFirewallScanner,
+    LocalPolicyStructuringAnalyzer,
+    NullInjectionScanner,
+    ScanFinding,
+    StructuringAnalyzer,
+)
 
 __all__ = [
     "ATTACKER_IBAN_EXAMPLE",
     "CumulativeRecipientTracker",
+    "DefenderConfig",
+    "DefenderEngine",
     "DefenderPolicy",
+    "FakeInjectionScanner",
+    "FakeStructuringAnalyzer",
+    "InjectionScanner",
+    "LlamaFirewallScanner",
+    "LocalPolicyStructuringAnalyzer",
+    "NullInjectionScanner",
     "RuleOutcome",
+    "ScanFinding",
+    "StructuringAnalyzer",
     "agentdojo_injectiontask6_security",
     "check_amount_cap",
     "check_iban_allowlist",
