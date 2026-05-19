@@ -1,17 +1,63 @@
-"""Free SDK client: create -> sign -> submit, in-memory chain, two-phase API.
+"""Free SDK client — Channel-1 sync gate + Channel-2 record submit.
 
-W0 STUB. Real client (sync POST /v1/governance/decide, 500 ms
-concurrent.futures fail policy) is built at W2 by sdk-builder.
+`decide()` is the synchronous `POST /v1/governance/decide` round-trip (ADR-0004:
+the verdict IS the HTTP response). The 500 ms budget + per-tool fail policy is
+NOT enforced here — it is owned by `ShieldGuard`, which wraps `decide()` in a
+`concurrent.futures` future with `.result(timeout=...)` so a slow/hung Layer-2
+never blocks the AgentDojo worker. The client stays thin and synchronous
+(AgentDojo's pipeline is fully synchronous — verified rev 18b501a).
+
+`submit()` is the Channel-2 path: the async `post_exec` (and any) record is
+POSTed to the Elydora-style ingest route; the server persists it (PG + MinIO +
+EAR) and `XADD shield:actions:{workflow_id}` in the ingest transaction.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+import httpx
+
 from .schema import GovernanceVerdict, ShieldActionRecord
+
+DEFAULT_DECIDE_PATH = "/v1/governance/decide"
+DEFAULT_RECORD_PATH = "/v1/operations"
 
 
 class ShieldClient:
-    def __init__(self, base_url: str) -> None:
-        self.base_url = base_url
+    """Thin synchronous transport to the shield server."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout_s: float = 2.0,
+        decide_path: str = DEFAULT_DECIDE_PATH,
+        record_path: str = DEFAULT_RECORD_PATH,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._decide_path = decide_path
+        self._record_path = record_path
+        self._client = httpx.Client(base_url=self.base_url, timeout=timeout_s, transport=transport)
 
     def decide(self, record: ShieldActionRecord) -> GovernanceVerdict:
-        raise NotImplementedError("W2: sync /v1/governance/decide round-trip")  # pragma: no cover
+        """Channel-1: submit the pre_exec record, return the signed verdict."""
+        resp = self._client.post(self._decide_path, json=record.model_dump(mode="json"))
+        resp.raise_for_status()
+        body: Any = resp.json()
+        return GovernanceVerdict.model_validate(body)
+
+    def submit(self, record: ShieldActionRecord) -> None:
+        """Channel-2: best-effort async ingest of a (post_exec) record."""
+        resp = self._client.post(self._record_path, json=record.model_dump(mode="json"))
+        resp.raise_for_status()
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> ShieldClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

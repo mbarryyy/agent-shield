@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
 import shield_sdk
 import shield_sdk.crypto as crypto
 import shield_sdk.defense  # noqa: F401
@@ -18,7 +17,6 @@ import shield_sdk.instrument  # noqa: F401
 import shield_sdk.instrument.agentdojo  # noqa: F401
 import shield_sdk.instrument.hooks  # noqa: F401
 import shield_sdk.sdk as sdk
-from shield_sdk import schema
 
 
 def test_all_submodules_import() -> None:
@@ -33,9 +31,9 @@ def test_genesis_chain_hash_frozen() -> None:
     assert "=" not in crypto.GENESIS_CHAIN_HASH
 
 
-def test_sdk_client_decide_is_w2() -> None:
-    """crypto/canonical/schema are frozen at W1; the HTTP client is W2."""
-    with pytest.raises(NotImplementedError):
-        sdk.ShieldClient("http://x").decide(
-            schema.ShieldActionRecord(phase=schema.Phase.PRE_EXEC, run_id="r")
-        )
+def test_sdk_client_w2_surface() -> None:
+    """W2: the client is implemented — Channel-1 decide + Channel-2 submit."""
+    c = sdk.ShieldClient("http://localhost:8000/")
+    assert c.base_url == "http://localhost:8000"  # trailing slash normalized
+    assert callable(c.decide) and callable(c.submit) and callable(c.close)
+    c.close()
