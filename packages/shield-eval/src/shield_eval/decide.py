@@ -23,6 +23,7 @@ AgentDojo built-in baselines + the Axis-C moat", never "beat SOTA".
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -232,3 +233,123 @@ def build_decider(mode: str, *, url: str | None = None) -> DecideProvider:
             raise ValueError("--decide http requires --decide-url")
         return HttpDecide(url=url)
     raise ValueError(f"unknown decide mode '{mode}' (noop|mock|http)")
+
+
+def mock_transport(provider: DecideProvider) -> Any:
+    """An ``httpx.MockTransport`` that serves an eval-owned ``DecideProvider``
+    in-process, so the **unchanged** sdk ``ShieldClient`` (HTTP-only) can drive
+    A1/A2/A3 deterministically with NO live server (W2 ``decide.py`` fallback,
+    realised as the demo-safety mitigation — master §10 / eval_plan §10).
+
+    Routes (server-confirmed): ``decide_path`` (pre_exec, Channel-1) → the
+    provider's signed-shape ``GovernanceVerdict``; ``record_path`` (post_exec,
+    Channel-2) → ``202`` ack. The posted body is the frozen-§4
+    ``ShieldActionRecord`` JSON; we project ``payload.tool_name/tool_args`` +
+    ``run_id/correlation_id/step_index`` (never redeclaring the type).
+    """
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        rec = json.loads(request.content or b"{}")
+        path = request.url.path
+        if path.endswith("/record"):  # Channel-2 post_exec ack
+            return httpx.Response(202, json={"ack": True, "record_id": rec.get("record_id")})
+        payload = rec.get("payload") or {}
+        req = DecideRequest(
+            tool_name=payload.get("tool_name") or (rec.get("action") or {}).get("tool") or "",
+            tool_args=payload.get("tool_args") or {},
+            run_id=rec.get("run_id") or "run-shield",
+            correlation_id=rec.get("correlation_id") or "corr-shield",
+            step_index=int(rec.get("step_index") or 0),
+        )
+        verdict = provider.decide(req)
+        return httpx.Response(200, json=verdict.model_dump(mode="json"))
+
+    return httpx.MockTransport(handler)
+
+
+class RealGovUnavailable(RuntimeError):
+    """The converged gov surface (build_decide_app/decide) is not importable
+    on this tree — caller SKIPs the real-graph run (never fakes it)."""
+
+
+# Frozen golden test keypair (W0 vectors) — real Ed25519, used so the REAL
+# server ingest's FROZEN canonical.verify_record passes against the agent
+# pubkey we enrol via the server's own public register API.
+_GOLDEN_VECTORS = (
+    __import__("pathlib").Path(__file__).resolve().parents[4]
+    / "contracts"
+    / "golden"
+    / "vectors.json"
+)
+
+
+def real_server_transport() -> Any:
+    """The team-lead-APPROVED REAL-graph method: an ``httpx.ASGITransport``
+    over the **real** ``shield_server.create_app`` (in-memory storage, real
+    ShieldSdkCrypto) pre-warmed with the **real** gov 4-guardian app
+    (``load_governance_app()`` → the merged gov adapter). This exercises the
+    REAL server 12-step ingest + verdict signing + the REAL gov ``decide()``
+    end-to-end — NOT a mock. Keyless is valid: the InjectionTask6 BLOCK is the
+    HG#5 model-free path (0 LLM tokens on decide→BLOCK).
+
+    Uses ONLY server PUBLIC API (``create_app`` / ``build_memory_storage`` /
+    ``register_agent`` — the established server in-process/docker-free pattern,
+    cf. shield-server's own ``tests/test_governance.py``); the frozen golden
+    keypair is enrolled via the real ``/v1/agents`` register service so the
+    FROZEN ``canonical.verify_record`` passes with REAL Ed25519 (no FakeCrypto).
+    If server infra it cannot satisfy in-process is required → ``RealGov
+    Unavailable`` (caller SKIPs + flags honestly; NEVER fakes a real result).
+    """
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    try:
+        from shield_server.agents import register_agent
+        from shield_server.app import create_app
+        from shield_server.config import Settings
+        from shield_server.govseam import load_governance_app
+        from shield_server.models import RegisterAgentRequest
+        from shield_server.storage import build_memory_storage
+    except ImportError as e:  # pragma: no cover - pre server/gov-W3 trees only
+        raise RealGovUnavailable(
+            f"real shield-server/gov surface not importable ({e}) "
+            "— real-server-graph run SKIPPED (never faked)"
+        ) from e
+
+    kp = _json.loads(_GOLDEN_VECTORS.read_text(encoding="utf-8"))["keypair"]
+
+    async def _setup() -> Any:
+        storage = build_memory_storage()
+        # Enrol the frozen agent via the server's OWN public register service
+        # (agent_id/kid = sdk ShieldElementConfig defaults; pubkey = golden).
+        await register_agent(
+            storage,
+            RegisterAgentRequest(
+                agent_id="agentdojo-banking-v1",
+                keys=[
+                    {"kid": "agentdojo-banking-v1-key-v1", "public_key": kp["public_key_b64url"]}
+                ],
+            ),
+            "demo-org",
+        )
+        # load_governance_app() is the server's OWN pre-warm resolver: with
+        # gov-W3 merged it returns the real Protocol-complete 4-guardian
+        # adapter (decide+resume) — exactly what create_app's lifespan does.
+        return create_app(
+            storage=storage,
+            settings=Settings.from_env(),
+            governance=load_governance_app(),
+        )
+
+    try:
+        app = asyncio.run(_setup())
+    except Exception as e:  # pragma: no cover - server infra/setup blockers
+        raise RealGovUnavailable(
+            f"real shield-server in-process setup blocked ({e!r}) "
+            "— real-server-graph run SKIPPED + flagged (never faked)"
+        ) from e
+
+    return httpx.ASGITransport(app=app)
