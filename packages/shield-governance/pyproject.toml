@@ -7,19 +7,23 @@ dependencies = [
     "shield-sdk",
     "networkx>=3.2",
     "pyyaml>=6.0.1",
-    # W2/W3 heavy frameworks — pins §5b-verified first-hand against Related_Work
-    # clones on 2026-05-19, ACTIVATED when the live graph lands (no live graph at
-    # W1, so these stay deferred and uv.lock is untouched this PR):
-    #   langgraph>=1.2            (verified langgraph/libs/langgraph/pyproject.toml
-    #                              version = "1.2.0"; MIT langgraph/LICENSE:1)
-    #   langgraph-checkpoint-postgres   (HITL interrupt() + time-travel rollback)
-    #   chromadb>=0.5            (Apache-2.0; ANONYMIZED_TELEMETRY=False air-gap)
-    #   llamafirewall            (Meta PurpleLlama framework MIT — verified
-    #                              PurpleLlama/LlamaFirewall/LICENSE:1)
-    #   invariant-ai==0.3.5      (verified invariant/pyproject.toml version=0.3.5;
-    #                              Apache-2.0 invariant/LICENSE:1; LocalPolicy ONLY
-    #                              — bare Policy/RemotePolicy banned by import-lint)
+    # W2 ACTIVATED — §5b-verified first-hand against Related_Work clones
+    # 2026-05-19 (cited inline in the modules that use them):
+    "langgraph>=1.2",      # langgraph/libs/langgraph/pyproject.toml version=1.2.0; MIT LICENSE:1
+    "invariant-ai==0.3.5", # invariant/pyproject.toml name="invariant-ai" version=0.3.5; Apache LICENSE:1 — LocalPolicy ONLY
+    "redis>=5.0",          # Channel-2 Redis Streams consumer (XREADGROUP/XACK)
+    # W3 (deferred): langgraph-checkpoint-postgres (HITL interrupt + time-travel
+    # rollback), chromadb>=0.5 (Apache-2.0; ANONYMIZED_TELEMETRY=False air-gap).
 ]
+
+[project.optional-dependencies]
+# LlamaFirewall (Meta PurpleLlama framework MIT — PurpleLlama/LlamaFirewall/
+# LICENSE:1) pulls torch/transformers (PromptGuard2 86M). Kept an EXTRA so the
+# default CI env stays lean and the scanner stays ScannerType-pluggable per the
+# air-gap design (local_deployment_moat §3.3/§5). The real scanner adapter
+# lazy-imports it only when the live scanner path is enabled; unit tests inject
+# a fake scanner.
+scanners = ["llamafirewall"]
 
 [tool.uv.sources]
 shield-sdk = { workspace = true }
