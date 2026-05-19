@@ -25,13 +25,37 @@
     "allData": "全部数据",
     "copyToClipboard": "复制到剪贴板",
     "copyJwks": "复制 JWKS",
-    "links": "链接"
+    "links": "链接",
+    "governance": "治理",
+    "incidents": "事件"
   },
   "sidebar": {
     "overview": "概览",
     "management": "管理",
+    "governance": "治理",
     "compliance": "合规",
     "system": "系统"
+  },
+  "governance": {
+    "title": "治理",
+    "subtitle": "第二层运行时裁决、事件与按运行成本",
+    "stubNotice": "W2 脚手架 —— 实时裁决流、correlation-id 溯源 DAG 与按运行成本汇总将在 W3（G3）接入。下方为占位数据。",
+    "kpiBlocked": "已拦截",
+    "kpiSaved": "挽回损失",
+    "kpiEscalated": "已升级",
+    "kpiMeanRisk": "平均风险",
+    "verdictsTitle": "最近裁决",
+    "colCorrelation": "关联 ID",
+    "colDecision": "裁决",
+    "colRisk": "风险",
+    "colPrevented": "挽回损失",
+    "emptyVerdicts": "暂无裁决。",
+    "incidentsTitle": "事件",
+    "incidentsSubtitle": "已升级与已拦截的第二层事件",
+    "incidentsEmpty": "暂无事件 —— 事件流将在 W3 接入。",
+    "runTitle": "运行",
+    "runSubtitle": "按运行成本汇总与裁决时间线",
+    "runStub": "按运行成本汇总（GET /v1/governance/runs/{run_id}/cost）与裁决时间线将在 W3 接入。"
   },
   "dashboard": {
     "title": "仪表盘",

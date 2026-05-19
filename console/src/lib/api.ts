@@ -21,6 +21,8 @@ import type {
   IssueTokenResponse,
   JWKSResponse,
   ErrorResponse,
+  ShieldActionRecord,
+  GovernanceVerdict,
 } from '@elydora/shared';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
@@ -225,6 +227,29 @@ export const api = {
       return request<IssueTokenResponse>('/v1/auth/token', {
         method: 'POST',
         body: JSON.stringify({ ttl_seconds: ttlSeconds }),
+      });
+    },
+  },
+
+  // §4 governance surface (SDK §4.3 / ADR-0004). W2 = server STUB:
+  // `decide` (Channel-1 sync gate) returns a stub-PASS GovernanceVerdict;
+  // `record` (post_exec) is async, chain-linked, returns no verdict. The
+  // governance READ surface (per-run cost rollup, verdict stream for the
+  // live monitor / provenance DAG / KPI cards) is wired in W3 (G3).
+  governance: {
+    /** Channel-1 sync gate: pre_exec ShieldActionRecord -> signed GovernanceVerdict (one round-trip). */
+    decide(rec: ShieldActionRecord): Promise<GovernanceVerdict> {
+      return request<GovernanceVerdict>('/v1/governance/decide', {
+        method: 'POST',
+        body: JSON.stringify(rec),
+      });
+    },
+
+    /** Channel-2 async post_exec ingest: chain-linked, no verdict returned. */
+    record(rec: ShieldActionRecord): Promise<void> {
+      return request<void>('/v1/governance/record', {
+        method: 'POST',
+        body: JSON.stringify(rec),
       });
     },
   },
