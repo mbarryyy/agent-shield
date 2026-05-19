@@ -8,8 +8,13 @@ never blocks the AgentDojo worker. The client stays thin and synchronous
 (AgentDojo's pipeline is fully synchronous — verified rev 18b501a).
 
 `submit()` is the Channel-2 path: the async `post_exec` (and any) record is
-POSTed to the Elydora-style ingest route; the server persists it (PG + MinIO +
-EAR) and `XADD shield:actions:{workflow_id}` in the ingest transaction.
+POSTed to `POST /v1/governance/record` (server-builder confirmed route — NOT
+`/v1/operations`, which is the W1 Elydora-EOR shape with no Channel-2 XADD;
+`/decide` is pre_exec-only). The server verifies it via the SAME frozen
+`shield_sdk.canonical` projection, persists it, `XADD
+shield:actions:{workflow_id}`, and returns a `202` ack
+(`{record_id, chain_hash, seq_no, accepted}` — no verdict). The FROZEN §4
+schema / HTTP body is unchanged; this is purely the route string.
 """
 
 from __future__ import annotations
@@ -20,8 +25,8 @@ import httpx
 
 from .schema import GovernanceVerdict, ShieldActionRecord
 
-DEFAULT_DECIDE_PATH = "/v1/governance/decide"
-DEFAULT_RECORD_PATH = "/v1/operations"
+DEFAULT_DECIDE_PATH = "/v1/governance/decide"  # pre_exec (Channel-1, returns verdict)
+DEFAULT_RECORD_PATH = "/v1/governance/record"  # post_exec (Channel-2, returns 202 ack)
 
 
 class ShieldClient:
