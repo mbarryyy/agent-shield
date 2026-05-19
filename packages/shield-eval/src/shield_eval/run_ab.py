@@ -32,7 +32,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-from .arms import Arm, ArmUnavailable, arm_alias, resolve_arms
+from .arms import Arm, ArmUnavailable, ShieldWiring, arm_alias, resolve_arms
 from .mock_llm import MockedLLM
 
 # Eval-plan §5: a mid-tier worker keeps undefended ASR visibly high. The mock
@@ -51,6 +51,8 @@ class ArmResult:
     # keys: (user_task_id, injection_task_id) with-injection; (uid, "") benign.
     security: dict[tuple[str, str], bool] = field(default_factory=dict)
     utility: dict[tuple[str, str], bool] = field(default_factory=dict)
+    # Shield enforced decision per pairing (W2 A1/A2; empty for native arms).
+    decisions: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 def _build_suite(version: str, suite_name: str) -> Any:
@@ -69,6 +71,7 @@ def _run_arm(
     backend: str,
     worker: str,
     logdir: str,
+    shield_wiring: ShieldWiring | None = None,
 ) -> ArmResult:
     """Run one native arm. Fresh pipeline + MockedLLM bound per user task so the
     deterministic replay stays correct across the suite iteration.
@@ -104,7 +107,7 @@ def _run_arm(
             llm = worker  # ModelsEnum string — real backend (eval.yml, W4/W5)
 
         try:
-            pipeline = arm.build(llm, mock=mock)
+            pipeline = arm.build(llm, mock=mock, shield_wiring=shield_wiring)
         except ArmUnavailable as e:
             res.available = False
             res.skip_reason = str(e)
@@ -167,15 +170,21 @@ def _lookup(ref: str, results: dict[str, ArmResult]) -> tuple[str, object]:
     if len(parts) != 3:
         return "SKIP", f"unparseable ref '{ref}'"
     arm_tok, task_id, fld = parts
-    if arm_tok in {"shielded", "A1", "A2", "A3"}:
-        return "SKIP", f"arm '{arm_tok}' is wired W2→W3 (Shield not in W1 skeleton)"
+    # W2: shield arms (A1/A2/A3, alias 'shielded') resolve like any arm — they
+    # produce a real result when run, or SKIP via ArmUnavailable (sdk-w2 not
+    # yet merged). No hardcoded skip; SKIP-not-fake stays honest either way.
     r = _find_arm(arm_tok, results)
     if r is None:
         return "SKIP", f"arm '{arm_tok}' was not run"
     if not r.available:
         return "SKIP", f"arm '{arm_tok}' unavailable: {r.skip_reason}"
     if fld == "decision":
-        return "SKIP", "field 'decision' is a Shield verdict (W2→W3)"
+        if not r.decisions:
+            return "SKIP", f"no decision captured for task '{task_id}' on arm '{arm_tok}'"
+        dvals = [v for (uid, iid), v in r.decisions.items() if task_id in (uid, iid)]
+        if not dvals:
+            return "SKIP", f"no decision for task '{task_id}' on arm '{arm_tok}'"
+        return "OK", dvals[0]
     table = r.security if fld == "success" else r.utility
     vals = [v for (uid, iid), v in table.items() if task_id in (uid, iid)]
     if not vals:
@@ -265,8 +274,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--injection-task", dest="injection_tasks", action="append", default=[])
     p.add_argument("--attack", default=None)
     p.add_argument("--assert", dest="asserts", action="append", default=[])
-    p.add_argument("--arms", default=None, help="comma list: A0,A0b,baseline,<built-in>")
+    p.add_argument(
+        "--arms", default=None, help="comma list: A0,A0b,baseline,A1,A2,A3,shielded,<built-in>"
+    )
     p.add_argument("--compare-baselines", default=None, help="comma list of A0b built-ins")
+    p.add_argument(
+        "--decide",
+        dest="decide_mode",
+        default=None,
+        choices=["noop", "mock", "http"],
+        help="Shield-arm /decide provider override (A1=noop, A2=mock|http)",
+    )
+    p.add_argument("--decide-url", default=None, help="ShieldClient base_url (server /decide host)")
+    p.add_argument(
+        "--decide-path", default="/v1/governance/decide", help="ShieldClient decide_path"
+    )
+    p.add_argument(
+        "--record-path",
+        default="/v1/governance/record",
+        help="ShieldClient record_path (Channel-2 post_exec; server-confirmed)",
+    )
+    p.add_argument(
+        "--shield-agent-key",
+        default=os.environ.get("SHIELD_AGENT_PRIVATE_KEY_B64URL"),
+        help="agent Ed25519 private key (b64url) for the Shield arms",
+    )
     p.add_argument(
         "--backend",
         default=os.environ.get("SHIELD_LLM_BACKEND", "mock"),
@@ -332,12 +364,19 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
     skipped: list[AssertOutcome] = []
     for tok in arm_tokens:
         try:
-            arms.extend(resolve_arms([tok]))
+            arms.extend(resolve_arms([tok], decide_mode=args.decide_mode))
         except ArmUnavailable as e:
             skipped.append(AssertOutcome(f"arm:{tok}", "SKIP", str(e)))
 
     injection_task_id = args.injection_tasks[0] if args.injection_tasks else None
     user_task_ids = args.user_tasks or ["user_task_0"]
+
+    shield_wiring = ShieldWiring(
+        base_url=args.decide_url,
+        decide_path=args.decide_path,
+        record_path=args.record_path,
+        agent_private_key_b64url=args.shield_agent_key,
+    )
 
     results: dict[str, ArmResult] = {}
     for arm in arms:
@@ -350,6 +389,7 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
             backend=args.backend,
             worker=args.model,
             logdir=logdir,
+            shield_wiring=shield_wiring,
         )
 
     print(
