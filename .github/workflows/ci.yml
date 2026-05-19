@@ -74,7 +74,9 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@v2
-        env: { GITLEAKS_LICENSE: "" }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ""
 
   # ADDED beyond cicd.md §2 — W0 standing constraint #1 (NO-AI-ATTRIBUTION HARD
   # RULE) + cicd.md §8 conventional-commit title mechanism.
