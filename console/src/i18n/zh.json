@@ -384,6 +384,7 @@
     "supported": "支持的（一键安装）",
     "sdkIntegration": "SDK 集成",
     "install": "安装",
+    "prereleaseNotice": "预发布：上方所示的 Agent Shield SDK 包尚未发布到公共仓库；Agent 分发将随公开发布一并提供。",
     "backToList": "返回",
     "sdkTutorial": "SDK 教程",
     "aiReadyPrompt": "AI 就绪提示",

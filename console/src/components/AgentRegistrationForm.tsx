@@ -1068,6 +1068,9 @@ ${logSteps[lang]}${verifyNote}`;
                   {copiedField === 'cli-cmd' ? t('common.copied') : t('common.copy')}
                 </button>
               </div>
+              <div className="mt-2 px-3 py-2 border border-amber-300 bg-amber-50 font-mono text-[10px] text-amber-800 leading-relaxed">
+                {t('agentRegistration.prereleaseNotice')}
+              </div>
             </>
           )}
 
