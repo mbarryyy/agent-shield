@@ -1,13 +1,33 @@
 {
   "shield_version": "1.1",
+  "verdict_id": "0193aaaa-bbbb-7ccc-8ddd-000000000005",
+  "record_id": "0193aaaa-bbbb-7ccc-8ddd-000000000001",
+  "correlation_id": "0193aaaa-bbbb-7ccc-8ddd-000000000002",
+  "run_id": "run-0001",
   "decision": "ESCALATE",
-  "correlation_id": "22222222-2222-2222-2222-222222222222",
   "risk_score": 0.71,
-  "confidence": 0.6,
   "reasons": [
-    { "code": "CUMULATIVE_STRUCTURING", "message": "cumulative send_money to one recipient crosses cap across calls", "guardian": "evaluator", "model_id": null, "served_via": "local" }
+    {
+      "agent": "evaluator",
+      "label": "CUMULATIVE_STRUCTURING",
+      "detail": "cumulative send_money crosses cap across calls",
+      "score": 0.71,
+      "model_id": null,
+      "served_via": "local"
+    }
   ],
-  "obligations": { "require_human": true },
+  "obligations": {
+    "mask_args": null,
+    "rewrite_args": null,
+    "require_human": true,
+    "rollback": {
+      "langgraph_checkpoint_id": "ckpt_01J",
+      "env_snapshot_ref": "rec_pre_01J"
+    },
+    "prevented_loss": null
+  },
   "latency_ms": 240.0,
-  "x-note": "Owned by eval-builder: in non-interactive batch, ESCALATE degrades deterministically to BLOCK per runtime config (C/ADR per implementation_plan seam #3). Live demo keeps real interrupt() HITL."
+  "served_at": 1747526400240,
+  "shield_kid": "shield-server-key-v1",
+  "signature_by_shield": "MHggXEFXFNPuitflebl31qXDCEPJGPFiyuiUBZkSnZaqe3VBpp7sjwVWWTXhZuPFvygnfhpxM96PxjLkzNhABw"
 }

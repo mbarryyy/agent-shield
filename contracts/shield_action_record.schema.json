@@ -2,47 +2,340 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-shield/contracts/shield_action_record.schema.json",
   "title": "ShieldActionRecord",
-  "x-status": "W0-STUB — frozen at W1 as shield_version 1.1 by sdk-builder (C11/ADR-0007). Field set sourced from sdk_layer_design.md §4; sdk-builder regenerates this snapshot from shield_sdk.schema at W1.",
+  "x-status": "FROZEN \u00a74 v1.1 (C11/ADR-0007). Regenerated from shield_sdk.schema (the single pydantic source of truth) via packages/shield-sdk/tests/_tools/gen_contract_snapshots.py. additionalProperties:false on every closed object; tool_args/subject are intentionally open maps.",
   "x-shield-version": "1.1",
-  "type": "object",
-  "required": ["shield_version", "phase", "correlation_id", "run_id", "payload_hash"],
-  "properties": {
-    "shield_version": { "type": "string", "const": "1.1" },
-    "phase": { "type": "string", "enum": ["pre_exec", "post_exec"] },
-    "correlation_id": { "type": "string", "description": "pairs pre_exec ↔ post_exec" },
-    "run_id": { "type": "string" },
-    "step_index": { "type": "integer", "minimum": 0 },
-    "issued_at": { "type": "string", "format": "date-time" },
-    "nonce": { "type": "string" },
-    "tool_name": { "type": "string" },
-    "args_digest": { "type": "string" },
-    "payload": {
-      "type": "object",
+  "$defs": {
+    "ActionContext": {
+      "additionalProperties": false,
+      "description": "Dual-substrate rollback keys (C2 resolution, first-class in \u00a74.1).",
       "properties": {
-        "llm": {
-          "type": "object",
-          "properties": {
-            "model": { "type": "string" },
-            "prompt_tokens": { "type": "integer", "minimum": 0 },
-            "completion_tokens": { "type": "integer", "minimum": 0 }
-          }
+        "checkpoint_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Id"
+        },
+        "langgraph_thread_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Langgraph Thread Id"
+        },
+        "env_snapshot_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env Snapshot Ref"
         }
-      }
+      },
+      "title": "ActionContext",
+      "type": "object"
     },
-    "payload_hash": { "type": "string", "description": "JCS-RFC8785 SHA-256 over the signable projection" },
-    "prev_chain_hash": { "type": "string" },
-    "chain_hash": { "type": "string", "description": "server-derived; never trusted from client" },
-    "tool_result": { "type": ["object", "string", "null"] },
-    "verdict_ref": { "type": ["string", "null"] },
-    "context": {
-      "type": "object",
+    "ActionPayload": {
+      "additionalProperties": false,
+      "description": "``payload`` (\u00a74.1): JCS-hashed, object-stored. ``tool_args`` is open.",
       "properties": {
-        "checkpoint_id": { "type": ["string", "null"] },
-        "langgraph_thread_id": { "type": ["string", "null"] },
-        "env_snapshot_ref": { "type": ["string", "null"] }
-      }
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "tool_args": {
+          "additionalProperties": true,
+          "title": "Tool Args",
+          "type": "object"
+        },
+        "tool_result": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Result"
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Error"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        }
+      },
+      "title": "ActionPayload",
+      "type": "object"
     },
-    "signature": { "type": "string", "description": "Ed25519 over JCS(record − signature)" }
+    "ActionRef": {
+      "additionalProperties": false,
+      "description": "``action`` (\u00a74.1): the tool + a digest of its args.",
+      "properties": {
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "args_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args Digest"
+        }
+      },
+      "title": "ActionRef",
+      "type": "object"
+    },
+    "ActionType": {
+      "enum": [
+        "tool_call",
+        "llm_inference",
+        "decision",
+        "checkpoint",
+        "escalation"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "LLMUsage": {
+      "additionalProperties": false,
+      "description": "Per-action LLM token attribution (commercial cost hook #1; eval TO).",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "prompt_tokens": {
+          "default": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "default": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "LLMUsage",
+      "type": "object"
+    },
+    "Phase": {
+      "enum": [
+        "pre_exec",
+        "post_exec"
+      ],
+      "title": "Phase",
+      "type": "string"
+    }
   },
-  "additionalProperties": true
+  "additionalProperties": false,
+  "description": "Two-phase tamper-evident action record. FROZEN \u00a74.1 baseline, v1.1.\n\n``chain_hash`` is server-derived and never trusted from / signed by the\nclient; it is excluded from the signable projection (see\n``shield_sdk.canonical``).",
+  "properties": {
+    "shield_version": {
+      "default": "1.1",
+      "title": "Shield Version",
+      "type": "string"
+    },
+    "record_id": {
+      "title": "Record Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "org_id": {
+      "default": "demo-org",
+      "title": "Org Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "default": "agentdojo-banking-v1",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "workflow_id": {
+      "default": "banking",
+      "title": "Workflow Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "step_index": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Step Index",
+      "type": "integer"
+    },
+    "issued_at": {
+      "title": "Issued At",
+      "type": "integer"
+    },
+    "ttl_ms": {
+      "default": 30000,
+      "title": "Ttl Ms",
+      "type": "integer"
+    },
+    "nonce": {
+      "title": "Nonce",
+      "type": "string"
+    },
+    "phase": {
+      "$ref": "#/$defs/Phase"
+    },
+    "action_type": {
+      "$ref": "#/$defs/ActionType",
+      "default": "tool_call"
+    },
+    "operation_type": {
+      "default": "tool_call",
+      "title": "Operation Type",
+      "type": "string"
+    },
+    "subject": {
+      "additionalProperties": true,
+      "title": "Subject",
+      "type": "object"
+    },
+    "action": {
+      "$ref": "#/$defs/ActionRef"
+    },
+    "payload": {
+      "$ref": "#/$defs/ActionPayload"
+    },
+    "context": {
+      "$ref": "#/$defs/ActionContext"
+    },
+    "payload_hash": {
+      "default": "",
+      "title": "Payload Hash",
+      "type": "string"
+    },
+    "prev_chain_hash": {
+      "default": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "title": "Prev Chain Hash",
+      "type": "string"
+    },
+    "chain_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Chain Hash"
+    },
+    "agent_pubkey_kid": {
+      "default": "agentdojo-banking-v1-key-v1",
+      "title": "Agent Pubkey Kid",
+      "type": "string"
+    },
+    "verdict_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verdict Ref"
+    },
+    "signature": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Signature"
+    }
+  },
+  "required": [
+    "run_id",
+    "phase"
+  ],
+  "type": "object"
 }
