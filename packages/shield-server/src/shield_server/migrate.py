@@ -1,11 +1,141 @@
-"""`python -m shield_server.migrate` — DB migration entrypoint (referenced by
-infra integration). W0 STUB: prints and exits 0."""
+"""`python -m shield_server.migrate` — DB migration entrypoint.
+
+1:1 port of Elydora packages/server/migrations/001_initial.sql (idempotent
+`CREATE TABLE IF NOT EXISTS`), plus an idempotent demo-org seed so the console
+boots against a known-good schema. `integration.yml` runs this against the
+docker-compose Postgres before the integration suite.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import os
+
+from .config import DEMO_ORG_ID
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS schema_versions (
+  version     INTEGER PRIMARY KEY,
+  applied_at  BIGINT NOT NULL,
+  description TEXT   NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organizations (
+  org_id     TEXT   NOT NULL PRIMARY KEY,
+  name       TEXT   NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+  agent_id           TEXT   NOT NULL PRIMARY KEY,
+  org_id             TEXT   NOT NULL,
+  display_name       TEXT   NOT NULL,
+  responsible_entity TEXT   NOT NULL,
+  integration_type   TEXT   NOT NULL DEFAULT 'sdk',
+  status             TEXT   NOT NULL DEFAULT 'active',
+  created_at         BIGINT NOT NULL,
+  updated_at         BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agents_org_id ON agents (org_id);
+
+CREATE TABLE IF NOT EXISTS agent_keys (
+  kid        TEXT   NOT NULL PRIMARY KEY,
+  agent_id   TEXT   NOT NULL REFERENCES agents (agent_id),
+  public_key TEXT   NOT NULL,
+  algorithm  TEXT   NOT NULL DEFAULT 'ed25519',
+  status     TEXT   NOT NULL DEFAULT 'active',
+  created_at BIGINT NOT NULL,
+  retired_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_keys_agent_id ON agent_keys (agent_id);
+
+CREATE TABLE IF NOT EXISTS operations (
+  operation_id     TEXT    NOT NULL PRIMARY KEY,
+  org_id           TEXT    NOT NULL,
+  agent_id         TEXT    NOT NULL REFERENCES agents (agent_id),
+  seq_no           INTEGER NOT NULL,
+  operation_type   TEXT    NOT NULL,
+  issued_at        BIGINT  NOT NULL,
+  ttl_ms           INTEGER NOT NULL,
+  nonce            TEXT    NOT NULL,
+  subject          TEXT    NOT NULL,
+  action           TEXT    NOT NULL,
+  payload_hash     TEXT    NOT NULL,
+  prev_chain_hash  TEXT    NOT NULL,
+  chain_hash       TEXT    NOT NULL,
+  agent_pubkey_kid TEXT    NOT NULL,
+  signature        TEXT    NOT NULL,
+  r2_payload_key   TEXT,
+  created_at       BIGINT  NOT NULL,
+  UNIQUE (agent_id, seq_no)
+);
+CREATE INDEX IF NOT EXISTS idx_operations_org_created ON operations (org_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_operations_agent_seq ON operations (agent_id, seq_no);
+CREATE INDEX IF NOT EXISTS idx_operations_type ON operations (operation_type);
+
+CREATE TABLE IF NOT EXISTS receipts (
+  receipt_id     TEXT   NOT NULL PRIMARY KEY,
+  operation_id   TEXT   NOT NULL UNIQUE REFERENCES operations (operation_id),
+  r2_receipt_key TEXT   NOT NULL,
+  created_at     BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS epochs (
+  epoch_id     TEXT    NOT NULL PRIMARY KEY,
+  org_id       TEXT    NOT NULL,
+  start_time   BIGINT  NOT NULL,
+  end_time     BIGINT  NOT NULL,
+  root_hash    TEXT    NOT NULL,
+  leaf_count   INTEGER NOT NULL,
+  r2_epoch_key TEXT    NOT NULL,
+  created_at   BIGINT  NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS exports (
+  export_id      TEXT   NOT NULL PRIMARY KEY,
+  org_id         TEXT   NOT NULL,
+  status         TEXT   NOT NULL DEFAULT 'queued',
+  query_params   TEXT   NOT NULL,
+  r2_export_key  TEXT,
+  created_at     BIGINT NOT NULL,
+  completed_at   BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_exports_org_status ON exports (org_id, status);
+
+INSERT INTO schema_versions (version, applied_at, description)
+VALUES (1, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, 'Initial schema (Elydora 001 port)')
+ON CONFLICT (version) DO NOTHING;
+"""
+
+_SEED_DEMO_ORG = """
+INSERT INTO organizations (org_id, name, created_at, updated_at)
+VALUES ($1, 'Demo Org', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000,
+        EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
+ON CONFLICT (org_id) DO NOTHING;
+"""
+
+
+def schema_sql() -> str:
+    """The DDL applied by `migrate` (unit-asserted; idempotent)."""
+    return SCHEMA_SQL
+
+
+async def apply(dsn: str) -> None:  # pragma: no cover - integration-only (real PG)
+    import asyncpg
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(SCHEMA_SQL)
+        await conn.execute(_SEED_DEMO_ORG, DEMO_ORG_ID)
+    finally:
+        await conn.close()
+
 
 def main() -> None:
-    print("shield_server.migrate: W0 stub (real migrations land at W1)")
+    dsn = os.environ.get("DATABASE_URL", "postgresql://shield:shield@localhost:5432/shield")
+    asyncio.run(apply(dsn))
+    print(f"shield_server.migrate: schema applied; demo org '{DEMO_ORG_ID}' seeded")
 
 
 if __name__ == "__main__":
