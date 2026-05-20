@@ -31,6 +31,7 @@ from ..models import (
     AuditQueryRequest,
     CostRollup,
     CreateExportResponseModel,
+    DashboardKpi,
     ExportModel,
     FreezeAgentRequest,
     GetExportResponseModel,
@@ -226,6 +227,20 @@ async def governance_cost(run_id: str, request: Request, ctx: Ctx) -> CostRollup
     """hook#5 — LOCKED seam-4 /cost rollup (READ-agg of intervention_log SINK
     + stored §4 prevented_loss; zero server token re-count / $ synthesis)."""
     return await reads_svc.cost(get_storage(request), ctx.org_id, run_id)
+
+
+@router.get("/v1/governance/dashboard/kpi")
+async def governance_dashboard_kpi(request: Request, ctx: Ctx) -> DashboardKpi:
+    """Task #31 (b) — org-wide dashboard KPI rollup.
+
+    Org-scoped (NOT run-scoped, unlike ``/v1/governance/runs/{run_id}/cost``)
+    so the console dashboard's "Total Prevented Loss" stat-card aggregates
+    every signed verdict in the org. Pure READ over ``governance_verdicts``;
+    zero server recompute of $ — the stored figure is the MEASURED env-diff
+    gov / sdk placed on the §4 ``GovernanceVerdict.obligations.prevented_loss``
+    at /decide time.
+    """
+    return await reads_svc.dashboard_kpi(get_storage(request), ctx.org_id)
 
 
 @router.get("/v1/governance/incidents")

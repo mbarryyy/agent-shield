@@ -354,3 +354,24 @@ class IncidentsResponse(BaseModel):
     incidents: list[IncidentRow]
     cursor: str | None = None
     total_count: int
+
+
+# --- Task #31 (b) — org-wide dashboard KPI rollup ---
+# Companion to the run-scoped /cost endpoint; this one aggregates across the
+# entire org's signed verdict history so the console dashboard can render the
+# "Total Prevented Loss" stat-card without first picking a single run.
+
+
+class DashboardKpi(BaseModel):
+    """Org-wide KPI rollup for the console dashboard.
+
+    ``prevented_loss_total`` = Σ ``governance_verdicts.prevented_loss`` for
+    every signed verdict in the org (the MEASURED env-diff value gov / sdk
+    placed on the §4 ``GovernanceVerdict.obligations.prevented_loss`` — the
+    server NEVER recomputes; it merely sums the stored figures).
+    ``decision_mix`` always carries all 6 §4 Decision keys (zero default).
+    """
+
+    prevented_loss_total: float
+    decision_mix: dict[str, int]
+    total_verdicts: int
