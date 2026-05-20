@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
+import BrandMark from '@/components/ui/BrandMark';
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -20,8 +21,18 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       const result = await signIn.email({ email, password });
-      if (result.error) {
-        throw new Error(result.error.message ?? t('login.loginFailed'));
+      if (result.requires_totp) {
+        // Stash the credentials so /login/2fa can re-submit with totp_code.
+        try {
+          sessionStorage.setItem(
+            'shield:pending-2fa',
+            JSON.stringify({ email, password }),
+          );
+        } catch {
+          /* sessionStorage may be unavailable; the 2FA page will ask again */
+        }
+        router.push('/login/2fa');
+        return;
       }
       router.push('/');
     } catch (err) {
@@ -37,8 +48,8 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="mb-12 text-center">
           <div className="inline-flex items-center gap-3">
-            <div className="w-10 h-10 border border-ink flex items-center justify-center">
-              <span className="font-mono text-lg font-bold text-ink">E</span>
+            <div className="w-10 h-10 border border-ink flex items-center justify-center text-ink">
+              <BrandMark size="md" />
             </div>
             <div className="text-left">
               <div className="font-sans text-base font-semibold tracking-wide text-ink">AGENT SHIELD</div>

@@ -6,6 +6,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import IncidentPanel from '@/components/governance/IncidentPanel';
 import { DecisionBadge } from '@/components/governance/badges';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useIncidents, useVerdictDetail } from '@/lib/hooks';
 import type { Incident, VerdictDetail } from '@/types/governance';
 
@@ -34,6 +35,7 @@ const ACTION_DECISION: Record<'approve' | 'reject', string> = {
 
 export default function GovernanceIncidentsPage() {
   const { t } = useTranslation();
+  const { canResolveIncidents } = useAuth();
   const incidentsQuery = useIncidents({ run_id: RUN_ID });
   const live = incidentsQuery.data != null;
   const incidents = incidentsQuery.data?.incidents ?? FALLBACK_INCIDENTS;
@@ -104,7 +106,7 @@ export default function GovernanceIncidentsPage() {
               <IncidentPanel
                 incident={selected}
                 detail={detail}
-                onResolve={handleResolve}
+                onResolve={canResolveIncidents ? handleResolve : undefined}
               />
             ) : (
               <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">

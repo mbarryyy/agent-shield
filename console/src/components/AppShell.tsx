@@ -2,11 +2,39 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import Sidebar from '@/components/ui/Sidebar';
+import SessionExpiredModal from '@/components/SessionExpiredModal';
+
+// Routes that are reachable without a session (auth flows + invite/reset
+// landing pages). Anything else is gated by the 6-step enterprise fan-out
+// in AuthGuard.
+const PUBLIC_ROUTES = new Set<string>([
+  '/login',
+  '/login/2fa',
+  '/register',
+  '/forgot-password',
+  '/password-reset',
+  '/verify-email',
+  '/accept-invite',
+]);
+
+function isPublic(pathname: string): boolean {
+  if (PUBLIC_ROUTES.has(pathname)) return true;
+  for (const p of PUBLIC_ROUTES) if (pathname.startsWith(p + '/')) return true;
+  return false;
+}
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { t } = useTranslation();
+  const {
+    user,
+    isAuthenticated,
+    isLoading,
+    authMode,
+    isDevSession,
+  } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -18,19 +46,42 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     setSidebarOpen(false);
   }, [pathname]);
 
-  const isPublicRoute = pathname === '/login' || pathname === '/register';
+  const publicRoute = isPublic(pathname);
 
+  // 6-step enterprise guard fan-out (no-op in 'open' mode — AuthProvider
+  // seeds a dev session there). Order matters: each step short-circuits the
+  // next so a missing precondition never reaches a gated page.
   useEffect(() => {
-    if (!isLoading && !isAuthenticated && !isPublicRoute) {
+    if (authMode === 'open') return;
+    if (isLoading) return;
+    if (!isAuthenticated && !publicRoute) {
       router.push('/login');
+      return;
     }
-  }, [isLoading, isAuthenticated, isPublicRoute, router]);
+    if (isAuthenticated && user) {
+      if (user.email_verified === false && pathname !== '/verify-email') {
+        router.push('/verify-email');
+        return;
+      }
+      if (user.two_factor_pending === true && pathname !== '/login/2fa') {
+        router.push('/login/2fa');
+        return;
+      }
+      if (
+        user.password_change_required === true &&
+        pathname !== '/settings/account'
+      ) {
+        router.push('/settings/account?force_password=1');
+        return;
+      }
+    }
+  }, [authMode, isLoading, isAuthenticated, user, publicRoute, pathname, router]);
 
   if (isLoading) {
     return <div className="min-h-screen bg-bg" />;
   }
 
-  if (isPublicRoute) {
+  if (publicRoute) {
     return <>{children}</>;
   }
 
@@ -57,6 +108,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       </div>
 
       <main className="min-h-screen md:ml-[260px]">
+        {/* Visible "Dev Session" badge — honest UI (HG#6) when running in
+            open mode (CI/dev). Mirrors the W3 "Pre-release" notice template. */}
+        {isDevSession && (
+          <div
+            role="status"
+            className="border-b border-amber-300 bg-amber-50 px-4 py-2 font-mono text-[11px] text-amber-800 text-center"
+          >
+            {t('common.devSessionBadge')}
+          </div>
+        )}
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-12 pt-20 md:pt-8 pb-8 overflow-hidden">
           {children}
         </div>
@@ -69,6 +130,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
       <AuthGuard>{children}</AuthGuard>
+      <SessionExpiredModal />
     </AuthProvider>
   );
 }

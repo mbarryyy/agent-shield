@@ -32,8 +32,14 @@ import type {
   IncidentList,
   ShieldVerdictEvent,
 } from '@/types/governance';
+import { getCsrfToken } from '@/lib/auth-client';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
+
+/** Browser-side global event for session expiry — consumed by the
+ *  SessionExpiredModal mounted in AppShell. Preserves in-flight UI state
+ *  (no hard redirect; the modal owns the redirect on user click). */
+export const SESSION_EXPIRED_EVENT = 'shield:session-expired';
 
 class ApiError extends Error {
   constructor(
@@ -52,10 +58,17 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const method = (options.method ?? 'GET').toUpperCase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> ?? {}),
   };
+  // §A10: echo CSRF token on state-changing requests. Token is read from
+  // GET /v1/auth/session JSON body by the auth-client (NEVER cookie).
+  if (method !== 'GET' && method !== 'HEAD') {
+    const t = getCsrfToken();
+    if (t && !headers['X-CSRF-Token']) headers['X-CSRF-Token'] = t;
+  }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -64,10 +77,10 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    // On 401, redirect to login (session expired or not authenticated)
+    // On 401 dispatch a global session-expired event; the SessionExpiredModal
+    // (mounted in AppShell) owns the redirect — preserves in-flight UI state.
     if (response.status === 401 && typeof window !== 'undefined') {
-      window.location.href = '/login';
-      return undefined as T;
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
     }
 
     let errorBody: ErrorResponse | null = null;

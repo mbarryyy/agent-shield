@@ -8,13 +8,16 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "gen": "node ../contracts/codegen/gen.mjs"
   },
   "dependencies": {
-    "better-auth": "^1.5.5",
+    "@types/qrcode": "1.5.6",
     "i18next": "^25.8.13",
     "i18next-browser-languagedetector": "^8.2.1",
     "next": "^16.1.6",
+    "qrcode": "1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-i18next": "^16.5.4",
@@ -23,16 +26,24 @@
   "devDependencies": {
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.6",
+    "@playwright/test": "1.60.0",
     "@tailwindcss/postcss": "^4.0.0",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "25.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
     "eslint": "9.39.4",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.6.0",
+    "jsdom": "27.0.1",
+    "msw": "2.14.6",
     "postcss": "^8.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "typescript-eslint": "8.59.4"
+    "typescript-eslint": "8.59.4",
+    "vitest": "3.2.4"
   }
 }

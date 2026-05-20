@@ -24,7 +24,7 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user, logout, canManageMembers } = useAuth();
   const { t } = useTranslation();
 
   const sections: NavSection[] = [
@@ -139,6 +139,31 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </svg>
           ),
         },
+        {
+          label: t('account.title'),
+          href: '/settings/account',
+          icon: (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="5" r="3" />
+              <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+            </svg>
+          ),
+        },
+        ...(canManageMembers
+          ? [
+              {
+                label: t('team.title'),
+                href: '/settings/team',
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <circle cx="5" cy="6" r="2" />
+                    <circle cx="11" cy="6" r="2" />
+                    <path d="M1 14c0-2.2 1.8-4 4-4s4 1.8 4 4M7 14c0-2.2 1.8-4 4-4s4 1.8 4 4" />
+                  </svg>
+                ),
+              },
+            ]
+          : []),
         {
           label: t('common.settings'),
           href: '/settings',

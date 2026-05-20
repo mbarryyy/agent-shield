@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
+import BrandMark from '@/components/ui/BrandMark';
 
 export default function RegisterPage() {
   const { t } = useTranslation();
@@ -21,10 +22,7 @@ export default function RegisterPage() {
     setError('');
     setIsSubmitting(true);
     try {
-      const result = await signUp.email({ email, password, name: displayName });
-      if (result.error) {
-        throw new Error(result.error.message ?? t('register.registrationFailed'));
-      }
+      await signUp.email({ email, password, name: displayName });
       router.push('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('register.registrationFailed'));
@@ -39,8 +37,8 @@ export default function RegisterPage() {
         {/* Logo */}
         <div className="mb-12 text-center">
           <div className="inline-flex items-center gap-3">
-            <div className="w-10 h-10 border border-ink flex items-center justify-center">
-              <span className="font-mono text-lg font-bold text-ink">E</span>
+            <div className="w-10 h-10 border border-ink flex items-center justify-center text-ink">
+              <BrandMark size="md" />
             </div>
             <div className="text-left">
               <div className="font-sans text-base font-semibold tracking-wide text-ink">AGENT SHIELD</div>
