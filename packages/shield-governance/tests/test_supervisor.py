@@ -91,6 +91,26 @@ def test_conflict_triggers_injected_arbiter() -> None:
     assert any(r.label == "supervisor.arbitrated" for r in v.reasons)
 
 
+def test_conflict_arbiter_block_on_post_exec_becomes_rollback() -> None:
+    def arbiter(s: GuardianSignals) -> Decision:
+        return Decision.BLOCK
+
+    rec = _rec(Phase.POST_EXEC)
+    rec.context.checkpoint_id = "ckpt-conflict"
+    rec.context.env_snapshot_ref = "env-conflict"
+    sig = GuardianSignals(
+        defender_decision=Decision.PASS,
+        evaluator_anomaly=0.99,
+        evaluator_ran=True,
+        post_exec=True,
+    )
+    v = Supervisor(arbiter=arbiter).decide(sig, record=rec)
+    assert v.decision is Decision.ROLLBACK
+    assert v.obligations.rollback is not None
+    assert v.obligations.rollback.langgraph_checkpoint_id == "ckpt-conflict"
+    assert v.obligations.rollback.env_snapshot_ref == "env-conflict"
+
+
 def test_no_conflict_on_sync_hot_path_even_with_defender_block() -> None:
     """HG#5: on the sync path evaluator_ran=False, so a Defender BLOCK takes
     the hard override with NO arbiter/LLM (0 LLM tokens)."""

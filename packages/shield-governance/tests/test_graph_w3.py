@@ -11,11 +11,11 @@ from shield_governance.defender.scanners import ScanFinding
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.graph import build_decide_app, decide, make_async_channel2_handler, resume
 from shield_governance.supervisor import GuardianSignals, Supervisor
+from shield_governance.verdicts import AsyncVerdictHandoff
 from shield_sdk.canonical import verdict_signable_dict
 from shield_sdk.schema import (
     ActionPayload,
     Decision,
-    GovernanceVerdict,
     Phase,
     ServedVia,
     ShieldActionRecord,
@@ -125,16 +125,17 @@ async def test_resume_requires_checkpointer() -> None:
 
 @pytest.mark.asyncio
 async def test_async_channel2_path_computes_but_does_not_publish_w3() -> None:
-    """Part-2 = Option C (ADR-0012): the async path COMPUTES the
-    Evaluator/Auditor/Supervisor verdict but does NOT publish shield:verdicts
-    at W3 (server gate-path is the sole signed publisher). The `on_verdict`
-    test sink observes the computed verdict — proving the real async Evaluator
-    (Invariant count(min=3)) + Auditor run, with NO gov-side publish."""
-    seen: list[GovernanceVerdict] = []
+    """The async path computes an unsigned verdict and hands it to the
+    server-owned signing/publish boundary. Governance does not own stream
+    publication or signing."""
+    seen: list[AsyncVerdictHandoff] = []
 
-    async def sink(v: GovernanceVerdict, phase: str) -> None:
-        assert phase == "pre_exec"
-        seen.append(v)
+    async def sink(handoff: AsyncVerdictHandoff) -> None:
+        assert handoff.phase == "pre_exec"
+        assert handoff.workflow_id == "banking"
+        assert handoff.verdict.signature_by_shield is None
+        assert handoff.verdict.record_id == handoff.record.record_id
+        seen.append(handoff)
 
     handler = make_async_channel2_handler(
         evaluator=Evaluator(EvaluatorConfig(run_hallucination=False)),
@@ -148,11 +149,13 @@ async def test_async_channel2_path_computes_but_does_not_publish_w3() -> None:
     # Compute-only ran for all 3 (no transport/publisher exists on this path).
     assert len(seen) == 3
     # The REAL async Evaluator Invariant count(min=3) fired on the 3rd leg.
-    assert any(r.agent is not None and r.label == "invariant.policy" for r in seen[2].reasons)
+    assert any(
+        r.agent is not None and r.label == "invariant.policy" for r in seen[2].verdict.reasons
+    )
     # Unsigned test records → Auditor correctly flags chain_broken (defense-in
     # depth) → Supervisor BLOCK; the point here is compute-only + real Evaluator,
     # not the published form (server gate-path owns SIGNED publish — ADR-0012).
-    assert seen[2].decision is Decision.BLOCK
+    assert seen[2].verdict.decision is Decision.BLOCK
 
 
 @pytest.mark.asyncio

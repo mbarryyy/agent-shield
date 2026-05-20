@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from shield_governance.model_router import GUARDIAN_ROLES, ShieldModelRouter
+from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_sdk.schema import ServedVia
 
 
@@ -69,12 +69,53 @@ def test_cost_hooks_served_via_and_model_id() -> None:
 
 
 def test_model_factory_is_the_create_react_agent_seam() -> None:
-    r = ShieldModelRouter.from_profile("cloud")
+    built: list[tuple[str, str, str | None]] = []
+
+    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:
+        built.append((resolved.provider, resolved.model, api_key))
+        return {"provider": resolved.provider, "model": resolved.model}
+
+    r = ShieldModelRouter.from_profile(
+        "cloud",
+        client_builders={"anthropic": fake_builder},
+        environ={"ANTHROPIC_API_KEY": "test-key"},
+    )
     factory = r.model_factory("evaluator")
     assert callable(factory)
     # (state, runtime) -> BaseChatModel — the verified create_react_agent shape.
-    with pytest.raises(NotImplementedError, match="W2/W3"):
-        factory({}, object())
+    assert factory({}, object()) == {"provider": "anthropic", "model": "claude-sonnet-4"}
+    # Lazy construction is cached per role.
+    assert factory({}, object()) == {"provider": "anthropic", "model": "claude-sonnet-4"}
+    assert built == [("anthropic", "claude-sonnet-4", "test-key")]
+
+
+def test_anthropic_uses_anthropic_api_key_by_default() -> None:
+    r = ShieldModelRouter(_g(evaluator={"provider": "anthropic", "model": "claude"}))
+    assert r.for_role("evaluator").api_key_env == "ANTHROPIC_API_KEY"
+
+
+def test_openai_compat_factory_uses_base_url_and_local_key() -> None:
+    built: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:
+        built.append((resolved.provider, resolved.model, resolved.base_url, api_key))
+        return resolved
+
+    r = ShieldModelRouter(
+        _g(
+            evaluator={
+                "provider": "openai_compat",
+                "model": "local-model",
+                "base_url": "http://127.0.0.1:8000/v1",
+                "api_key_env": "SHIELD_LLM_KEY",
+            }
+        ),
+        client_builders={"openai_compat": fake_builder},
+        environ={"SHIELD_LLM_KEY": "local-key"},
+    )
+    client = r.model_factory("evaluator")({}, object())
+    assert isinstance(client, ResolvedModel)
+    assert built == [("openai_compat", "local-model", "http://127.0.0.1:8000/v1", "local-key")]
 
 
 def test_unknown_role_raises() -> None:
