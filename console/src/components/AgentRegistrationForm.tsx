@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { RegisterAgentRequest } from '@elydora/shared';
+import type { ApiKeyView } from '@/types/auth';
 
 const TOKEN_EXPIRATION_OPTIONS = [
   { labelKey: '24hours', seconds: 86400 },
@@ -95,6 +96,7 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
   const [tokenExpiration, setTokenExpiration] = useState<ExpirationOption>(TOKEN_EXPIRATION_OPTIONS[0]);
   const [customDays, setCustomDays] = useState('');
   const [apiToken, setApiToken] = useState<string | null>(null);
+  const [apiKeyView, setApiKeyView] = useState<ApiKeyView | null>(null);
   const [issuingToken, setIssuingToken] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
 
@@ -158,6 +160,10 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
     setTokenError(null);
     setIssuingToken(true);
     try {
+      if (!credentials) {
+        setTokenError(t('agentRegistration.failedToIssueToken'));
+        return;
+      }
       let ttlSeconds: number | null;
       if (tokenExpiration.seconds === null) {
         ttlSeconds = null;
@@ -171,14 +177,23 @@ export default function AgentRegistrationForm({ onSuccess, onCancel }: AgentRegi
       } else {
         ttlSeconds = tokenExpiration.seconds;
       }
-      const result = await api.auth.issueToken(ttlSeconds);
-      setApiToken(result.token);
+      const result = await api.auth.apiKeys.issue({
+        display_name: `${credentials.agentId} SDK key`,
+        prefix: 'as_live_',
+        agent_id: credentials.agentId,
+        ttl_seconds: ttlSeconds,
+      });
+      setApiToken(result.api_key);
+      setApiKeyView(result.view);
     } catch (err) {
-      setTokenError(err instanceof Error ? err.message : t('agentRegistration.failedToIssueToken'));
+      const msg = err instanceof Error ? err.message : t('agentRegistration.failedToIssueToken');
+      setTokenError(
+        `Module B enterprise auth API required for /v1/auth/api-keys. ${msg}`,
+      );
     } finally {
       setIssuingToken(false);
     }
-  }, [tokenExpiration, customDays, t]);
+  }, [credentials, tokenExpiration, customDays, t]);
 
   // ─── Success Screen ───────────────────────────────────────────────────
   if (credentials) {
@@ -598,17 +613,24 @@ fmt.Println("Chain:",     result.Checks.Chain)`,
             </p>
 
             {apiToken ? (
-              <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-white border border-border font-mono text-[10px] text-ink break-all select-all overflow-hidden" style={{ wordBreak: 'break-all' }}>
-                  {apiToken}
-                </code>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(apiToken, 'token')}
-                  className="shrink-0 px-3 py-2 border border-ink bg-ink text-[#EAEAE5] font-mono text-[10px] uppercase tracking-wider hover:bg-transparent hover:text-ink transition-colors"
-                >
-                  {copiedField === 'token' ? t('common.copied') : t('common.copy')}
-                </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-white border border-border font-mono text-[10px] text-ink break-all select-all overflow-hidden" style={{ wordBreak: 'break-all' }}>
+                    {apiToken}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(apiToken, 'token')}
+                    className="shrink-0 px-3 py-2 border border-ink bg-ink text-[#EAEAE5] font-mono text-[10px] uppercase tracking-wider hover:bg-transparent hover:text-ink transition-colors"
+                  >
+                    {copiedField === 'token' ? t('common.copied') : t('common.copy')}
+                  </button>
+                </div>
+                {apiKeyView && (
+                  <div className="font-mono text-[10px] text-ink-dim">
+                    API key id {apiKeyView.api_key_id} · scope {apiKeyView.agent_id ?? 'org-wide'} · shown once
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
