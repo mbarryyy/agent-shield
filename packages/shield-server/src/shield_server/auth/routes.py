@@ -182,6 +182,21 @@ class AdminInviteResponse(BaseModel):
     expires_at: int
 
 
+class AcceptInviteRequest(BaseModel):
+    """ADR-0013 §A1 — public-allowlisted invite-accept body shape.
+
+    Console POSTs ``{token, password, name}`` to ``/v1/auth/invites/accept``
+    (console accept-invite/page.tsx). Server hashes the token, looks up the
+    pending invite, creates the user + membership + session, marks the
+    invite consumed (single-use), and emits an ``INVITE_ACCEPT_OK`` audit row.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    token: str
+    password: str = Field(min_length=8, max_length=256)
+    name: str = ""
+
+
 class IssueApiKeyRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     display_name: str = ""
@@ -978,6 +993,134 @@ async def admin_invite(
         detail={"target_email": body.email, "role": body.role},
     )
     return AdminInviteResponse(invite_id=invite_id, expires_at=expires_at)
+
+
+# --- /v1/auth/invites/accept ------------------------------------------- #
+
+
+@auth_router.post("/invites/accept")
+async def accept_invite(
+    body: AcceptInviteRequest, request: Request, response: Response
+) -> SignInResponse:
+    """ADR-0013 §A1 — public-allowlisted invite-accept handler.
+
+    Pairs with ``POST /v1/auth/admin/invite``: admin ISSUES invites (admin
+    role), invitees ACCEPT via the emailed link. This endpoint is in
+    ``PUBLIC_ROUTE_PATHS`` (``auth/dep.py``) — reachable without a session
+    because the invitee does not have one yet.
+
+    Behaviour:
+      * §A7 uniform 401 ``UNAUTHORIZED`` on any token-failure mode
+        (unknown / consumed / expired / email-collision). The true reason
+        lives in ``audit_log_auth.INVITE_ACCEPT_FAIL`` only — no enumeration.
+      * §A1 argon2id + active pepper for the new user's ``password_hash``.
+      * §A7 ``email_verified_at = now_ms()`` on creation — invite delivery
+        IS the email proof-of-control.
+      * Single-use enforced by ``invites.consumed_at`` UPDATE; a repeat
+        POST of the same token fails uniform 401.
+      * Rate-limited at the IP level (same 10/min slowapi bucket pattern
+        as sign-up / sign-in).
+      * Creates a fresh server-authoritative session (opaque cookie token +
+        CSRF) and Set-Cookie's it; returns the SAME ``SignInResponse``
+        shape as sign-in / sign-up so the console post-auth flow plugs in
+        unchanged.
+    """
+    settings = _settings(request)
+    storage = request.app.state.storage
+    headers = dict(request.headers)
+    ip = client_ip(headers, fallback=request.client.host if request.client else None)
+    ua = request.headers.get("user-agent")
+    await enforce_or_block(
+        storage.cache,
+        config=RateLimitConfig(bucket="invites-accept"),
+        headers=headers,
+        fallback_ip=ip,
+    )
+
+    async def _fail(*, invite_id: str | None, reason: str) -> None:
+        await insert_audit(
+            storage.db,
+            event="INVITE_ACCEPT_FAIL",
+            ip=ip,
+            user_agent=ua,
+            detail={"reason": reason, "invite_id": invite_id},
+        )
+        raise AppError(401, "UNAUTHORIZED")
+
+    token_hash = sha256_hex(body.token)
+    row = await storage.db.fetchrow(
+        "SELECT invite_id, org_id, email, role, invited_by, expires_at, "
+        "consumed_at, created_at, token_hash FROM invites WHERE token_hash = $1",
+        token_hash,
+    )
+    if row is None:
+        await _fail(invite_id=None, reason="unknown_token")
+    assert row is not None
+    invite_id = str(row["invite_id"])
+    if row.get("consumed_at") is not None:
+        await _fail(invite_id=invite_id, reason="already_consumed")
+    expires_at = row.get("expires_at")
+    if expires_at is None or int(expires_at) < now_ms():
+        await _fail(invite_id=invite_id, reason="expired")
+
+    org_id = str(row["org_id"])
+    invite_email = str(row["email"])
+    role = str(row["role"])
+    invited_by = str(row["invited_by"])
+
+    # §A7 email-enumeration: a collision with an existing user is also a
+    # uniform 401 (the invitee should never learn whether their email was
+    # pre-registered through the invite-accept endpoint).
+    existing = await users_svc.find_by_email(storage.db, email=invite_email)
+    if existing is not None:
+        await _fail(invite_id=invite_id, reason="email_collision")
+
+    # Create the user + role membership (transactional via users_svc).
+    new_user = await users_svc.create_user(
+        storage.db,
+        _hasher(request),
+        email=invite_email,
+        password=body.password,
+        name=body.name,
+        org_id=org_id,
+        role=role,  # type: ignore[arg-type]  # CHECK constraint on invites guarantees valid role
+        invited_by=invited_by,
+    )
+    # Invite-delivery implies email control → mark verified now.
+    await users_svc.set_email_verified(storage.db, user_id=new_user.user_id)
+    # Atomically consume the invite (single-use).
+    await storage.db.execute(
+        "UPDATE invites SET consumed_at = $1 WHERE invite_id = $2",
+        now_ms(),
+        invite_id,
+    )
+    await insert_audit(
+        storage.db,
+        event="INVITE_ACCEPT_OK",
+        user_id=new_user.user_id,
+        org_id=org_id,
+        ip=ip,
+        user_agent=ua,
+        detail={"invite_id": invite_id, "role": role},
+    )
+
+    # Issue a fresh session — same shape as sign-up / sign-in so the
+    # console post-auth flow is unchanged.
+    sess = await sessions_svc.create_session(
+        storage.db,
+        user_id=new_user.user_id,
+        ttl_seconds=settings.session_ttl_seconds,
+        ip=ip,
+        user_agent=ua,
+    )
+    _set_session_cookie(response, settings, sess.raw_token)
+    return SignInResponse(
+        user_id=new_user.user_id,
+        email=new_user.email,
+        role=role,
+        org_id=org_id,
+        csrf_token=sess.csrf_token,
+    )
 
 
 # --- /v1/auth/api-keys ------------------------------------------------- #

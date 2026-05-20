@@ -43,6 +43,8 @@ AuthEvent = Literal[
     "ROLE_CHANGE",
     "INVITE_SEND",
     "INVITE_ACCEPT",
+    "INVITE_ACCEPT_OK",
+    "INVITE_ACCEPT_FAIL",
     "API_KEY_ISSUE",
     "API_KEY_REVOKE",
     "API_KEY_AUTHZ_DENY",

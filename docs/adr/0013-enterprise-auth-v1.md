@@ -212,6 +212,16 @@ On role-upgrade via `POST /v1/auth/admin/users/{id}/role`, the upgraded user's N
 - Does NOT mount session-cookie routes (`/v1/auth/sign-in`, `/v1/auth/session`, etc. return 404). The console cannot operate.
 - Marked for removal at v2; the migration guide instructs operators to switch to `enterprise` and provision a real tri-mode api-key.
 
+### §A1.b — Endpoint table addendum: `/v1/auth/invites/accept`
+
+The original §A1 endpoint-table inventory missed the public-allowlisted invite-accept endpoint paired with `/v1/auth/admin/invite`. server-PR#25 allowlisted the path (`auth/dep.py` `PUBLIC_ROUTE_PATHS`) but did not ship the handler; console-PR#27 POSTed to it and honestly degraded on 404 (HG#6-correct). This addendum closes the design-table gap and triggered the permanent §5b "allowlist-vs-handler symmetry" check.
+
+| Method | Path | Req body | Resp | Auth required | RBAC |
+|---|---|---|---|---|---|
+| POST | `/v1/auth/invites/accept` | token, password, name | `{user, session, csrf_token}` + Set-Cookie | none (token-auth, public-allowlisted) | n/a (invite carries role; consumed-once; uniform 401 on bad/consumed/expired token per §A7) |
+
+The `/v1/auth/invites/accept` endpoint pairs with `/v1/auth/admin/invite`: admin ISSUES invites (admin role), invitees ACCEPT via the emailed link (public-allowlisted; consumed-once).
+
 ## Consequences
 
 - New deps in `shield-server`: `argon2-cffi`, `pyotp`, `slowapi`, `aiosmtplib`, `cryptography`, `qrcode`.

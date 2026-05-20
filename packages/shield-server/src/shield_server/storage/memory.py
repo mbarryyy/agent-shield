@@ -430,6 +430,10 @@ class MemoryDatabase:
             row["consumed_at"] = None
             self.email_verification_tokens[str(row["token_hash"])] = row
         elif s.startswith("INSERT INTO invites"):
+            # consumed_at is a LITERAL NULL in the admin/invite SQL → only 8
+            # positional args. Skip consumed_at in the col mapping so the
+            # values land in the right keys (mirrors the password_reset_tokens
+            # / email_verification_tokens shape).
             cols = [
                 "invite_id",
                 "org_id",
@@ -437,12 +441,11 @@ class MemoryDatabase:
                 "role",
                 "invited_by",
                 "expires_at",
-                "consumed_at",
                 "created_at",
                 "token_hash",
             ]
-            row = dict(zip(cols, args, strict=False))
-            row.setdefault("consumed_at", None)
+            row = dict(zip(cols, args, strict=True))
+            row["consumed_at"] = None
             self.invites[str(row["invite_id"])] = row
         elif s.startswith("INSERT INTO totp_credentials"):
             cols = [
