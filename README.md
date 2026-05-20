@@ -7,10 +7,13 @@ Two-layer runtime governance for high-risk agentic workflows.
   (`shield_sdk.schema`, the §4 source of truth), and AgentDojo pipeline elements
   (`ShieldGuard` / `ShieldedToolsExecutor` / `ShieldRecorder`).
 - **Layer 2 — Governance** (`packages/shield-governance`): a LangGraph
-  four-guardian graph (Defender / Evaluator / Supervisor / Auditor) plus
-  `ShieldModelRouter` for a zero-egress, air-gapped local-serving profile.
-- **Server** (`packages/shield-server`): FastAPI ingest/verify/Merkle/audit and
-  the synchronous `POST /v1/governance/decide` gate + Redis-Streams fan-out.
+  governance package with a deterministic Defender/Supervisor sync gate,
+  Evaluator/Auditor async seams, and `ShieldModelRouter` configuration for the
+  cloud/local-serving split.
+- **Server** (`packages/shield-server`): FastAPI ingest/verify/audit, the
+  synchronous `POST /v1/governance/decide` gate, and Redis-Streams fan-out.
+  Merkle/EER/export hardening is tracked as W4 full-build work until those
+  routes are backed by durable evidence.
 - **Eval** (`packages/shield-eval`): the `python -m shield_eval.run_ab` A/B
   harness over the AgentDojo `banking` suite.
 - **Console** (`console/`): the Next.js operations + governance UI.
@@ -44,7 +47,8 @@ make integration   # docker-compose smoke + mocked AgentDojo A/B
 ## What this is
 
 - A working two-layer governance stack: SDK records → Server ingests/verifies
-  → Governance four-guardian graph decides → audit/Merkle/export.
+  → Governance produces sync gate verdicts and async guardian evidence seams
+  → audit/read APIs expose the evidence that is implemented in this snapshot.
 - A rule-based BLOCK path that genuinely defeats AgentDojo's `InjectionTask6`
   (the 3×$10,000 structuring attack on the banking suite) end-to-end through
   the real governance decide pipeline — `python -m shield_eval.money_shot`
@@ -52,7 +56,7 @@ make integration   # docker-compose smoke + mocked AgentDojo A/B
 - Real authentication (`docs/adr/0013-enterprise-auth-v1.md`): argon2id +
   pepper password hashing, session cookies + CSRF transport-separation, TOTP
   enrolment, RBAC, Ed25519 agent keys, invite flow, audit log. Real Postgres
-  / Redis / NATS / Mailhog services via `infra/docker-compose.yml`.
+  / Redis / MinIO / ChromaDB / Mailhog services via `infra/docker-compose.yml`.
 
 ## What this is not (honest scope)
 
@@ -70,10 +74,10 @@ These caveats matter — please don't quote anything below as "measured" or
   genuinely fail AgentDojo's own `security()` oracle. The mock proves the
   A0/A0b plumbing + oracle scoring offline; it does **not** measure model
   behaviour.
-- **No API keys are required.** `infra/.env.example:ANTHROPIC_API_KEY=` is a
-  template field for the eventual W4/W5 `eval.yml` runs against real models;
-  the current `make test` / `make integration` / `python -m shield_eval.*`
-  paths all run without it.
+- **No API keys are required for the current mocked/demo paths.**
+  `infra/.env.example` names `ANTHROPIC_API_KEY` for eventual W4/W5 real-model
+  `eval.yml` runs; the current `make test` / `make integration` /
+  `python -m shield_eval.*` paths all run without it.
 - **The `$30,000` figure is `InjectionTask6`'s oracle constant**, not a
   measured outcome. `INJECTIONTASK6_AT_RISK_USD = 30_000.0`
   (`packages/shield-eval/src/shield_eval/money_shot.py`) is read directly
@@ -91,6 +95,24 @@ These caveats matter — please don't quote anything below as "measured" or
 - **Quotable ASR / utility numbers come later.** The `eval.yml` design that
   wires real frontier-LLM workers against the AgentDojo banking suite is
   W4/W5 work and is not run in this snapshot.
+
+### Evidence labels
+
+Evaluation and release artifacts must label every result:
+
+- `MOCKED`: deterministic local fakes such as `MockedLLM`; useful for CI and
+  plumbing, not model behaviour.
+- `MEASURED`: produced by an actual run of the stated model or service under
+  the recorded configuration.
+- `ESTIMATED`: computed from static analysis, dry-run token estimates, or
+  fixture constants without executing the measured path.
+- `SKIPPED`: not executed, with a reason such as unsupported host capability or
+  budget guard.
+
+Real-model evaluation, when enabled, must use `ANTHROPIC_API_KEY` from local
+environment configuration, target `claude-haiku-4-5-20251001`, and enforce the
+documented budget guard before any provider call. Do not paste, log, commit, or
+include the key value in reports.
 
 The honest positioning is locked in
 [`packages/shield-eval/src/shield_eval/run_ab.py`](packages/shield-eval/src/shield_eval/run_ab.py):
