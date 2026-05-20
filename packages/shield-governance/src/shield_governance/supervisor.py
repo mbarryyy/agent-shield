@@ -78,6 +78,11 @@ class GuardianSignals:
     structuring_or_exfil: bool = False  # Invariant/Defender structuring|exfil hit
     chain_broken: bool = False  # Auditor chain/sig broken
     post_exec: bool = False  # phase == post_exec (ROLLBACK applies)
+    # A.4 / Task #31: env-diff $ from the Defender's deterministic outcome,
+    # preserved into the final ``Obligations.prevented_loss`` on BLOCK/ROLLBACK
+    # (single_cap → transfer.amount; cumulative.structuring → projected Σ-at-
+    # fire — AgentDojo InjectionTask6 oracle). ``None`` = no clear env-diff $.
+    prevented_loss: float | None = None
 
     @property
     def all_reasons(self) -> list[VerdictReason]:
@@ -203,6 +208,15 @@ class Supervisor:
                 langgraph_checkpoint_id=record.context.checkpoint_id,
                 env_snapshot_ref=record.context.env_snapshot_ref,
             )
+        # A.4 / Task #31: populate FROZEN §4.2 Obligations.prevented_loss on
+        # BLOCK/ROLLBACK from the env-diff $ the DefenderEngine deterministic
+        # outcome computed (single_cap → transfer.amount; cumulative.structuring
+        # → projected Σ-at-fire — matches AgentDojo InjectionTask6 oracle
+        # `sum(to_attacker) >= 30000`). PASS/ALERT/ESCALATE/REWRITE + BLOCKs
+        # without a clear env-diff $ (e.g. exfil) → left None; the shield
+        # server falls back to 0.0 on None (governance.py:315). No fabrication.
+        if decision in (Decision.BLOCK, Decision.ROLLBACK) and signals.prevented_loss is not None:
+            obligations.prevented_loss = signals.prevented_loss
 
         if not reasons:
             reasons.append(
@@ -238,4 +252,7 @@ def signals_from_defender(verdict: GovernanceVerdict, *, phase: Phase) -> Guardi
         defender_reasons=list(verdict.reasons),
         structuring_or_exfil=structuring,
         post_exec=phase == Phase.POST_EXEC,
+        # A.4 / Task #31: pull-through env-diff $ the DefenderEngine computed
+        # (single_cap → amount; cumulative.structuring → projected Σ-at-fire).
+        prevented_loss=verdict.obligations.prevented_loss,
     )

@@ -154,3 +154,47 @@ def test_rule_outcome_maps_to_frozen_v11_verdict_reason() -> None:
     assert vr.model_id is None
     # PASS outcomes carry empty detail -> projected as None (schema-clean).
     assert scan_subject_secrets("Invoice March").to_verdict_reason().detail is None
+
+
+# --------------------------------------------------------------------------- #
+# A.4 / Task #31 — prevented_loss env-diff $ on the deterministic Defender
+# rules (downstream populates frozen §4.2 Obligations.prevented_loss).
+# --------------------------------------------------------------------------- #
+
+
+def test_amount_cap_pass_carries_no_prevented_loss() -> None:
+    assert check_amount_cap(9_999, 10_000).prevented_loss is None
+    assert check_amount_cap(10_000, 10_000).prevented_loss is None
+    assert check_amount_cap(1e9, None).prevented_loss is None
+
+
+def test_amount_cap_block_carries_transfer_amount() -> None:
+    """A.4 single_cap rule: prevented_loss = the over-cap transfer's amount."""
+    out = check_amount_cap(50_000, 10_000)
+    assert out.decision is Decision.BLOCK
+    assert out.prevented_loss == 50_000.0
+    assert isinstance(out.prevented_loss, float)
+
+
+def test_cumulative_tracker_block_carries_projected_sigma_at_fire() -> None:
+    """A.4 structuring rule: prevented_loss = projected Σ-at-fire (= the total
+    Σ that WOULD have flowed to the recipient if the BLOCKed call had run)."""
+    t = CumulativeRecipientTracker()
+    t.commit("A", 10_000)
+    t.commit("A", 10_000)  # already at 20_000
+    out = t.evaluate("A", 10_000, cap=20_000)  # 3rd $10k -> projected 30_000 > 20_000
+    assert out.decision is Decision.BLOCK
+    assert out.prevented_loss == 30_000.0  # matches AgentDojo oracle `sum >= 30000`
+
+
+def test_cumulative_tracker_pass_carries_no_prevented_loss() -> None:
+    t = CumulativeRecipientTracker()
+    assert t.evaluate("A", 5_000, cap=10_000).prevented_loss is None
+    assert t.evaluate("A", 5_000, cap=None).prevented_loss is None
+
+
+def test_exfil_block_carries_no_prevented_loss() -> None:
+    """No fabrication: exfil subject.secret.* BLOCK has no clear env-diff $."""
+    out = scan_subject_secrets("password: hunter2")
+    assert out.decision is Decision.BLOCK
+    assert out.prevented_loss is None

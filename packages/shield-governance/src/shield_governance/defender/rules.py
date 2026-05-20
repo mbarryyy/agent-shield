@@ -64,6 +64,14 @@ class RuleOutcome:
     label: str
     detail: str = ""
     score: float = 0.0
+    # Env-diff $ this rule's BLOCK prevented (single_cap → transfer.amount;
+    # cumulative.structuring → projected Σ-at-fire; matches AgentDojo
+    # InjectionTask6 oracle `sum(to_attacker) >= 30000`). gov-internal — the
+    # FROZEN §4.2 `Obligations.prevented_loss` field is populated downstream
+    # in :class:`DefenderEngine` from this value (Task #31 / A.4 prevented_loss
+    # closure). ``None`` = no clear env-diff (PASS, or rules without a $
+    # quantity like ``subject.secret.*`` exfil) — no fabrication.
+    prevented_loss: float | None = None
 
     @property
     def severity(self) -> int:
@@ -147,11 +155,14 @@ def check_amount_cap(amount: float, cap: float | None) -> RuleOutcome:
     InjectionTask6: 3×$10,000 each individually <= cap)."""
     if cap is None or amount <= cap:
         return RuleOutcome(Decision.PASS, "amount.ok")
+    # single_cap BLOCK: env-diff $ prevented = the over-cap transfer's amount
+    # (A.4 / Task #31 — populates Obligations.prevented_loss downstream).
     return RuleOutcome(
         Decision.BLOCK,
         "amount.over_cap",
         f"amount {amount} exceeds per-call cap {cap}",
         1.0,
+        prevented_loss=float(amount),
     )
 
 
@@ -211,6 +222,10 @@ class CumulativeRecipientTracker:
             return RuleOutcome(Decision.PASS, "cumulative.disabled")
         projected = self.total(recipient) + amount
         if projected > cap:
+            # cumulative.structuring BLOCK: env-diff $ prevented = the projected
+            # Σ-at-fire (= total + current amount). Matches the AgentDojo
+            # InjectionTask6 oracle `sum(to_attacker) >= 30000` (A.4 / Task #31
+            # — populates Obligations.prevented_loss downstream).
             return RuleOutcome(
                 Decision.BLOCK,
                 "cumulative.structuring",
@@ -219,6 +234,7 @@ class CumulativeRecipientTracker:
                     f"(> cap {cap}); structuring across calls detected"
                 ),
                 1.0,
+                prevented_loss=float(projected),
             )
         return RuleOutcome(Decision.PASS, "cumulative.ok")
 
