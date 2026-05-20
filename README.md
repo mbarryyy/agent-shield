@@ -93,7 +93,7 @@ These caveats matter — please don't quote anything below as "measured" or
   structuring (Σ ≥ $30k) rules; not LLM-judged. This is why "no API key"
   still produces a real BLOCK verdict.
 - **Quotable ASR / utility numbers come later.** The `eval.yml` design that
-  wires real Claude / GPT models against the AgentDojo banking suite is
+  wires real frontier-LLM workers against the AgentDojo banking suite is
   W4/W5 work and is not run in this snapshot.
 
 The honest positioning is locked in
