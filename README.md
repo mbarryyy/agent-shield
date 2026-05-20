@@ -41,10 +41,6 @@ make test          # unit + contract
 make integration   # docker-compose smoke + mocked AgentDojo A/B
 ```
 
-New contributors: read [ONBOARDING.md](ONBOARDING.md) first — it covers
-first-day setup, the team workflow, and the honest scope of the demo numbers
-below.
-
 ## What this is
 
 - A working two-layer governance stack: SDK records → Server ingests/verifies
