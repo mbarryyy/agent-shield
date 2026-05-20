@@ -1,0 +1,47 @@
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { SWRConfig } from 'swr';
+import type { ReactNode } from 'react';
+import ExportsPage from '@/app/exports/page';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+function Fresh({ children }: { children: ReactNode }) {
+  return (
+    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+      {children}
+    </SWRConfig>
+  );
+}
+
+describe('Exports and attestation blocked states', () => {
+  it('labels compliance export and air-gap attestation backend gaps', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/v1/exports`, () =>
+        HttpResponse.json({ exports: [] }),
+      ),
+    );
+
+    render(
+      <Fresh>
+        <ExportsPage />
+      </Fresh>,
+    );
+
+    expect(await screen.findByText(/Compliance export backend status/i)).toBeInTheDocument();
+    expect(screen.getByText(/Module B export pipeline required/i)).toBeInTheDocument();
+    expect(screen.getByText(/Air-gap attestation backend status/i)).toBeInTheDocument();
+    expect(screen.getByText(/Module F attestation API required/i)).toBeInTheDocument();
+  });
+});

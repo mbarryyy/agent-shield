@@ -57,7 +57,7 @@ export default function ExportsPage() {
     } finally {
       setCreating(false);
     }
-  }, [startTime, endTime, agentId, operationType, format, mutate]);
+  }, [startTime, endTime, agentId, operationType, format, mutate, t]);
 
   const handleDownload = useCallback(async (exportId: string, queryParams: string) => {
     try {
@@ -176,6 +176,29 @@ export default function ExportsPage() {
           {t('exports.failedToLoad')} {error instanceof Error ? error.message : t('common.unknownError')}
         </div>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <div className="border border-amber-300 bg-amber-50 p-4">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-amber-800">
+            Compliance export backend status
+          </div>
+          <p className="mt-2 font-mono text-[12px] text-amber-900">
+            Module B export pipeline required for completed JSON/PDF downloads.
+            The current server route may accept a queued request, but completed
+            artifact generation is not available until the export pipeline lands.
+          </p>
+        </div>
+        <div className="border border-amber-300 bg-amber-50 p-4">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-amber-800">
+            Air-gap attestation backend status
+          </div>
+          <p className="mt-2 font-mono text-[12px] text-amber-900">
+            Module F attestation API required before the console can display a
+            signed zero-egress attestation. No attestation is inferred from
+            local UI state.
+          </p>
+        </div>
+      </div>
 
       <DataTable
         columns={columns}

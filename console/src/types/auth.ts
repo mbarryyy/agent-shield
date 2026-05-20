@@ -110,6 +110,43 @@ export interface AdminInviteResponse {
   expires_at: number;
 }
 
+// --- SDK API keys -------------------------------------------------------- //
+// Mirrors packages/shield-server/src/shield_server/auth/routes.py
+// IssueApiKeyRequest / ApiKeyView / IssueApiKeyResponse. Raw api_key is
+// returned once by the server and is never stored client-side beyond React
+// component state.
+export type ApiKeyPrefix = 'as_live_' | 'as_test_';
+
+export interface IssueApiKeyRequest {
+  display_name?: string;
+  prefix?: ApiKeyPrefix;
+  agent_id?: string | null;
+  agent_id_allowlist?: string[] | null;
+  ttl_seconds?: number | null;
+}
+
+export interface ApiKeyView {
+  api_key_id: string;
+  display_name: string;
+  prefix: ApiKeyPrefix;
+  agent_id: string | null;
+  agent_id_allowlist: string[] | null;
+  created_at: number;
+  created_by: string;
+  expires_at: number | null;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
+export interface IssueApiKeyResponse {
+  api_key: string;
+  view: ApiKeyView;
+}
+
+export interface ApiKeysListResponse {
+  api_keys: ApiKeyView[];
+}
+
 // --- console-internal auth UI state ------------------------------------ //
 /**
  * Facade-shape (kept identical to the better-auth/react `useSession()`
