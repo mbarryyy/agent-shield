@@ -105,6 +105,8 @@
     "merkleRollups": "Merkle 树汇总纪元",
     "pendingExports": "待处理导出",
     "queuedOrRunning": "排队中或运行中",
+    "preventedLossTitle": "评测套件中拦截的转账总额",
+    "preventedLossSubtitle": "AgentDojo InjectionTask6 预设场景 · MockedLLM",
     "quickActions": "快捷操作",
     "registerAgent": "注册代理",
     "viewOperations": "查看操作",

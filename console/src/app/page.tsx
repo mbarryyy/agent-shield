@@ -1,9 +1,16 @@
 'use client';
 
-import { useAgentsList, useAudit, useEpochs, useExports, formatTimestamp, formatRelativeTime } from '@/lib/hooks';
+import { useAgentsList, useAudit, useEpochs, useExports, useDashboardKpi, formatTimestamp, formatRelativeTime } from '@/lib/hooks';
+import { resolveAuthErrorMessage } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/ui/PageHeader';
 import Link from 'next/link';
+
+const USD = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
 
 function StatCard({
   label,
@@ -39,6 +46,7 @@ export default function DashboardPage() {
   const { data: auditData, isLoading: auditLoading, error: auditError } = useAudit({});
   const { data: epochsData, isLoading: epochsLoading } = useEpochs();
   const { data: exportsData, isLoading: exportsLoading } = useExports();
+  const { data: kpiData, isLoading: kpiLoading, error: kpiError } = useDashboardKpi();
 
   const agentsList = agentsData?.agents ?? [];
   const operations = auditData?.operations ?? [];
@@ -61,8 +69,13 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 stagger-children">
+      {/* Stats Grid — 4 inherited + the 5th "Eval-suite prevented loss"
+          card (Task #31.b). HG#6 honesty: the original 4 keep their short
+          labels for visual symmetry; the 5th carries the eval-suite
+          qualifier in BOTH the title and the always-visible subtitle —
+          NEVER as a hover-only tooltip, so the methodology disclosure is
+          actually seen (mandate from reviewer's pre-staged §5b map). */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8 stagger-children">
         <StatCard
           label={t('dashboard.totalAgents')}
           value={agentsList.length}
@@ -86,6 +99,16 @@ export default function DashboardPage() {
           value={pendingExports.length}
           subtitle={t('dashboard.queuedOrRunning')}
           isLoading={exportsLoading}
+        />
+        <StatCard
+          label={t('dashboard.preventedLossTitle')}
+          value={kpiError ? '—' : USD.format(kpiData?.prevented_loss_total ?? 0)}
+          subtitle={
+            kpiError
+              ? resolveAuthErrorMessage(kpiError, t('dashboard.failedToLoad'))
+              : t('dashboard.preventedLossSubtitle')
+          }
+          isLoading={kpiLoading}
         />
       </div>
 
