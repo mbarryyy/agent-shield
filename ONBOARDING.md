@@ -81,8 +81,10 @@ python -m shield_eval.money_shot
 
 This drives `InjectionTask6` end-to-end through the real governance decide
 pipeline and BLOCKs the 3×$10,000 structuring attack. Verdicts land in the
-`governance_verdicts` table; after the prevented-loss cascade, the dashboard
-displays the cumulative `$ prevented` total.
+`governance_verdicts` table; after the A.4 prevented-loss cascade lands,
+the dashboard will display the cumulative `$ prevented` total. Until then,
+the `prevented_loss` column is hard-coded to 0 and the figure is only
+visible in the `python -m shield_eval.money_shot` stdout.
 
 ## 3. Team workflow (cascade discipline)
 
@@ -101,9 +103,10 @@ The standing rules:
 
 1. **No fake green.** Source-evidence only — quote the file:line. If a test
    passes for the wrong reason, the reviewer must catch it.
-2. **No AI attribution in the repo.** Author and committer are real people.
-   Co-authored-by Claude / "Generated with" footers etc. are stripped.
-   Commits / PRs / ADRs / docs.
+2. **No AI attribution in the repo.** Author and committer are real people;
+   any AI co-author trailer or AI-generation footer is stripped from
+   commits, PRs, ADRs, and tracked file content. The `commit-hygiene` CI
+   job enforces this on every PR.
 3. **`gh run view` before reporting.** Don't claim CI green from a local
    inference — pull the actual run. (This is the literal "lessons-learned"
    item from the auth-v1 cascade.)
@@ -126,15 +129,26 @@ team-lead merges.
 
 ## 4. What's done, what's deliberately deferred
 
-### Done (W1–W3 + auth-v1 + handoff-hardening)
+### Done (W1–W3 + auth-v1)
 
 - W1: SDK + contracts frozen at v1.1, golden vectors, Merkle plumbing.
-- W2: governance decide + ChannelStream, server `/decide` + `/record`, integration
-  green.
+- W2: governance decide + ChannelStream, server `/decide` + `/record`,
+  integration green.
 - W3: console (13 surfaces), real money-shot end-to-end on rebuilt stack.
 - auth-v1 (ADR-0013): enterprise auth — argon2id+pepper, sessions, CSRF,
   TOTP, RBAC, invites, audit, MultiFernet rotation, seed-admin CLI.
-- Handoff-hardening (post-W3): see [CHANGELOG.md](docs/CHANGELOG.md).
+
+### In progress (handoff hardening, post-W3)
+
+The five-PR cascade described in
+[docs/CHANGELOG.md](docs/CHANGELOG.md) is in flight at the time this
+file was written. A.5 (this docs PR) is what you are reading on its own
+head; A.1–A.4 are dispatched and pending reviewer §5b. Once each lands,
+the CHANGELOG entry will be amended with the merged SHA. Until A.4
+lands, the dashboard does not yet display the cumulative prevented-loss
+figure (the field exists in the §4 frozen `GovernanceVerdict.obligations`
+but the governance compute → server persist → console render loop is
+not yet closed).
 
 ### Deliberately deferred (W4 carryovers)
 

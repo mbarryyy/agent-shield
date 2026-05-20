@@ -3,35 +3,54 @@
 A rolling, human-curated record of the merged work on `main`. ADRs in
 `docs/adr/` carry the rationale; this file is the bird's-eye view by phase.
 
-## Handoff Hardening (post-W3)
+## Handoff Hardening (post-W3) — in progress
 
 Closing the gaps surfaced during the W3 enterprise-mode live walkthrough so
 the repo is safe to hand off to the next contributor without ambiguity.
-All five PRs are dispatched off main `9c7bc99` (the post-auth-v1 +
-brand-cleanup state) and merged in dependency order via reviewer §5b.
+Five PRs dispatched off main `9c7bc99` (the post-auth-v1 + brand-cleanup
+state). Each lands via reviewer §5b independent re-derivation; the
+team-lead is the sole merger. This section currently describes the
+*planned* shape of each PR; entries will be amended with the merged-SHA
+and post-merge file references as each lands. The final order of merge
+is whatever the §5b cadence dictates (the docs PR — A.5 — is the only
+one whose body you are reading on this very head).
 
-- **A.1** — `feat(server-auth): enterprise mode disables /v1/auth/sign-up`.
-  Implements ADR-0013 D5 ("CLI seed-admin only") at the route level. Returns
-  `403 ENTERPRISE_MODE_SIGNUP_DISABLED` in enterprise mode; open mode
-  behaviour unchanged. ADR-0013 §A1.c addendum.
-- **A.2** — `fix(console): surface server error.message instead of "Load
-  failed"`. `lib/auth-client.ts` now reads `{error:{code,message,details}}`
-  from response JSON; register / login / forgot / reset forms render the
-  real message. Vitest+MSW assertion locks the contract.
-- **A.3** — `feat(server-auth-cli): seed-admin auto-creates organization
-  row`. `ON CONFLICT DO NOTHING` on the `organizations` INSERT removes the
-  confusing FK error a first-time runner hits today.
-- **A.4** — `feat: prevented_loss end-to-end (gov + server + console)`.
-  Governance decide computes `prevented_amount` on BLOCK (single-cap or
-  cross-call structuring); server `/v1/governance/record` persists it into
-  `governance_verdicts.prevented_loss`; dashboard adds a fifth stat card
-  "Total Prevented Loss" reading the cumulative `$` figure via a new
-  read API. money_shot.py now lights the UI card.
-- **A.5** — `docs: README "What this is / What it isn't" + ONBOARDING.md +
-  CHANGELOG.md`. (This commit.) Locks the honest-scope language for the
-  demo (MockedLLM, no API keys, `$30,000` is the InjectionTask6 oracle
-  constant), captures the W1–W3 history, and gives the next contributor a
-  first-day setup path.
+- **A.1** (dispatched as task #28 — pending §5b) — `feat(server-auth):
+  enterprise mode disables /v1/auth/sign-up`. Will implement ADR-0013 D5
+  ("CLI seed-admin only") at the route level: return `403
+  ENTERPRISE_MODE_SIGNUP_DISABLED` when `SHIELD_AUTH_MODE=enterprise`,
+  preserve existing open-mode behaviour. Will add an ADR-0013 §A1.c
+  addendum.
+- **A.2** (dispatched as task #29 — pending §5b) — `fix(console): surface
+  server error.message instead of "Load failed"`. Will update
+  `lib/auth-client.ts` to read `{error:{code,message,details}}` from the
+  response JSON; register / login / forgot / reset forms will render the
+  real message. Will lock the contract with a Vitest + MSW assertion.
+- **A.3** (dispatched as task #30 — pending §5b) — `feat(server-auth-cli):
+  seed-admin auto-creates organization row`. Will add `ON CONFLICT DO
+  NOTHING` on the `organizations` INSERT so a first-time runner against
+  a fresh database doesn't hit the FK error today's CLI produces.
+- **A.4** (dispatched as task #31 — pending §5b; tri-PR coordination
+  across gov / server / console) — `feat: prevented_loss end-to-end`.
+  Governance decide will compute `prevented_amount` on BLOCK paths
+  (single-cap and cross-call structuring rule families) and set
+  `Obligations.prevented_loss` (the field already exists in the §4
+  frozen `GovernanceVerdict` schema at
+  `contracts/governance_verdict.schema.json:85`). Server will persist
+  the verdict's `obligations.prevented_loss` into the
+  `governance_verdicts.prevented_loss` DB column (currently hard-coded
+  to 0). Console will add a fifth dashboard stat card with HG#6-honest
+  labeling that qualifies the figure as eval-suite / oracle-fixed /
+  MockedLLM (per the reviewer's pre-staged labeling mandate). After
+  the tri-PR cascade lands, `python -m shield_eval.money_shot` on the
+  rebuilt stack will produce DB rows with `prevented_loss > 0` and the
+  UI card will display the cumulative `$` figure with the qualifier.
+- **A.5** (this PR, task #32) — `docs: README "What this is / What it
+  isn't" + ONBOARDING.md + CHANGELOG.md`. Locks the honest-scope
+  language for the demo (MockedLLM, no API keys, `$30,000` is the
+  `InjectionTask6` oracle constant), captures the W1–W3 history, and
+  gives the next contributor a first-day setup path including the
+  team workflow + cascade discipline.
 
 ## auth-v1 cascade (ADR-0013, main `9c7bc99`)
 
