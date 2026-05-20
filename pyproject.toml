@@ -78,4 +78,6 @@ asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 markers = [
     "integration: integration tests requiring docker-compose infra",
+    "unit_auth: unit tests for shield_server.auth module (ADR-0013; 90% scoped floor)",
+    "integration_auth: integration tests for enterprise auth (ADR-0013; mailhog + db)",
 ]

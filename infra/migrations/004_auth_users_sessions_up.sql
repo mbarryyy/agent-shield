@@ -1,0 +1,11 @@
+-- ADR-0013 — Enterprise Auth v1 / schema_version 4 (UP)
+--
+-- Placeholder: this file is laid by the w0-scaffolder slice with the
+-- naming convention only. server-builder FILLS the schema content in its
+-- PR (Decision §7: additive, idempotent `CREATE TABLE IF NOT EXISTS`,
+-- NO ALTER on W3 tables, NO FK back-refs into W3 tables).
+--
+-- Target tables in migration 004: users, sessions, memberships,
+-- password_reset_tokens, email_verification_tokens, totp_credentials,
+-- invites. Final partitioning between 004 and 005 is server-builder's
+-- call; this file may be repartitioned at fill-time.

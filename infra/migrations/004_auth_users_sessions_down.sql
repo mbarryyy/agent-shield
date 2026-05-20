@@ -1,0 +1,11 @@
+-- ADR-0013 — Enterprise Auth v1 / schema_version 4 (DOWN; CI-fire-drill-only, §A5)
+--
+-- Placeholder: server-builder fills with `DROP TABLE IF EXISTS … CASCADE`
+-- on ONLY the auth tables created by 004's up-migration; NEVER touches
+-- W3 protected tables (agents, agent_keys, operations, receipts, epochs,
+-- exports, agent_sessions, intervention_log, governance_verdicts).
+--
+-- This file is invoked ONLY by the test harness via internal `_apply_down(rev)`;
+-- migrate.py has NO public `down` subcommand (ADR-0013 §A5). The CI fire-drill
+-- in the `auth-integration` job asserts W3 byte-identity (row_count AND
+-- row_checksum) over the protected tables before vs. after up→down.

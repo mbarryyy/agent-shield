@@ -66,6 +66,22 @@ services:
       timeout: 5s
       retries: 12
 
+  # Mailhog — SMTP catch-all + HTTP/JSON API on :8025 for enterprise-auth tests
+  # and the demo email surface (ADR-0013 §12). NOT brought up by the default
+  # `make integration` / compose-smoke job; only by `make integration-auth` and
+  # the `auth-integration` CI job under SHIELD_AUTH_MODE=enterprise. Data is
+  # ephemeral by design (catch-all mailbox); no named volume required.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI + /api/v2/messages
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8025/api/v2/messages || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
 volumes:
   postgres_data:
   redis_data:
