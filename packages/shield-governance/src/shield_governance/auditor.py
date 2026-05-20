@@ -38,6 +38,14 @@ class AuditResult:
     self_report_mismatch: bool
 
 
+@dataclass(frozen=True, slots=True)
+class MerkleVerification:
+    verified: bool
+    root: str | None = None
+    epoch_id: str | None = None
+    detail: str | None = None
+
+
 class ProvenanceGraph:
     """AGENTSAFE Action Provenance DAG (networkx), keyed by correlation_id."""
 
@@ -83,8 +91,13 @@ class Auditor:
         self,
         *,
         narrator: Callable[[str], Awaitable[str]] | None = None,
+        merkle_verifier: Callable[[list[ShieldActionRecord]], MerkleVerification] | None = None,
+        zero_egress_attestor: Callable[[dict[str, object]], dict[str, object]] | None = None,
     ) -> None:
         self._narrator = narrator  # Haiku via ShieldModelRouter; None -> JSON only
+        self._merkle_verifier = merkle_verifier
+        self._zero_egress_attestor = zero_egress_attestor
+        self._latest_merkle: MerkleVerification | None = None
         self._dag = ProvenanceGraph()
 
     def audit(self, records: list[ShieldActionRecord], *, agent_pubkey_b64url: str) -> AuditResult:
@@ -111,6 +124,20 @@ class Auditor:
                     score=1.0,
                 )
             )
+        if self._merkle_verifier is not None:
+            merkle = self._merkle_verifier(records)
+            self.record_merkle_verification(merkle)
+            if not merkle.verified:
+                chain_broken = True
+                integrity = 0.0
+                reasons.append(
+                    VerdictReason(
+                        agent=Guardian.AUDITOR,
+                        label="auditor.merkle_failed",
+                        detail=merkle.detail or "record batch failed Merkle/EER verification",
+                        score=1.0,
+                    )
+                )
         if mismatch:
             reasons.append(
                 VerdictReason(
@@ -121,6 +148,9 @@ class Auditor:
                 )
             )
         return AuditResult(integrity, chain_broken, reasons, mismatch)
+
+    def record_merkle_verification(self, verification: MerkleVerification) -> None:
+        self._latest_merkle = verification
 
     @staticmethod
     def _detect_self_report_mismatch(records: list[ShieldActionRecord]) -> bool:
@@ -138,7 +168,7 @@ class Auditor:
             if v.decision in (Decision.BLOCK, Decision.ROLLBACK) and v.obligations.prevented_loss:
                 prevented += float(v.obligations.prevented_loss)
         report: dict[str, Any] = {
-            "report_version": "w3-json",  # PDF + signed egress=0 attestation = W4
+            "report_version": "w4-json",
             "decision_mix": mix,
             "blocked": mix.get("BLOCK", 0) + mix.get("ROLLBACK", 0),
             "escalated": mix.get("ESCALATE", 0),
@@ -146,8 +176,18 @@ class Auditor:
             "provenance_nodes": self._dag.order,
             "owasp_agentic": ["LLM01-PromptInjection", "LLM06-ExcessiveAgency"],
         }
+        if self._latest_merkle is not None:
+            report["merkle"] = {
+                "verified": self._latest_merkle.verified,
+                "root": self._latest_merkle.root,
+                "epoch_id": self._latest_merkle.epoch_id,
+            }
+            if self._latest_merkle.detail:
+                report["merkle"]["detail"] = self._latest_merkle.detail
         if self._narrator is not None:
             report["narrative"] = (
                 await self._narrator(f"Summarize this governance audit in 2 sentences: {report}")
             ).strip()
+        if self._zero_egress_attestor is not None:
+            report["zero_egress_attestation"] = self._zero_egress_attestor(report)
         return report

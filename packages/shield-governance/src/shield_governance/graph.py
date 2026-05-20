@@ -49,6 +49,7 @@ from shield_governance.supervisor import (
     Supervisor,
     signals_from_defender,
 )
+from shield_governance.verdicts import AsyncVerdictHandoff
 
 #: Full guardian topology (governance_design §4 loop).
 GUARDIAN_TOPOLOGY: tuple[str, ...] = ("defender", "evaluator", "supervisor", "auditor")
@@ -305,7 +306,7 @@ def make_async_channel2_handler(
     evaluator: Evaluator,
     auditor: Auditor,
     supervisor: Supervisor,
-    on_verdict: Callable[[GovernanceVerdict, str], Awaitable[None]] | None = None,
+    on_verdict: Callable[[AsyncVerdictHandoff], Awaitable[None]] | None = None,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
     """The async (post-exec) Channel-2 path. Pass to
     ``Channel2Consumer.run_once`` with an explicit ``group=`` per the W3
@@ -313,14 +314,11 @@ def make_async_channel2_handler(
     ``shield-auditor``; the ``shield-governance`` DEFAULT must NOT reach prod
     fan-out (governance_design §4 / ADR-0010 sibling note).
 
-    **Part-2 ruling = Option C (ADR-0012):** at W3 this COMPUTES the
-    Evaluator/Auditor/Supervisor verdict but does **NOT** publish
-    ``shield:verdicts``. The shield server's gate-path ``_fan_verdicts`` is the
-    SOLE W3 ``shield:verdicts`` publisher (it signs then fans — the locked
-    seam-1 invariant: server sole publisher, all published verdicts SIGNED).
-    Gov never signs, never publishes, no double-publish, no unsigned verdict on
-    the stream. ``on_verdict`` is a test/W4 sink (default ``None`` =
-    compute-only); W4 wires the async fan with the signing division resolved."""
+    This computes the Evaluator/Auditor/Supervisor verdict but never signs,
+    stores, or publishes it. ``on_verdict`` is the server-owned handoff seam:
+    production callers must take the unsigned :class:`AsyncVerdictHandoff`
+    through the server signing/persistence boundary before any stream fan-out.
+    """
 
     async def handle(record: ShieldActionRecord) -> None:
         eval_result = await evaluator.evaluate(record)
@@ -337,9 +335,7 @@ def make_async_channel2_handler(
             post_exec=record.phase == Phase.POST_EXEC,
         )
         verdict = supervisor.decide(signals, record=record)
-        # W3 (ADR-0012, Option C): compute-only. NO shield:verdicts publish —
-        # server gate-path is the sole signed publisher; W4 wires async fan.
         if on_verdict is not None:
-            await on_verdict(verdict, record.phase.value)
+            await on_verdict(AsyncVerdictHandoff.from_record(record, verdict))
 
     return handle

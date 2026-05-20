@@ -32,7 +32,8 @@ deferred — there is no live graph at W1.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,16 @@ class ResolvedModel:
     temperature: float = 0.0
     max_tokens: int | None = None
     enabled: bool = True
+
+
+ClientBuilder = Callable[[ResolvedModel, str | None], object]
+
+
+@dataclass(frozen=True, slots=True)
+class LocalModelReference:
+    """Non-chat local role reference for model-free/local classifiers."""
+
+    resolved: ResolvedModel
 
 
 def _resolve(role: str, spec: object) -> ResolvedModel:
@@ -111,13 +122,15 @@ def _resolve(role: str, spec: object) -> ResolvedModel:
     max_tokens_raw = spec.get("max_tokens")
     max_tokens = int(max_tokens_raw) if max_tokens_raw is not None else None
 
+    default_key_env = "ANTHROPIC_API_KEY" if provider == "anthropic" else "SHIELD_LLM_KEY"
+
     return ResolvedModel(
         role=role,
         provider=provider,
         model=model,
         served_via=served_via,
         base_url=base_url,
-        api_key_env=str(spec.get("api_key_env", "SHIELD_LLM_KEY")),
+        api_key_env=str(spec.get("api_key_env", default_key_env)),
         temperature=float(spec.get("temperature", 0.0)),
         max_tokens=max_tokens,
         enabled=True,
@@ -142,7 +155,13 @@ class ShieldModelRouter:
     ``model_id`` / ``served_via`` cost-attribution fields.
     """
 
-    def __init__(self, cfg: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        cfg: dict[str, Any],
+        *,
+        client_builders: Mapping[str, ClientBuilder] | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
         self.profile: str = str(cfg.get("profile", "")).strip()
         if not self.profile:
             raise ValueError("ShieldModelRouter config: 'profile' is required")
@@ -171,18 +190,44 @@ class ShieldModelRouter:
         self._roles: dict[str, ResolvedModel] = {
             name: _resolve(name, spec) for name, spec in merged.items()
         }
+        self._environ = environ if environ is not None else os.environ
+        self._client_builders: dict[str, ClientBuilder] = {
+            "anthropic": _build_anthropic_client,
+            "openai_compat": _build_openai_compat_client,
+            "local": _build_local_reference,
+        }
+        if client_builders:
+            self._client_builders.update(client_builders)
+        self._client_cache: dict[str, object] = {}
 
     # ----- constructors -------------------------------------------------- #
 
     @classmethod
-    def from_profile(cls, profile: str, config_dir: Path | None = None) -> ShieldModelRouter:
+    def from_profile(
+        cls,
+        profile: str,
+        config_dir: Path | None = None,
+        *,
+        client_builders: Mapping[str, ClientBuilder] | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> ShieldModelRouter:
         """Load ``config/models.<profile>.yaml`` (``profile`` ∈ {cloud, local})."""
         cdir = config_dir if config_dir is not None else _CONFIG_DIR
-        return cls(_load_yaml(cdir / f"models.{profile}.yaml"))
+        return cls(
+            _load_yaml(cdir / f"models.{profile}.yaml"),
+            client_builders=client_builders,
+            environ=environ,
+        )
 
     @classmethod
-    def from_path(cls, path: Path) -> ShieldModelRouter:
-        return cls(_load_yaml(path))
+    def from_path(
+        cls,
+        path: Path,
+        *,
+        client_builders: Mapping[str, ClientBuilder] | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> ShieldModelRouter:
+        return cls(_load_yaml(path), client_builders=client_builders, environ=environ)
 
     # ----- resolution ---------------------------------------------------- #
 
@@ -210,10 +255,9 @@ class ShieldModelRouter:
         """Return the ``(state, runtime) -> BaseChatModel`` factory for ``role``.
 
         This is the exact callable shape ``create_react_agent(model=...)``
-        accepts (verified §5b). At W1 the returned factory raises
-        :class:`NotImplementedError` when invoked — the live client is wired at
-        W2/W3 — but the seam, role resolution and disabled-role guard are real
-        and unit-tested.
+        accepts (verified §5b). The client is built lazily on first invocation
+        and cached per role, so config validation remains import-light while
+        live paths can construct Anthropic or OpenAI-compatible clients.
         """
         resolved = self.for_role(role)
         if not resolved.enabled:
@@ -223,11 +267,52 @@ class ShieldModelRouter:
             )
 
         def _factory(state: object, runtime: object) -> object:  # noqa: ARG001
-            raise NotImplementedError(
-                f"W2/W3: live BaseChatModel construction for role {role!r} "
-                f"(provider={resolved.provider}, model={resolved.model}, "
-                f"served_via={resolved.served_via}). The router seam is W1-final; "
-                f"the client is wired when the LangGraph graph goes live."
-            )
+            return self._client_for(resolved)
 
         return _factory
+
+    def _client_for(self, resolved: ResolvedModel) -> object:
+        cached = self._client_cache.get(resolved.role)
+        if cached is not None:
+            return cached
+        try:
+            builder = self._client_builders[resolved.provider]
+        except KeyError:
+            raise ValueError(
+                f"ShieldModelRouter: no client builder for provider {resolved.provider!r}"
+            ) from None
+        api_key = self._api_key_for(resolved)
+        client = builder(resolved, api_key)
+        self._client_cache[resolved.role] = client
+        return client
+
+    def _api_key_for(self, resolved: ResolvedModel) -> str | None:
+        value = self._environ.get(resolved.api_key_env)
+        if resolved.provider == "anthropic" and not value:
+            raise ValueError(
+                f"ShieldModelRouter: environment variable {resolved.api_key_env!r} "
+                f"is required for role {resolved.role!r}"
+            )
+        if resolved.provider == "openai_compat":
+            return value or "local-no-key"
+        return value
+
+
+def _build_anthropic_client(resolved: ResolvedModel, api_key: str | None) -> object:
+    try:
+        from anthropic import Anthropic
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError("Anthropic client package is not installed") from exc
+    return Anthropic(api_key=api_key)
+
+
+def _build_openai_compat_client(resolved: ResolvedModel, api_key: str | None) -> object:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError("OpenAI client package is not installed") from exc
+    return OpenAI(api_key=api_key or "local-no-key", base_url=resolved.base_url)
+
+
+def _build_local_reference(resolved: ResolvedModel, api_key: str | None) -> object:
+    return LocalModelReference(resolved=resolved)
