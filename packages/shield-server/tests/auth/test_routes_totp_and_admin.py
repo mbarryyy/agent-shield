@@ -10,10 +10,11 @@ pytestmark = pytest.mark.unit_auth
 
 
 def _signup(client: TestClient, *, email: str = "tu@example.com") -> dict:
-    return client.post(
-        "/v1/auth/sign-up",
-        json={"email": email, "password": "shield-pw-1"},
-    ).json()
+    """Bootstrap an admin via direct storage seed (enterprise mode hard-
+    disables /v1/auth/sign-up per ADR-0013 §A1.c)."""
+    from .conftest import bootstrap_admin_via_storage
+
+    return bootstrap_admin_via_storage(client, email=email, password="shield-pw-1")
 
 
 def test_totp_setup_returns_uri_and_secret(client: TestClient) -> None:

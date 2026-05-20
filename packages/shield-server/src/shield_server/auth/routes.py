@@ -271,8 +271,17 @@ async def sign_up(body: SignUpRequest, request: Request, response: Response) -> 
     """Open self-service sign-up — admits the requester as the first user of
     a fresh org. Subsequent users on the same org arrive via invite (admin
     flow). Rate-limited at the IP level (§A1).
+
+    ADR-0013 §A1.c (D5 implementation detail): under
+    ``SHIELD_AUTH_MODE=enterprise`` self-service sign-up is hard-disabled at
+    the handler entry; new users in enterprise deployments MUST arrive via
+    ``POST /v1/auth/admin/invite`` (admin) → ``POST /v1/auth/invites/accept``
+    (invitee). The wire error code ``ENTERPRISE_MODE_SIGNUP_DISABLED``
+    carries a human-readable message the console surfaces verbatim.
     """
     settings = _settings(request)
+    if settings.is_enterprise:
+        raise AppError(403, "ENTERPRISE_MODE_SIGNUP_DISABLED")
     storage = request.app.state.storage
     await enforce_or_block(
         storage.cache,

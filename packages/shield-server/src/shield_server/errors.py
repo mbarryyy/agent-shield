@@ -29,9 +29,12 @@ ErrorCode = Literal[
     "FORBIDDEN",
     "NOT_FOUND",
     "VALIDATION_ERROR",
+    # ADR-0013 §A1.c — enterprise mode hard-disables self-service sign-up;
+    # new users arrive via /v1/auth/admin/invite + /v1/auth/invites/accept.
+    "ENTERPRISE_MODE_SIGNUP_DISABLED",
 ]
 
-# Verbatim from shared/constants/errors.ts.
+# Verbatim from shared/constants/errors.ts (plus the ADR-0013 §A1.c addition).
 ERROR_CODES: dict[ErrorCode, str] = {
     "INVALID_SIGNATURE": "The operation signature is invalid.",
     "UNKNOWN_AGENT": "The specified agent does not exist.",
@@ -47,6 +50,10 @@ ERROR_CODES: dict[ErrorCode, str] = {
     "FORBIDDEN": "You do not have permission to perform this action.",
     "NOT_FOUND": "The requested resource was not found.",
     "VALIDATION_ERROR": "The request failed validation.",
+    "ENTERPRISE_MODE_SIGNUP_DISABLED": (
+        "Self-service sign-up is disabled in enterprise mode. "
+        "New users must arrive via invite from an org admin."
+    ),
 }
 
 
