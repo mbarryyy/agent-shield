@@ -350,7 +350,17 @@ async def jwks() -> JWKSResponse:
 
 
 @router.post("/v1/auth/token")
-async def issue_token(request: Request) -> IssueTokenResponseModel:
+async def issue_token(request: Request, _ctx: Ctx) -> IssueTokenResponseModel:
+    """ADR-0013 — legacy `/v1/auth/token` deprecation shim.
+
+    Renamed at the protocol level to ``/v1/auth/api-keys`` in v1; this route
+    stays mounted under all modes for one release window with the demo-static
+    token shape so existing console/SDK build artefacts keep booting. Carries
+    the ``Ctx`` auth dep so the §A2 ``test_every_route_declares_auth_dep``
+    invariant holds across both ``open`` and ``enterprise`` modes (the dep
+    auto-injects a synthetic admin in open mode; enterprise resolves the
+    real session/api-key).
+    """
     body = await request.json()
     ttl = body.get("ttl_seconds") if isinstance(body, dict) else None
     expires_at = None if ttl is None else int(time.time() * 1000) + int(ttl) * 1000

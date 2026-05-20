@@ -1,13 +1,14 @@
 """In-memory storage fakes.
 
 A shipped module (not test-only) so the unit suite exercises the *real* 12-step
-ingest / audit / agent logic against it and `--cov=packages` counts that
-coverage without docker. The asyncpg/MinIO/Redis adapters run the identical
-logic against real infra in the integration job.
+ingest / audit / agent / auth logic against it and ``--cov=packages`` counts
+that coverage without docker. The asyncpg/MinIO/Redis adapters run the
+identical logic against real infra in the integration job.
 
-`MemoryDatabase` is a deliberately tiny SQL-ish executor: it understands only
-the fixed statement shapes the ingest/audit/agent services issue (faithful
-ports of Elydora's queries), not arbitrary SQL.
+``MemoryDatabase`` is a deliberately tiny SQL-ish executor: it understands
+only the fixed statement shapes the ingest/audit/agent/auth services issue
+(faithful ports of Elydora's W3 queries + ADR-0013 §A1-§A11 enterprise auth
+shapes), not arbitrary SQL.
 """
 
 from __future__ import annotations
@@ -55,7 +56,10 @@ class MemoryCache:
         return True
 
     async def set(self, key: str, value: str) -> None:
-        self._store[key] = (value, None)
+        # Preserve TTL if previously set (Redis SET semantics under our usage).
+        previous = self._store.get(key)
+        expires = previous[1] if previous else None
+        self._store[key] = (value, expires)
 
     async def ensure_group(self, stream: str, group: str) -> None:
         self.streams.setdefault(stream, [])
@@ -88,18 +92,32 @@ class _MemoryTx:
 
 
 class MemoryDatabase:
-    """Recognises only the fixed Elydora-ported statement shapes."""
+    """Recognises only the fixed Elydora-ported + ADR-0013 statement shapes."""
 
     def __init__(self) -> None:
+        # --- W3 baseline tables ---
         self.agents: dict[str, dict[str, Any]] = {}
         self.agent_keys: dict[str, dict[str, Any]] = {}
         self.operations: dict[str, dict[str, Any]] = {}
         self.receipts: dict[str, dict[str, Any]] = {}
         self.intervention_log: list[dict[str, Any]] = []
         self.governance_verdicts: dict[str, dict[str, Any]] = {}
+        # --- ADR-0013 enterprise-auth tables ---
+        self.users: dict[str, dict[str, Any]] = {}
+        self.sessions: dict[str, dict[str, Any]] = {}
+        self.memberships: dict[tuple[str, str], dict[str, Any]] = {}
+        self.password_reset_tokens: dict[str, dict[str, Any]] = {}
+        self.email_verification_tokens: dict[str, dict[str, Any]] = {}
+        self.invites: dict[str, dict[str, Any]] = {}
+        self.totp_credentials: dict[str, dict[str, Any]] = {}
+        self.api_keys: dict[str, dict[str, Any]] = {}
+        self.audit_log_auth: list[dict[str, Any]] = []
+
+    # ---- fetchrow -------------------------------------------------------- #
 
     async def fetchrow(self, sql: str, *args: object) -> dict[str, object] | None:
         s = " ".join(sql.split())
+        # W3 — existing shapes preserved byte-identically.
         if s.startswith("SELECT * FROM agents WHERE agent_id"):
             row = self.agents.get(str(args[0]))
             return None if row is None else (dict(row) if row["org_id"] == args[1] else None)
@@ -125,27 +143,131 @@ class MemoryDatabase:
                 if r["operation_id"] == args[0]:
                     return dict(r)
             return None
+
+        # --- ADR-0013 auth shapes --------------------------------------- #
+
+        if s.startswith("SELECT user_id, email, password_hash, password_pepper_kid"):
+            # find_by_email OR find_by_user_id
+            if "lower(email)" in s.lower() or "WHERE lower(email)" in s:
+                key = str(args[0]).lower()
+                for u in self.users.values():
+                    if str(u["email"]).lower() == key:
+                        return dict(u)
+                return None
+            row = self.users.get(str(args[0]))
+            return None if row is None else dict(row)
+
+        if s.startswith("SELECT session_id, user_id, csrf_token"):
+            # Two queries share this SELECT prefix; discriminate on WHERE:
+            #   lookup_session: ... WHERE token_hash = $1
+            #   /session refetch: ... WHERE session_id = $1
+            if "WHERE token_hash" in s:
+                for sess in self.sessions.values():
+                    if sess["token_hash"] == args[0]:
+                        return dict(sess)
+                return None
+            if "WHERE session_id" in s:
+                sess_lookup = self.sessions.get(str(args[0]))
+                return None if sess_lookup is None else dict(sess_lookup)
+            return None
+
+        if s.startswith("SELECT failed_login_count FROM users WHERE user_id"):
+            row = self.users.get(str(args[0]))
+            if row is None:
+                return None
+            return {"failed_login_count": row.get("failed_login_count", 0)}
+
+        if s.startswith("SELECT role FROM memberships WHERE user_id"):
+            m = self.memberships.get((str(args[0]), str(args[1])))
+            return None if m is None else {"role": m["role"]}
+
+        if s.startswith("SELECT api_key_id, org_id, agent_id, agent_id_allowlist, prefix"):
+            for k in self.api_keys.values():
+                if k["token_hash"] == args[0]:
+                    return dict(k)
+            return None
+
+        if s.startswith("SELECT user_id, expires_at, consumed_at FROM password_reset_tokens"):
+            row = self.password_reset_tokens.get(str(args[0]))
+            return None if row is None else dict(row)
+        if s.startswith("SELECT user_id, expires_at, consumed_at FROM email_verification_tokens"):
+            row = self.email_verification_tokens.get(str(args[0]))
+            return None if row is None else dict(row)
+
+        if s.startswith("SELECT user_id, secret_encrypted, active_kid"):
+            row = self.totp_credentials.get(str(args[0]))
+            return None if row is None else dict(row)
+
+        if s.startswith("SELECT 1 FROM information_schema.tables"):
+            # The migration-firedrill helper calls this; the MemoryDatabase
+            # is the unit-test path where the tables that ``_table_exists``
+            # asks about are always considered present (we don't simulate
+            # the up→down migration on the in-memory store).
+            return {"?": 1}
+
+        if s.startswith("SELECT invite_id, org_id, email, role, invited_by"):
+            for inv in self.invites.values():
+                if inv["token_hash"] == args[0]:
+                    return dict(inv)
+            return None
+
         raise AssertionError(f"MemoryDatabase: unmodelled fetchrow: {s}")
 
+    # ---- fetch ---------------------------------------------------------- #
+
     async def fetch(self, sql: str, *args: object) -> list[dict[str, object]]:
-        # Only used by audit.query_audit, which sorts/filters in Python.
-        if "FROM governance_verdicts" in sql:
-            return [dict(v) for v in self.governance_verdicts.values()]
-        if "FROM intervention_log" in sql:
-            return [dict(r) for r in self.intervention_log]
-        if "FROM operations" in sql:
-            return [dict(o) for o in self.operations.values()]
-        if "FROM agent_keys" in sql:
-            return [dict(k) for k in self.agent_keys.values() if k["agent_id"] == args[0]]
-        if "FROM agents" in sql:
+        s = " ".join(sql.split())
+        # W3-baseline `FROM agents` org-wide list (no args) and `FROM agents
+        # WHERE org_id` filtered list are both modelled here.
+        if "FROM agents WHERE org_id" in s:
+            return [dict(a) for a in self.agents.values() if a["org_id"] == args[0]]
+        if "SELECT agent_id FROM agents WHERE org_id" in s:
+            return [dict(a) for a in self.agents.values() if a["org_id"] == args[0]]
+        if "FROM agents" in s:
             return [dict(a) for a in self.agents.values()]
+        if "FROM agent_keys" in s:
+            return [dict(k) for k in self.agent_keys.values() if k["agent_id"] == args[0]]
+        if "FROM operations" in s:
+            return [dict(o) for o in self.operations.values()]
+        if "FROM intervention_log" in s:
+            return [dict(r) for r in self.intervention_log]
+        if "FROM governance_verdicts" in s:
+            return [dict(v) for v in self.governance_verdicts.values()]
+        # W3-protected tables that have no Memory state (Postgres-only or
+        # rarely-fetched) — return empty so the §A5 fire-drill snapshot
+        # helper can call ``SELECT * FROM <protected_table>`` against the
+        # MemoryDatabase without falling through to the unmodelled-fetch
+        # AssertionError below.
+        if "FROM receipts" in s:
+            return [dict(r) for r in self.receipts.values()]
+        if "FROM epochs" in s or "FROM exports" in s or "FROM agent_sessions" in s:
+            return []
+        # --- auth tables ---
+        if s.startswith("SELECT session_id, user_id, ip, user_agent"):
+            return [dict(r) for r in self.sessions.values() if r["user_id"] == args[0]]
+        if s.startswith("SELECT org_id, role FROM memberships WHERE user_id"):
+            rows = [dict(m) for k, m in self.memberships.items() if k[0] == args[0]]
+            rows.sort(key=lambda r: int(r["joined_at"]))
+            return rows
+        if "FROM api_keys" in s:
+            return [dict(k) for k in self.api_keys.values() if k["org_id"] == args[0]]
+        if "FROM users" in s:
+            return [dict(u) for u in self.users.values()]
+        if "FROM audit_log_auth" in s:
+            return [dict(a) for a in self.audit_log_auth]
+        if "FROM information_schema.tables" in s:
+            # Used by migration_firedrill._table_exists (unit-test stub).
+            return [{"?": 1}]
         raise AssertionError(f"MemoryDatabase: unmodelled fetch: {sql}")  # pragma: no cover
 
     async def fetchval(self, sql: str, *args: object) -> object:
         raise AssertionError("MemoryDatabase: fetchval unused")  # pragma: no cover
 
+    # ---- execute --------------------------------------------------------- #
+
     async def execute(self, sql: str, *args: object) -> None:
         s = " ".join(sql.split())
+        # ============================================================ W3 ==
         if s.startswith("INSERT INTO operations"):
             cols = [
                 "operation_id",
@@ -165,8 +287,6 @@ class MemoryDatabase:
                 "signature",
                 "r2_payload_key",
                 "created_at",
-                # W3 PR-S2 additive (nullable) — present only on §4 ingest,
-                # absent on the 17-col W1 Elydora-EOR insert (zip strict=False).
                 "correlation_id",
                 "run_id",
                 "phase",
@@ -252,9 +372,224 @@ class MemoryDatabase:
             self.governance_verdicts[str(row["verdict_id"])] = row
         elif s.startswith("UPDATE governance_verdicts SET resolution"):
             gv = self.governance_verdicts.get(str(args[-1]))
-            if gv is not None:  # tolerant: no-op if the incident isn't recorded
+            if gv is not None:
                 gv["resolution"] = args[0]
                 gv["resolved_at"] = args[1]
+
+        # ====================================================== ADR-0013 ==
+        elif s.startswith("INSERT INTO users"):
+            cols = [
+                "user_id",
+                "email",
+                "password_hash",
+                "password_pepper_kid",
+                "name",
+                "created_at",  # status/email_verified/etc are literals in SQL
+            ]
+            # SQL literal columns: status='active', email_verified_at=NULL,
+            # failed_login_count=0, locked_until=NULL, totp_enabled=FALSE,
+            # updated_at=$6, last_login_at=NULL.
+            row = dict(zip(cols, args, strict=False))
+            row.setdefault("status", "active")
+            row.setdefault("email_verified_at", None)
+            row.setdefault("failed_login_count", 0)
+            row.setdefault("locked_until", None)
+            row.setdefault("totp_enabled", False)
+            row.setdefault("updated_at", row.get("created_at"))
+            row.setdefault("last_login_at", None)
+            self.users[str(row["user_id"])] = row
+        elif s.startswith("INSERT INTO memberships"):
+            cols = ["user_id", "org_id", "role", "invited_by", "joined_at"]
+            row = dict(zip(cols, args, strict=True))
+            self.memberships[(str(row["user_id"]), str(row["org_id"]))] = row
+        elif s.startswith("INSERT INTO sessions"):
+            cols = [
+                "session_id",
+                "user_id",
+                "token_hash",
+                "csrf_token",
+                "ip",
+                "user_agent",
+                "created_at",
+                "last_used_at",
+                "expires_at",
+                "revoked_at",
+            ]
+            row = dict(zip(cols, args, strict=False))
+            row.setdefault("revoked_at", None)
+            self.sessions[str(row["session_id"])] = row
+        elif s.startswith("INSERT INTO password_reset_tokens"):
+            # consumed_at is LITERAL NULL in the SQL → 4 args, not 5.
+            cols = ["token_hash", "user_id", "expires_at", "created_at"]
+            row = dict(zip(cols, args, strict=True))
+            row["consumed_at"] = None
+            self.password_reset_tokens[str(row["token_hash"])] = row
+        elif s.startswith("INSERT INTO email_verification_tokens"):
+            cols = ["token_hash", "user_id", "expires_at", "created_at"]
+            row = dict(zip(cols, args, strict=True))
+            row["consumed_at"] = None
+            self.email_verification_tokens[str(row["token_hash"])] = row
+        elif s.startswith("INSERT INTO invites"):
+            cols = [
+                "invite_id",
+                "org_id",
+                "email",
+                "role",
+                "invited_by",
+                "expires_at",
+                "consumed_at",
+                "created_at",
+                "token_hash",
+            ]
+            row = dict(zip(cols, args, strict=False))
+            row.setdefault("consumed_at", None)
+            self.invites[str(row["invite_id"])] = row
+        elif s.startswith("INSERT INTO totp_credentials"):
+            cols = [
+                "user_id",
+                "secret_encrypted",
+                "active_kid",
+                "recovery_codes_hash",
+                "enabled_at",
+                "last_used_at",
+            ]
+            row = dict(zip(cols, args, strict=False))
+            row.setdefault("last_used_at", None)
+            self.totp_credentials[str(row["user_id"])] = row
+        elif s.startswith("INSERT INTO api_keys"):
+            cols = [
+                "api_key_id",
+                "org_id",
+                "agent_id",
+                "agent_id_allowlist",
+                "token_hash",
+                "prefix",
+                "display_name",
+                "created_by",
+                "created_at",
+                "expires_at",
+                "last_used_at",
+                "revoked_at",
+            ]
+            row = dict(zip(cols, args, strict=False))
+            row.setdefault("last_used_at", None)
+            row.setdefault("revoked_at", None)
+            self.api_keys[str(row["api_key_id"])] = row
+        elif s.startswith("INSERT INTO audit_log_auth"):
+            cols = [
+                "audit_id",
+                "user_id",
+                "org_id",
+                "event",
+                "ip",
+                "user_agent",
+                "detail",
+                "created_at",
+            ]
+            self.audit_log_auth.append(dict(zip(cols, args, strict=True)))
+
+        # ---- session UPDATEs ----
+        elif s.startswith("UPDATE sessions SET last_used_at"):
+            sess = self.sessions.get(str(args[-1]))
+            if sess is not None:
+                sess["last_used_at"] = args[0]
+        elif s.startswith("UPDATE sessions SET token_hash"):
+            sess = self.sessions.get(str(args[-1]))
+            if sess is not None:
+                sess["token_hash"] = args[0]
+                sess["csrf_token"] = args[1]
+                sess["last_used_at"] = args[2]
+        elif s.startswith("UPDATE sessions SET revoked_at = $1 WHERE session_id"):
+            sess = self.sessions.get(str(args[-1]))
+            if sess is not None:
+                sess["revoked_at"] = args[0]
+        elif s.startswith("UPDATE sessions SET revoked_at = $1 WHERE user_id"):
+            for sess in self.sessions.values():
+                if sess["user_id"] == args[1] and sess.get("revoked_at") is None:
+                    sess["revoked_at"] = args[0]
+
+        # ---- token UPDATEs ----
+        elif s.startswith("UPDATE password_reset_tokens SET consumed_at"):
+            tok = self.password_reset_tokens.get(str(args[-1]))
+            if tok is not None:
+                tok["consumed_at"] = args[0]
+        elif s.startswith("UPDATE email_verification_tokens SET consumed_at"):
+            tok = self.email_verification_tokens.get(str(args[-1]))
+            if tok is not None:
+                tok["consumed_at"] = args[0]
+        elif s.startswith("UPDATE invites SET consumed_at"):
+            inv = self.invites.get(str(args[-1]))
+            if inv is not None:
+                inv["consumed_at"] = args[0]
+
+        # ---- user UPDATEs ----
+        # Two distinct shapes; reset variant matched FIRST so the more
+        # specific prefix wins:
+        #   reset: "UPDATE users SET failed_login_count = 0, ..." (2 args)
+        #   inc:   "UPDATE users SET failed_login_count = $1, ..." (4 args)
+        elif s.startswith("UPDATE users SET failed_login_count = 0"):
+            user = self.users.get(str(args[-1]))
+            if user is not None:
+                user["failed_login_count"] = 0
+                user["locked_until"] = None
+                if user.get("status") == "locked":
+                    user["status"] = "active"
+                user["last_login_at"] = args[0]
+                user["updated_at"] = args[0]
+        elif s.startswith("UPDATE users SET failed_login_count"):
+            user = self.users.get(str(args[-1]))
+            if user is not None:
+                user["failed_login_count"] = args[0]
+                user["locked_until"] = args[1]
+                user["updated_at"] = args[2]
+                if args[1] is not None:
+                    user["status"] = "locked"
+        elif s.startswith("UPDATE users SET password_hash"):
+            user = self.users.get(str(args[-1]))
+            if user is not None:
+                user["password_hash"] = args[0]
+                user["password_pepper_kid"] = args[1]
+                user["updated_at"] = args[2]
+        elif s.startswith("UPDATE users SET totp_enabled"):
+            user = self.users.get(str(args[-1]))
+            if user is not None:
+                user["totp_enabled"] = args[0]
+                user["updated_at"] = args[1]
+        elif s.startswith("UPDATE users SET email_verified_at"):
+            user = self.users.get(str(args[-1]))
+            if user is not None:
+                user["email_verified_at"] = args[0]
+                user["updated_at"] = args[0]
+        elif s.startswith("UPDATE memberships SET role"):
+            key = (str(args[1]), str(args[2]))
+            m = self.memberships.get(key)
+            if m is not None:
+                m["role"] = args[0]
+
+        # ---- api_key UPDATEs ----
+        elif s.startswith("UPDATE api_keys SET last_used_at"):
+            k = self.api_keys.get(str(args[-1]))
+            if k is not None:
+                k["last_used_at"] = args[0]
+        elif s.startswith("UPDATE api_keys SET revoked_at"):
+            k = self.api_keys.get(str(args[-1]))
+            if k is not None:
+                k["revoked_at"] = args[0]
+
+        # ---- totp updates (re-wrap) ----
+        elif s.startswith("UPDATE totp_credentials SET secret_encrypted"):
+            tc = self.totp_credentials.get(str(args[-1]))
+            if tc is not None:
+                tc["secret_encrypted"] = args[0]
+                tc["active_kid"] = args[1]
+        elif s.startswith("UPDATE totp_credentials SET recovery_codes_hash"):
+            tc = self.totp_credentials.get(str(args[-1]))
+            if tc is not None:
+                tc["recovery_codes_hash"] = args[0]
+                tc["last_used_at"] = args[1]
+        elif s.startswith("DELETE FROM totp_credentials WHERE user_id"):
+            self.totp_credentials.pop(str(args[0]), None)
+
         else:  # pragma: no cover - defensive
             raise AssertionError(f"MemoryDatabase: unmodelled execute: {s}")
 
