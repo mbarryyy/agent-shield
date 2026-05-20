@@ -28,7 +28,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 from ast import literal_eval
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
@@ -76,7 +76,14 @@ class ShieldElementConfig:
     fail_policy: FailPolicy = dataclasses.field(default_factory=FailPolicy.ratified)
     # Non-interactive batch degradation for ESCALATE (live HITL interrupt() is
     # Layer-2/LangGraph, out of element scope). eval-builder owns the fixture.
-    escalate_mode: Literal["block", "approve"] = "block"
+    escalate_mode: Literal["block", "approve", "live"] = "block"
+    escalation_handler: Callable[
+        [GovernanceVerdict, ShieldActionRecord, dict[str, Any]], bool
+    ] | None = None
+    env_restore_hook: Callable[[str | None, Any], None] | None = None
+    langgraph_checkpoint_hook: Callable[
+        [str | None, str | None, GovernanceVerdict], None
+    ] | None = None
 
 
 @dataclasses.dataclass
@@ -89,6 +96,7 @@ class _ShieldDecision:
     executed: bool = False
     result: Any = None
     error: str | None = None
+    executed_args: dict[str, Any] | None = None
     recorded: bool = False
 
 
@@ -111,9 +119,15 @@ def _state(extra_args: dict[str, Any], cfg: ShieldElementConfig) -> dict[str, An
             "_step": 0,
             "_run_id": run_id,
             "_rollback_signals": [],
+            "_hitl_signals": [],
         }
         extra_args["shield"] = st
     return st
+
+
+def _decision_failure_detail(exc: BaseException) -> str:
+    """Leak-safe degraded-decision detail for local synthetic verdicts."""
+    return f"{type(exc).__name__}: decision request failed"
 
 
 def _next_step(state: dict[str, Any]) -> int:
@@ -203,7 +217,7 @@ class ShieldGuard(BasePipelineElement):  # type: ignore[misc]  # agentdojo base 
                 degraded = True
                 mode: FailMode = cfg.fail_policy.fail_mode_for(tc.function)
                 verdict = synthetic_degraded_verdict(
-                    pre, mode, detail=f"{type(exc).__name__}: {exc}"
+                    pre, mode, detail=_decision_failure_detail(exc)
                 )
 
             state["_chain_head"] = derive_chain_hash(state["_chain_head"], pre)
@@ -300,6 +314,25 @@ class ShieldedToolsExecutor(ToolsExecutor):  # type: ignore[misc]  # agentdojo b
                 decision is Decision.ESCALATE and self.cfg.escalate_mode == "approve"
             ):
                 run = True
+            elif decision is Decision.ESCALATE and self.cfg.escalate_mode == "live":
+                approved = False
+                if (
+                    self.cfg.escalation_handler is not None
+                    and dec is not None
+                    and verdict is not None
+                ):
+                    approved = bool(
+                        self.cfg.escalation_handler(verdict, dec.pre_record, dict(tc.args))
+                    )
+                if st is not None and dec is not None and verdict is not None:
+                    st["_hitl_signals"].append(
+                        {
+                            "record_id": dec.pre_record.record_id,
+                            "correlation_id": dec.pre_record.correlation_id,
+                            "approved": approved,
+                        }
+                    )
+                run = approved
             elif decision is Decision.REWRITE:
                 if obligations and obligations.rewrite_args is not None:
                     tc.args.clear()
@@ -314,7 +347,10 @@ class ShieldedToolsExecutor(ToolsExecutor):  # type: ignore[misc]  # agentdojo b
                 _coerce_string_lists(tc.args)
                 tool_result, error = runtime.run_function(env, tc.function, tc.args)
                 if dec:
-                    dec.executed, dec.result, dec.error = True, tool_result, error
+                    dec.executed = True
+                    dec.result = tool_result
+                    dec.error = error
+                    dec.executed_args = dict(tc.args)
                 results.append(
                     ChatToolResultMessage(
                         role="tool",
@@ -344,13 +380,19 @@ class ShieldedToolsExecutor(ToolsExecutor):  # type: ignore[misc]  # agentdojo b
                 #     dual-substrate signal (even if obligations.rollback is
                 #     None/partial) so "both substrates fire" is auditable and
                 #     eval/console can assert it.
-                if st is not None and dec is not None:
+                if st is not None and dec is not None and verdict is not None:
                     ctx = dec.pre_record.context
                     ckpt = (
                         obligations.rollback.langgraph_checkpoint_id
                         if obligations and obligations.rollback is not None
                         else None
                     )
+                    if layer1_restored and self.cfg.env_restore_hook is not None:
+                        self.cfg.env_restore_hook(ctx.env_snapshot_ref, out_env)
+                    if self.cfg.langgraph_checkpoint_hook is not None:
+                        self.cfg.langgraph_checkpoint_hook(
+                            ctx.langgraph_thread_id, ckpt, verdict
+                        )
                     st["_rollback_signals"].append(
                         {
                             "record_id": dec.pre_record.record_id,
@@ -422,7 +464,11 @@ class ShieldRecorder(BasePipelineElement):  # type: ignore[misc]  # agentdojo ba
                 action=pre.action.model_copy(deep=True),
                 payload=ActionPayload(
                     tool_name=pre.payload.tool_name,
-                    tool_args=dict(pre.payload.tool_args),
+                    tool_args=dict(
+                        dec.executed_args
+                        if dec.executed_args is not None
+                        else pre.payload.tool_args
+                    ),
                     tool_result=dec.result,
                     tool_error=dec.error,
                 ),
