@@ -103,6 +103,34 @@ Axis-C governance moat*, never *beat SOTA*. `InjectionTask6` is itself
 injection-delivered — stated plainly; mock numbers are
 deterministic-transcript scaffolding, never reported as measured ASR."
 
+### v1 ships / v1 does not ship
+
+This snapshot is a working research prototype, not a production product. Per
+[`docs/adr/0013-enterprise-auth-v1.md`](docs/adr/0013-enterprise-auth-v1.md)
+§A7 "v1 IS / v1 IS NOT" honesty boundary, the auth layer ships:
+
+| Ships in v1 | Deferred (W4/W5 or v1.1/v2) |
+|---|---|
+| email + password (argon2id + pepper) sign-in | WebAuthn / passkeys (D4 → v1.1) |
+| TOTP 2FA + recovery codes | SCIM / SAML SSO (D4 → v2) |
+| session cookies + CSRF transport-separation | magic-link / OAuth providers (D6 → v2) |
+| RBAC (`org_owner` / `org_admin` / `org_member`) | admin-forced password rotation policy (D7 → W4) |
+| invite + accept-invite flow | self-service org creation (currently CLI-seeded only — D5) |
+| audit log + MultiFernet key rotation | PII retention policy (D7 → W4) |
+| CLI seed-admin (`python -m shield_server.auth.cli seed-admin`) | |
+
+Other v1 IS NOT items:
+
+- The SDK package (`shield-sdk`) is **not published** to PyPI; consumers
+  install from this monorepo as a uv workspace member.
+- The console links (`https://agent-shield.com`, `https://docs.agent-shield.com`)
+  are pre-release placeholders — neither domain resolves yet.
+- The Register-Agent wizard's "Issue API Token" step renders a placeholder
+  value in v1; the real server endpoint (`POST /v1/agents/{id}/tokens`)
+  exists but UI wiring is W4 work.
+- `eval.yml` for benchmarking against real Claude / GPT models is designed
+  but not run — W4/W5.
+
 ## Development
 
 - Branch protection: only the integrator merges to `main`; PRs must be
