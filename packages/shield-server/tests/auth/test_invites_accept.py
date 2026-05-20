@@ -43,12 +43,13 @@ def _seed_admin_and_invite(
     raw token. Optionally backdates ``expires_at`` to model an expired
     invite (set ``ttl_minutes`` negative to backdate).
     """
-    admin = client.post(
-        "/v1/auth/sign-up",
-        json={"email": "admin@example.com", "password": "shield-pw-1"},
+    from .conftest import bootstrap_admin_via_storage
+
+    # Enterprise-mode bootstrap (sign-up is hard-disabled per §A1.c).
+    admin_data = bootstrap_admin_via_storage(
+        client, email="admin@example.com", password="shield-pw-1"
     )
-    admin.raise_for_status()
-    csrf = admin.json()["csrf_token"]
+    csrf = admin_data["csrf_token"]
     storage = client.app_storage  # type: ignore[attr-defined]
     # Issue an invite via the real admin route (so the row matches the
     # production INSERT shape exactly).
@@ -160,13 +161,13 @@ def test_accept_with_expired_token_returns_401_uniform(client: TestClient) -> No
 
 def test_accept_with_email_collision_returns_401_uniform(client: TestClient) -> None:
     # Seed an invite for the SAME email as a pre-existing user (admin).
-    # admin signed up as 'admin@example.com'; invite is for 'admin@example.com'.
-    admin = client.post(
-        "/v1/auth/sign-up",
-        json={"email": "admin@example.com", "password": "shield-pw-1"},
+    # admin bootstrapped as 'admin@example.com'; invite is for 'admin@example.com'.
+    from .conftest import bootstrap_admin_via_storage
+
+    admin_data = bootstrap_admin_via_storage(
+        client, email="admin@example.com", password="shield-pw-1"
     )
-    admin.raise_for_status()
-    csrf = admin.json()["csrf_token"]
+    csrf = admin_data["csrf_token"]
     storage = client.app_storage  # type: ignore[attr-defined]
     issued = client.post(
         "/v1/auth/admin/invite",
