@@ -50,8 +50,7 @@ def test_source_guard_rejects_direct_cloud_clients_outside_router(tmp_path: Path
             name="direct_cloud_client_imports",
             status=air_gap_verify.CheckStatus.FAIL,
             message=(
-                "bad_client.py:1 imports cloud client module "
-                "'anthropic' outside model_router.py"
+                "bad_client.py:1 imports cloud client module 'anthropic' outside model_router.py"
             ),
         )
         in results

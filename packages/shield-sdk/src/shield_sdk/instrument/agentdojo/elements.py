@@ -77,13 +77,13 @@ class ShieldElementConfig:
     # Non-interactive batch degradation for ESCALATE (live HITL interrupt() is
     # Layer-2/LangGraph, out of element scope). eval-builder owns the fixture.
     escalate_mode: Literal["block", "approve", "live"] = "block"
-    escalation_handler: Callable[
-        [GovernanceVerdict, ShieldActionRecord, dict[str, Any]], bool
-    ] | None = None
+    escalation_handler: (
+        Callable[[GovernanceVerdict, ShieldActionRecord, dict[str, Any]], bool] | None
+    ) = None
     env_restore_hook: Callable[[str | None, Any], None] | None = None
-    langgraph_checkpoint_hook: Callable[
-        [str | None, str | None, GovernanceVerdict], None
-    ] | None = None
+    langgraph_checkpoint_hook: (
+        Callable[[str | None, str | None, GovernanceVerdict], None] | None
+    ) = None
 
 
 @dataclasses.dataclass
@@ -390,9 +390,7 @@ class ShieldedToolsExecutor(ToolsExecutor):  # type: ignore[misc]  # agentdojo b
                     if layer1_restored and self.cfg.env_restore_hook is not None:
                         self.cfg.env_restore_hook(ctx.env_snapshot_ref, out_env)
                     if self.cfg.langgraph_checkpoint_hook is not None:
-                        self.cfg.langgraph_checkpoint_hook(
-                            ctx.langgraph_thread_id, ckpt, verdict
-                        )
+                        self.cfg.langgraph_checkpoint_hook(ctx.langgraph_thread_id, ckpt, verdict)
                     st["_rollback_signals"].append(
                         {
                             "record_id": dec.pre_record.record_id,

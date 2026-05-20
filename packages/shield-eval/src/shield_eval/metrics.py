@@ -17,7 +17,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .arms import ARM_LABELS
 
@@ -89,15 +89,21 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 
 
 def _float(value: object, default: float = 0.0) -> float:
+    raw = default if value is None else value
+    if not isinstance(raw, str | bytes | bytearray | int | float):
+        return default
     try:
-        return float(value if value is not None else default)
+        return float(raw)
     except (TypeError, ValueError):
         return default
 
 
 def _int(value: object, default: int = 0) -> int:
+    raw = default if value is None else value
+    if not isinstance(raw, str | bytes | bytearray | int | float):
+        return default
     try:
-        return int(value if value is not None else default)
+        return int(raw)
     except (TypeError, ValueError):
         return default
 
@@ -352,7 +358,10 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> None:
 
 
 def _load_report(path: str) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError(f"metrics report must be a JSON object: {path}")
+    return cast(dict[str, Any], loaded)
 
 
 def _value_for_check(report: dict[str, Any], key: str) -> float | None:

@@ -382,10 +382,7 @@ def detect_host_egress_smoke(
             "-rn",
             sys.executable,
             "-c",
-            (
-                "import socket; "
-                "socket.create_connection(('1.1.1.1', 443), timeout=2)"
-            ),
+            ("import socket; socket.create_connection(('1.1.1.1', 443), timeout=2)"),
         ]
     )
     if probe.returncode == 0:
@@ -477,10 +474,7 @@ def format_report(report: VerificationReport) -> str:
         else:
             lines.append("ATTESTATION_SKIPPED: egress=0 host smoke not run")
     else:
-        lines.append(
-            "SIGNED_ATTESTATION: egress=0 "
-            f"signature={report.attestation['signature']}"
-        )
+        lines.append(f"SIGNED_ATTESTATION: egress=0 signature={report.attestation['signature']}")
     return "\n".join(lines) + "\n"
 
 

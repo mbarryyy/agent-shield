@@ -72,9 +72,7 @@ def test_revoke_api_key_cannot_revoke_other_org_key(client: TestClient) -> None:
     storage = client.app_storage  # type: ignore[attr-defined]
 
     async def seed():
-        return await issue_api_key(
-            storage.db, org_id="org-B", created_by="u-b", prefix="as_test_"
-        )
+        return await issue_api_key(storage.db, org_id="org-B", created_by="u-b", prefix="as_test_")
 
     issued = asyncio.run(seed())
 

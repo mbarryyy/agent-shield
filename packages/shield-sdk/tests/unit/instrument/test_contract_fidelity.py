@@ -161,9 +161,7 @@ def test_rollback_invokes_env_and_langgraph_checkpoint_hooks() -> None:
             (langgraph_thread_id, langgraph_checkpoint_id, verdict.decision.value)
         )
 
-    obligations = Obligations(
-        rollback=RollbackObligation(langgraph_checkpoint_id="ckpt-7")
-    )
+    obligations = Obligations(rollback=RollbackObligation(langgraph_checkpoint_id="ckpt-7"))
     out_env, _, extra = _run(
         _cfg(
             _FakeClient(_verdict(Decision.ROLLBACK, obligations=obligations)),
