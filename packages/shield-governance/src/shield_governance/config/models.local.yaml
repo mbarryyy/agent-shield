@@ -6,11 +6,19 @@
 # server (vLLM primary; Ollama/llama.cpp also speak this API), reachable purely
 # by the `base_url` swap. Open-weight picks: local_deployment_moat.md §2.
 #
-# Air-gap is enforced by 5 CI/lint config overrides (NOT in this file):
-# AlignmentCheck base_url->in-VPC (here), ANONYMIZED_TELEMETRY=False, Invariant
-# LocalPolicy-only import-lint, HF/Transformers offline+no-telemetry, LangSmith
-# disabled (local_deployment_moat.md §6).
+# Air-gap is enforced by verifier-readable local profile settings plus
+# import-lint: AlignmentCheck base_url->in-VPC, Chroma telemetry disabled,
+# Invariant LocalPolicy-only imports, HF/Transformers offline mode, and
+# LangSmith/LangChain tracing disabled (local_deployment_moat.md §6).
 profile: local
+
+air_gap:
+  telemetry:
+    chroma_anonymized_telemetry: false
+    langsmith_tracing: false
+    langchain_tracing_v2: false
+    huggingface_hub_offline: true
+    transformers_offline: true
 
 guardians:
   # Identical to the cloud profile — Defender is always local/model-free.
