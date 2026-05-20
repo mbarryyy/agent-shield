@@ -67,6 +67,14 @@ NATIVE_BASELINES: tuple[str, ...] = (
     "tool_filter",
 )
 
+ARM_LABELS: dict[str, str] = {
+    "A0": "A0 — no defense baseline",
+    "A0b": "A0b — AgentDojo built-in defense baselines",
+    "A1": "A1 — Agent Shield installed, free no-op PASS gate",
+    "A2": "A2 — Agent Shield Paid, governed /decide verdict",
+    "A3": "A3 — Agent Shield deterministic-only ablation",
+}
+
 # Built-ins that need a heavy/incompatible backend and are therefore N/A under
 # the offline MockedLLM (only runnable in the real-model eval.yml, W4/W5):
 #   * transformers_pi_detector → needs agentdojo[transformers] (torch + a HF
