@@ -1,8 +1,7 @@
-"""Import surface + the W0 stubs that remain stubs until their owning week.
+"""Import surface + release-only stubs.
 
-`metrics` (W4) and `changelog` (release) are intentionally still W0 stubs —
-their assertions are unchanged. `run_ab` / `mock_llm` are W1-real and covered
-behaviourally in `test_run_ab_offline.py`.
+`metrics` is W4-real now; `changelog` remains a release stub. `run_ab` /
+`mock_llm` are covered behaviourally in `test_run_ab_offline.py`.
 """
 
 from __future__ import annotations
@@ -25,12 +24,12 @@ def test_mock_llm_is_pipeline_element() -> None:
     assert m.name == "mocked-x"
 
 
-def test_metrics_stub_runs() -> None:
+def test_metrics_check_requires_input() -> None:
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = metrics.main(["--check", "asr<=0.10"])
-    assert rc == 0
-    assert "W0 stub" in buf.getvalue()
+    assert rc == 1
+    assert "no metrics input" in buf.getvalue()
 
 
 def test_changelog_stub_runs() -> None:

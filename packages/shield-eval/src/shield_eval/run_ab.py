@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import sys
 import tempfile
@@ -263,6 +264,26 @@ def _write_report(path: str, results: dict[str, ArmResult]) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
+def _write_metrics_markdown(path: str, report: dict[str, Any]) -> None:
+    lines = [
+        "# Agent Shield — eval metrics",
+        "",
+        f"- schema: `{report.get('schema_version')}`",
+        f"- label: `{report.get('run_label')}`",
+        f"- backend: `{report.get('backend')}`",
+        "",
+        "| Metric | Value | Unit | Label |",
+        "|---|---:|---|---|",
+    ]
+    for key, item in (report.get("values") or {}).items():
+        if isinstance(item, dict):
+            lines.append(
+                f"| `{key}` | {item.get('value')} | {item.get('unit')} | {item.get('label')} |"
+            )
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
 # --------------------------------- CLI ---------------------------------------
 
 
@@ -308,6 +329,16 @@ def main(argv: list[str] | None = None) -> int:
         "--model", default=DEFAULT_WORKER, help="worker model (real backend / name seed)"
     )
     p.add_argument("--metrics", default=None)
+    p.add_argument("--metrics-out", default=None, help="write metrics JSON artifact")
+    p.add_argument("--budget-out", default=None, help="write real-runner budget JSON artifact")
+    p.add_argument("--samples", type=int, default=1, help="planned real-runner samples")
+    p.add_argument(
+        "--serialized-prompt-chars",
+        type=int,
+        default=None,
+        help="dry-run prompt chars for real-runner budget estimation",
+    )
+    p.add_argument("--max-output-tokens", type=int, default=2_000)
     p.add_argument("--smoke", action="store_true")
     p.add_argument("--full", action="store_true")
     p.add_argument("--out", default=None)
@@ -330,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
+    if args.full:
+        return _dispatch_full(args, suite)
+
     # --smoke: tiny real offline e2e — A0 + MockedLLM on banking user_task_0,
     # no injection; assert utility holds. Proves the plumbing end-to-end.
     if args.smoke:
@@ -415,6 +449,78 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
         if outcome.status == "FAIL":
             exit_code = 1
     return exit_code
+
+
+def _real_prompt_char_estimate(args: argparse.Namespace) -> int:
+    if args.serialized_prompt_chars is not None:
+        return max(0, int(args.serialized_prompt_chars))
+    user_tasks = args.user_tasks or ["user_task_2"]
+    injection_tasks = args.injection_tasks or ["injection_task_6"]
+    payload = {
+        "suite": args.suite,
+        "attack": args.attack or "important_instructions",
+        "user_tasks": user_tasks,
+        "injection_tasks": injection_tasks,
+        "model": args.model,
+        "arms": args.arms or args.compare_baselines or "A0,A0b,A1,A2,A3",
+    }
+    return len(json.dumps(payload, sort_keys=True)) + 2_000
+
+
+def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
+    from .metrics import (
+        build_mock_metrics_report,
+        build_real_runner_budget_artifact,
+        print_summary,
+        write_json,
+    )
+
+    arm_tokens = [t for t in (args.arms or "A0,A0b,A1,A2,A3").split(",") if t]
+    user_tasks = args.user_tasks or ["user_task_2"]
+    injection_tasks = args.injection_tasks or ["injection_task_6"]
+
+    if args.backend == "real":
+        artifact = build_real_runner_budget_artifact(
+            arms=arm_tokens,
+            user_tasks=user_tasks,
+            injection_tasks=injection_tasks,
+            samples=args.samples,
+            serialized_prompt_chars=_real_prompt_char_estimate(args),
+            max_output_tokens=args.max_output_tokens,
+        )
+        out_path = args.budget_out or args.metrics_out
+        if out_path:
+            write_json(out_path, artifact)
+        print(json.dumps(artifact, indent=2, sort_keys=True))
+        print(
+            "shield_eval.run_ab --full real: "
+            f"{artifact['status_label']} cost=${artifact['estimated_cost_usd']:.6f}; "
+            "Anthropic API call SKIPPED"
+        )
+        return 0
+
+    # Mock-only full benchmark artifact: deterministic money-shot + benign FPR.
+    # This is intentionally not quotable as measured model ASR.
+    from .fpr import run_fpr
+    from .money_shot import run_money_shot
+
+    money = run_money_shot(carrier="user_task_2", real=False, decide_url=None)
+    fpr_report = run_fpr()
+    report = build_mock_metrics_report(
+        money_artifact=money,
+        fpr_report=fpr_report,
+        model="MockedLLM",
+    )
+    if args.metrics_out:
+        write_json(args.metrics_out, report)
+    if args.out:
+        _write_metrics_markdown(args.out, report)
+    print(
+        f"shield_eval.run_ab --full: suite={args.suite} "
+        f"arms={arm_tokens} backend=mock label={report['run_label']}"
+    )
+    print_summary(report)
+    return 0
 
 
 if __name__ == "__main__":

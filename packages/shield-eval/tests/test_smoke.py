@@ -10,8 +10,8 @@ def test_run_ab_smoke_exits_zero() -> None:
     assert run_ab.main(["--suite", "banking", "--smoke"]) == 0
 
 
-def test_metrics_stub_exits_zero() -> None:
-    assert metrics.main(["--check", "asr<=0.10"]) == 0
+def test_metrics_check_requires_input() -> None:
+    assert metrics.main(["--check", "asr<=0.10"]) == 1
 
 
 def test_changelog_stub_exits_zero() -> None:
