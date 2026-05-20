@@ -1,16 +1,16 @@
 # Agent Shield — developer entrypoints.
 .DEFAULT_GOAL := help
-.PHONY: help doctor test integration integration-auth smoke eval air-gap-verify lint typecheck
+.PHONY: help preflight doctor test integration integration-auth smoke eval air-gap-verify lint typecheck
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n",$$1,$$2}'
 
+preflight: ## Full environment GO/NO-GO check without printing secrets
+	@scripts/preflight.sh
+
 doctor: ## Preflight: toolchain + infra reachability
-	@command -v uv >/dev/null || { echo "uv missing"; exit 1; }
-	@command -v docker >/dev/null || { echo "docker missing"; exit 1; }
-	@uv --version && docker --version && node --version
-	@echo "doctor: OK"
+	@scripts/preflight.sh
 
 lint: ## ruff check + format check
 	uv run ruff check .
@@ -20,7 +20,7 @@ typecheck: ## mypy our code
 	uv run mypy packages
 
 test: ## Unit + contract tests with coverage gate
-	uv run pytest packages contracts \
+	uv run pytest packages contracts tests/test_preflight.py \
 	  --cov=packages --cov-report=term-missing --cov-fail-under=80
 
 integration: ## docker-compose smoke + mocked AgentDojo A/B (no secrets)
