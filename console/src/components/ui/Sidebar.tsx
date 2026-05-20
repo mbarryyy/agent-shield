@@ -241,8 +241,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         <div className="font-mono text-[10px] font-medium tracking-[0.15em] uppercase text-[rgba(234,234,229,0.3)] mb-2">
           {t('common.links')}
         </div>
+        {/* TODO(pre-release): the public marketing site and docs domains
+            are not yet registered/live — these placeholders match the
+            ADR-0013 §A7 "v1 IS / v1 IS NOT" honesty posture (same as the
+            CONSOLE-W3 Flag-1 Pre-release notice on the SDK package ids).
+            Switch to live URLs when distribution ships. */}
         <a
-          href="https://elydora.com"
+          href="https://agent-shield.com"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"
@@ -253,7 +258,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           {t('common.home')}
         </a>
         <a
-          href="https://docs.elydora.com"
+          href="https://docs.agent-shield.com"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"

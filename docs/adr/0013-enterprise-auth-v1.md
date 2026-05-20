@@ -146,6 +146,8 @@ Console copy, documentation, README, marketing material MUST conform. Deviation 
 
 The CONSOLE-W3 "Pre-release" notice template is the visual reference for future "coming soon" disclosures.
 
+**§A7.1 addendum (brand-cleanup follow-up):** the `console/src/components/ui/Sidebar.tsx` `Home` and `Docs` external links use the placeholder URLs `https://agent-shield.com` and `https://docs.agent-shield.com` — these domains are **not yet registered/live**. Status mirrors the unpublished SDK packages: in scope of the "v1 IS NOT" public-distribution surface. A `TODO(pre-release)` comment marks the swap point; switch to live URLs when distribution ships.
+
 ### §A8 — D1/O7 cross-check predicate + mandated security test (additional flag)
 
 Server `/v1/governance/decide` + `/record` ingest evaluates fail-closed in order BEFORE accepting the §4 record:
