@@ -276,10 +276,27 @@ async def apply(dsn: str) -> None:  # pragma: no cover - integration-only (real 
     """Public entrypoint: apply W3 baseline + every ADR-0013 up revision.
 
     Idempotent (all DDL is ``CREATE TABLE IF NOT EXISTS``); safe to rerun.
+
+    SSL handling: asyncpg defaults to "prefer" SSL on plain ``postgresql://``
+    DSNs, which is silently incompatible with the docker-compose postgres:16
+    image we run in CI/local (no SSL listener). Honour ``?sslmode=...`` if the
+    operator put one in the DSN; otherwise default to ``ssl=False`` so the
+    local-postgres-no-SSL convention works out of the box (the
+    ``auth-integration`` Migrate step was tripping on this without an explicit
+    setting). Production deployments behind a managed Postgres set
+    ``?sslmode=require`` or stronger explicitly in their ``DATABASE_URL``.
     """
     import asyncpg
 
-    conn = await asyncpg.connect(dsn)
+    ssl_param: object = False
+    lowered_dsn = dsn.lower()
+    for token in ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"):
+        if token in lowered_dsn:
+            ssl_param = True
+            break
+    if "sslmode=disable" in lowered_dsn:
+        ssl_param = False
+    conn = await asyncpg.connect(dsn, ssl=ssl_param)
     try:
         await _apply_schema(conn.execute)
         for rev in MIGRATIONS:
