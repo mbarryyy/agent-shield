@@ -96,6 +96,7 @@ class MemoryDatabase:
 
     def __init__(self) -> None:
         # --- W3 baseline tables ---
+        self.organizations: dict[str, dict[str, Any]] = {}
         self.agents: dict[str, dict[str, Any]] = {}
         self.agent_keys: dict[str, dict[str, Any]] = {}
         self.operations: dict[str, dict[str, Any]] = {}
@@ -268,6 +269,18 @@ class MemoryDatabase:
     async def execute(self, sql: str, *args: object) -> None:
         s = " ".join(sql.split())
         # ============================================================ W3 ==
+        if s.startswith("INSERT INTO organizations"):
+            # Idempotent ``ON CONFLICT (org_id) DO NOTHING`` mirror — keyed
+            # on org_id; second insert with the same id is a no-op.
+            cols = ["org_id", "name", "created_at", "updated_at"]
+            # The seed-admin SQL uses VALUES ($1, $2, $3, $3) — i.e. 3 args
+            # with the 4th repeated. Map by index up to len(args).
+            row_args = list(args)
+            if len(row_args) == 3:
+                row_args.append(row_args[2])  # updated_at = created_at
+            row = dict(zip(cols, row_args, strict=False))
+            self.organizations.setdefault(str(row["org_id"]), row)
+            return
         if s.startswith("INSERT INTO operations"):
             cols = [
                 "operation_id",
