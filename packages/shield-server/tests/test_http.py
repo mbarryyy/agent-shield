@@ -121,10 +121,9 @@ def test_submit_rejects_bodyless(client: TestClient) -> None:
 def test_epoch_and_export_not_found(client: TestClient) -> None:
     assert client.get("/v1/epochs/e1").status_code == 404
     assert client.get("/v1/exports/x1").status_code == 404
-    assert client.get("/v1/exports/x1/download").status_code == 400
+    assert client.get("/v1/exports/x1/download").status_code == 404
     created = client.post("/v1/exports", json={"format": "json"})
-    assert created.status_code == 201
-    assert created.json()["export"]["status"] == "queued"
+    assert created.status_code == 400
 
 
 def test_governance_decide_returns_signed_pass(client: TestClient) -> None:

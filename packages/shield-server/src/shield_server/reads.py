@@ -15,19 +15,31 @@ identical logic (same discipline as `audit.query_audit`).
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, cast
 
+import shield_sdk.crypto as sdk_crypto
 from shield_sdk.schema import Decision
 
+from ._ids import generate_uuid7
 from .audit import decode_cursor, encode_cursor
 from .config import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 from .errors import AppError
+from .merkle import merkle_root
 from .models import (
+    EER,
     CostRollup,
     CostTokens,
+    CreateExportRequest,
     DashboardKpi,
+    Epoch,
+    ExportModel,
+    GetEpochResponseModel,
+    GetExportResponseModel,
     IncidentRow,
     IncidentsResponse,
+    ListEpochsResponse,
+    ListExportsResponse,
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
@@ -53,6 +65,194 @@ def _pct(values: list[float], q: float) -> float:
     s = sorted(values)
     idx = max(0, min(len(s) - 1, int(round(q * (len(s) - 1)))))
     return float(s[idx])
+
+
+def _leaf_bytes(chain_hash: object) -> bytes:
+    value = str(chain_hash)
+    try:
+        return sdk_crypto.base64url_decode(value)
+    except Exception:
+        return value.encode("utf-8")
+
+
+def _epoch_id(org_id: str, start: int, end: int, root_hash: str, leaf_count: int) -> str:
+    seed = f"{org_id}|{start}|{end}|{root_hash}|{leaf_count}"
+    return "epoch_" + sdk_crypto.sha256_base64url(seed)
+
+
+def _eer_signable(eer: EER) -> bytes:
+    body = eer.model_dump(mode="json", exclude={"signature_by_elydora"})
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+async def _computed_epochs(storage: Storage, org_id: str) -> list[Epoch]:
+    rows = await storage.db.fetch("SELECT * FROM epochs")
+    persisted = [Epoch.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    if persisted:
+        persisted.sort(key=lambda e: e.created_at, reverse=True)
+        return persisted
+
+    ops = await storage.db.fetch("SELECT * FROM operations")
+    scoped = [o for o in ops if o["org_id"] == org_id]
+    if not scoped:
+        return []
+    scoped.sort(key=lambda r: (_i(r["created_at"]), str(r["operation_id"])))
+    start = _i(scoped[0]["created_at"])
+    end = _i(scoped[-1]["created_at"])
+    leaves = [_leaf_bytes(o["chain_hash"]) for o in scoped]
+    root_hash = sdk_crypto.base64url_encode(merkle_root(leaves))
+    leaf_count = len(leaves)
+    eid = _epoch_id(org_id, start, end, root_hash, leaf_count)
+    return [
+        Epoch(
+            epoch_id=eid,
+            org_id=org_id,
+            start_time=start,
+            end_time=end,
+            root_hash=root_hash,
+            leaf_count=leaf_count,
+            r2_epoch_key=f"{org_id}/epochs/{eid}.json",
+            created_at=end,
+        )
+    ]
+
+
+async def epochs(storage: Storage, org_id: str) -> ListEpochsResponse:
+    return ListEpochsResponse(epochs=await _computed_epochs(storage, org_id))
+
+
+async def epoch_detail(
+    storage: Storage, org_id: str, epoch_id: str, signing_key: str
+) -> GetEpochResponseModel:
+    matches = [
+        epoch for epoch in await _computed_epochs(storage, org_id) if epoch.epoch_id == epoch_id
+    ]
+    if not matches:
+        raise AppError(404, "NOT_FOUND", "Epoch not found.")
+    epoch = matches[0]
+    eer = EER(
+        epoch_id=epoch.epoch_id,
+        org_id=epoch.org_id,
+        start_time=epoch.start_time,
+        end_time=epoch.end_time,
+        leaf_count=epoch.leaf_count,
+        root_hash=epoch.root_hash,
+        hash_alg="sha256-binary-merkle-v1",
+        signature_by_elydora="",
+    )
+    eer.signature_by_elydora = sdk_crypto.sign_ed25519(signing_key, _eer_signable(eer))
+    await storage.objects.put(
+        epoch.r2_epoch_key,
+        json.dumps(
+            {"epoch": epoch.model_dump(mode="json"), "eer": eer.model_dump(mode="json")},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8"),
+        "application/json",
+    )
+    return GetEpochResponseModel(epoch=epoch, eer=eer)
+
+
+async def _export_rows(storage: Storage, org_id: str) -> list[ExportModel]:
+    rows = await storage.db.fetch("SELECT * FROM exports")
+    exports = [ExportModel.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    exports.sort(key=lambda e: e.created_at, reverse=True)
+    return exports
+
+
+def _export_query(params: CreateExportRequest) -> str:
+    return json.dumps(params.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+
+async def list_exports(storage: Storage, org_id: str) -> ListExportsResponse:
+    return ListExportsResponse(exports=await _export_rows(storage, org_id))
+
+
+async def create_export(
+    storage: Storage, org_id: str, params: CreateExportRequest
+) -> GetExportResponseModel:
+    if params.start_time < 0 or params.end_time < 0 or params.start_time > params.end_time:
+        raise AppError(400, "VALIDATION_ERROR", "Invalid export time range.")
+    if params.format != "json":
+        raise AppError(400, "VALIDATION_ERROR", "Only JSON compliance exports are available.")
+
+    ops = await storage.db.fetch("SELECT * FROM operations")
+    scoped_ops = [
+        dict(o)
+        for o in ops
+        if o["org_id"] == org_id
+        and params.start_time <= _i(o["created_at"]) <= params.end_time
+        and (params.agent_id is None or o["agent_id"] == params.agent_id)
+        and (params.operation_type is None or o["operation_type"] == params.operation_type)
+    ]
+    scoped_record_ids = {str(o["operation_id"]) for o in scoped_ops}
+
+    verdicts = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    scoped_verdicts = [
+        dict(v)
+        for v in verdicts
+        if v["org_id"] == org_id and str(v["record_id"]) in scoped_record_ids
+    ]
+    now = int(time.time() * 1000)
+    export_id = generate_uuid7()
+    key = f"{org_id}/exports/{export_id}.json"
+    query = _export_query(params)
+    payload = {
+        "export_id": export_id,
+        "org_id": org_id,
+        "query": json.loads(query),
+        "generated_at": now,
+        "operations": scoped_ops,
+        "governance_verdicts": scoped_verdicts,
+        "epochs": [e.model_dump(mode="json") for e in await _computed_epochs(storage, org_id)],
+    }
+    await storage.objects.put(
+        key,
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        "application/json",
+    )
+    await storage.db.execute(
+        "INSERT INTO exports (export_id, org_id, status, query_params, r2_export_key, "
+        "created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        export_id,
+        org_id,
+        "done",
+        query,
+        key,
+        now,
+        now,
+    )
+    export = ExportModel(
+        export_id=export_id,
+        org_id=org_id,
+        status="done",
+        query_params=query,
+        r2_export_key=key,
+        created_at=now,
+        completed_at=now,
+    )
+    return GetExportResponseModel(export=export, download_url=f"/v1/exports/{export_id}/download")
+
+
+async def get_export(storage: Storage, org_id: str, export_id: str) -> GetExportResponseModel:
+    row = await storage.db.fetchrow(
+        "SELECT * FROM exports WHERE export_id = $1 AND org_id = $2", export_id, org_id
+    )
+    if row is None:
+        raise AppError(404, "NOT_FOUND", "Export not found.")
+    export = ExportModel.model_validate(row)
+    return GetExportResponseModel(export=export, download_url=f"/v1/exports/{export_id}/download")
+
+
+async def download_export(storage: Storage, org_id: str, export_id: str) -> dict[str, Any]:
+    export = (await get_export(storage, org_id, export_id)).export
+    if export.status != "done" or not export.r2_export_key:
+        raise AppError(400, "VALIDATION_ERROR", "Export not yet complete.")
+    raw = await storage.objects.get(export.r2_export_key)
+    if raw is None:
+        raise AppError(404, "NOT_FOUND", "Export artifact not found.")
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {"export": parsed}
 
 
 async def _load_json(storage: Storage, key: str | None) -> dict[str, Any] | None:
