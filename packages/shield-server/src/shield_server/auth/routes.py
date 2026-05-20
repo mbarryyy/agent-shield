@@ -1150,11 +1150,32 @@ def _view_of(row: api_keys_svc.ApiKeyRow) -> ApiKeyView:
     )
 
 
+async def _assert_api_key_agent_scope(
+    request: Request, principal: Principal, body: IssueApiKeyRequest
+) -> None:
+    requested = set()
+    if body.agent_id:
+        requested.add(body.agent_id)
+    if body.agent_id_allowlist:
+        requested.update(body.agent_id_allowlist)
+    if not requested:
+        return
+    storage = request.app.state.storage
+    org_agents = await api_keys_svc.agents_in_org(storage.db, org_id=principal.org_id)
+    if not requested.issubset(org_agents):
+        raise AppError(
+            400,
+            "VALIDATION_ERROR",
+            details={"reason": "agent_outside_org"},
+        )
+
+
 @auth_router.post("/api-keys")
 async def issue_api_key(
     body: IssueApiKeyRequest, request: Request, principal: AdminCtx
 ) -> IssueApiKeyResponse:
     storage = request.app.state.storage
+    await _assert_api_key_agent_scope(request, principal, body)
     expires_at = (now_ms() + body.ttl_seconds * 1000) if body.ttl_seconds else None
     allowlist = tuple(body.agent_id_allowlist) if body.agent_id_allowlist else None
     issued = await api_keys_svc.issue_api_key(
@@ -1189,6 +1210,9 @@ async def revoke_api_key_route(
     api_key_id: str, request: Request, principal: AdminCtx
 ) -> OkResponse:
     storage = request.app.state.storage
+    scoped = await api_keys_svc.list_api_keys_for_org(storage.db, org_id=principal.org_id)
+    if not any(row.api_key_id == api_key_id for row in scoped):
+        raise AppError(404, "NOT_FOUND", "API key not found.")
     await api_keys_svc.revoke_api_key(storage.db, api_key_id=api_key_id)
     await insert_audit(
         storage.db,

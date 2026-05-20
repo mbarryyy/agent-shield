@@ -23,16 +23,15 @@ from .. import governance as governance_svc
 from .. import ingest as ingest_svc
 from .. import reads as reads_svc
 from .._crypto import CryptoProvider
-from .._ids import generate_uuid7
 from ..auth import AuthContext, auth_context
 from ..config import ACTIONS_STREAM_PREFIX, VERDICTS_STREAM_PREFIX
 from ..errors import AppError
 from ..models import (
     AuditQueryRequest,
     CostRollup,
+    CreateExportRequest,
     CreateExportResponseModel,
     DashboardKpi,
-    ExportModel,
     FreezeAgentRequest,
     GetExportResponseModel,
     IncidentsResponse,
@@ -316,44 +315,42 @@ async def governance_resume(incident_id: str, request: Request, ctx: Ctx) -> Gov
 # --- epochs (W4 produces real epochs; W1 = empty list / not-found) ---------
 @router.get("/v1/epochs")
 async def list_epochs(request: Request, ctx: Ctx) -> ListEpochsResponse:
-    return ListEpochsResponse(epochs=[])
+    return await reads_svc.epochs(get_storage(request), ctx.org_id)
 
 
 @router.get("/v1/epochs/{epoch_id}")
 async def get_epoch(epoch_id: str, request: Request, ctx: Ctx) -> object:
-    raise AppError(404, "NOT_FOUND", "Epoch not found (epochs land at W4).")
+    return await reads_svc.epoch_detail(
+        get_storage(request), ctx.org_id, epoch_id, request.app.state.settings.server_signing_key
+    )
 
 
 # --- exports (W4 = full pipeline; W1 = console-compatible minimal) ---------
 @router.get("/v1/exports")
 async def list_exports(request: Request, ctx: Ctx) -> ListExportsResponse:
-    return ListExportsResponse(exports=[])
+    return await reads_svc.list_exports(get_storage(request), ctx.org_id)
 
 
 @router.post("/v1/exports", status_code=201)
 async def create_export(request: Request, ctx: Ctx) -> CreateExportResponseModel:
-    now = int(time.time() * 1000)
     body = await request.json()
-    exp = ExportModel(
-        export_id=generate_uuid7(),
-        org_id=ctx.org_id,
-        status="queued",
-        query_params=str(body),
-        r2_export_key=None,
-        created_at=now,
-        completed_at=None,
-    )
-    return CreateExportResponseModel(export=exp)
+    try:
+        params = CreateExportRequest.model_validate(body)
+    except ValidationError as exc:
+        raise AppError(400, "VALIDATION_ERROR", "Malformed export request.") from exc
+    export = await reads_svc.create_export(get_storage(request), ctx.org_id, params)
+    return CreateExportResponseModel(export=export.export)
 
 
 @router.get("/v1/exports/{export_id}")
 async def get_export(export_id: str, request: Request, ctx: Ctx) -> GetExportResponseModel:
-    raise AppError(404, "NOT_FOUND", "Export not found (export pipeline lands at W4).")
+    return await reads_svc.get_export(get_storage(request), ctx.org_id, export_id)
 
 
 @router.get("/v1/exports/{export_id}/download")
 async def download_export(export_id: str, request: Request, ctx: Ctx) -> object:
-    raise AppError(400, "VALIDATION_ERROR", "Export not yet complete.")
+    payload = await reads_svc.download_export(get_storage(request), ctx.org_id, export_id)
+    return JSONResponse(payload)
 
 
 # --- jwks + auth (console settings/jwks pages) ----------------------------

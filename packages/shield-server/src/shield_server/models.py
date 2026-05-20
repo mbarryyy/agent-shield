@@ -209,8 +209,24 @@ class Epoch(BaseModel):
     created_at: int
 
 
+class EER(BaseModel):
+    epoch_id: str
+    org_id: str
+    start_time: int
+    end_time: int
+    leaf_count: int
+    root_hash: str
+    hash_alg: str
+    signature_by_elydora: str
+
+
 class ListEpochsResponse(BaseModel):
     epochs: list[Epoch]
+
+
+class GetEpochResponseModel(BaseModel):
+    epoch: Epoch
+    eer: EER
 
 
 class ExportModel(BaseModel):
@@ -229,6 +245,16 @@ class ListExportsResponse(BaseModel):
 
 class CreateExportResponseModel(BaseModel):
     export: ExportModel
+
+
+class CreateExportRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    start_time: int
+    end_time: int
+    agent_id: str | None = None
+    operation_type: str | None = None
+    format: Literal["json", "pdf"] = "json"
 
 
 class GetExportResponseModel(BaseModel):
