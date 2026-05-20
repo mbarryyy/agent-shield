@@ -4,7 +4,7 @@ import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
-import { authFetch } from '@/lib/auth-client';
+import { authFetch, resolveAuthErrorMessage } from '@/lib/auth-client';
 import BrandMark from '@/components/ui/BrandMark';
 import type { OkResponse } from '@/types/auth';
 
@@ -32,8 +32,8 @@ function ResetForm() {
         body: JSON.stringify({ token, new_password: newPassword }),
       });
       router.push('/login');
-    } catch {
-      setError(t('resetPassword.tokenExpired'));
+    } catch (err) {
+      setError(resolveAuthErrorMessage(err, t('resetPassword.tokenExpired')));
     } finally {
       setIsSubmitting(false);
     }
