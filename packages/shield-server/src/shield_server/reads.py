@@ -25,6 +25,7 @@ from .errors import AppError
 from .models import (
     CostRollup,
     CostTokens,
+    DashboardKpi,
     IncidentRow,
     IncidentsResponse,
     ProvenanceEdge,
@@ -224,6 +225,35 @@ async def cost(storage: Storage, org_id: str, run_id: str) -> CostRollup:
         prevented_loss_total=float(prevented),
         latency_p50_ms=_pct(latencies, 0.50),
         latency_p95_ms=_pct(latencies, 0.95),
+    )
+
+
+async def dashboard_kpi(storage: Storage, org_id: str) -> DashboardKpi:
+    """Task #31 (b) — org-wide dashboard KPI rollup.
+
+    Pure READ-aggregation across ``governance_verdicts`` for the given
+    ``org_id``: ``prevented_loss_total`` = Σ stored ``prevented_loss`` (the
+    MEASURED env-diff value gov / sdk placed on the §4
+    ``GovernanceVerdict.obligations.prevented_loss`` field at /decide time;
+    the server merely sums it — NO recompute). ``decision_mix`` always
+    carries all 6 §4 ``Decision`` keys (zero default). Distinct from the
+    run-scoped ``/cost`` endpoint by org-wide scoping (no run_id filter).
+
+    seam#7 preserved: read-only; the source-of-truth for prevented_loss
+    is gov's verdict, server-stored at verdict-sign time.
+    """
+    gv = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    scoped_gv = [r for r in gv if r["org_id"] == org_id]
+    prevented = sum(_f(r.get("prevented_loss") or 0.0) for r in scoped_gv)
+    mix: dict[str, int] = {d.value: 0 for d in Decision}
+    for r in scoped_gv:
+        key = str(r["decision"])
+        if key in mix:
+            mix[key] += 1
+    return DashboardKpi(
+        prevented_loss_total=float(prevented),
+        decision_mix=mix,
+        total_verdicts=len(scoped_gv),
     )
 
 
