@@ -134,3 +134,56 @@ def test_escalate_band_sets_require_human() -> None:
     v = sup.decide(GuardianSignals(evaluator_anomaly=0.5), record=_rec())
     assert v.decision is Decision.ESCALATE
     assert v.obligations.require_human is True
+
+
+# --------------------------------------------------------------------------- #
+# A.4 / Task #31 — Supervisor preserves Defender's env-diff $ into the FINAL
+# frozen §4.2 Obligations.prevented_loss on BLOCK/ROLLBACK.
+# --------------------------------------------------------------------------- #
+
+
+def test_supervisor_preserves_prevented_loss_on_block() -> None:
+    sig = GuardianSignals(defender_decision=Decision.BLOCK, prevented_loss=50_000.0)
+    v = Supervisor().decide(sig, record=_rec())
+    assert v.decision is Decision.BLOCK
+    assert v.obligations.prevented_loss == 50_000.0
+
+
+def test_supervisor_preserves_prevented_loss_on_rollback() -> None:
+    """post-exec BLOCK → ROLLBACK; Auditor counts {BLOCK, ROLLBACK}, so
+    prevented_loss must carry through ROLLBACK too (auditor.py:138-139)."""
+    rec = _rec(Phase.POST_EXEC)
+    sig = GuardianSignals(defender_decision=Decision.BLOCK, prevented_loss=30_000.0, post_exec=True)
+    v = Supervisor().decide(sig, record=rec)
+    assert v.decision is Decision.ROLLBACK
+    assert v.obligations.prevented_loss == 30_000.0
+    assert v.obligations.rollback is not None  # dual-substrate ROLLBACK still set
+
+
+def test_supervisor_pass_does_not_set_prevented_loss() -> None:
+    """A.4 honesty: PASS never carries a prevented_loss $."""
+    v = Supervisor().decide(GuardianSignals(prevented_loss=999.0), record=_rec())
+    assert v.decision is Decision.PASS
+    assert v.obligations.prevented_loss is None  # NEVER set on PASS
+
+
+def test_supervisor_block_with_no_prevented_loss_leaves_none() -> None:
+    """A.4 honesty: BLOCK without a clear env-diff $ (e.g. exfil) → None.
+    Server falls back to 0.0 on None (governance.py:315) — no fabrication."""
+    sig = GuardianSignals(defender_decision=Decision.BLOCK, prevented_loss=None)
+    v = Supervisor().decide(sig, record=_rec())
+    assert v.decision is Decision.BLOCK
+    assert v.obligations.prevented_loss is None
+
+
+def test_signals_from_defender_pulls_prevented_loss_through() -> None:
+    from shield_sdk.schema import GovernanceVerdict, Obligations
+
+    dverdict = GovernanceVerdict(
+        decision=Decision.BLOCK,
+        correlation_id="c",
+        reasons=[VerdictReason(agent=Guardian.DEFENDER, label="cumulative.structuring", score=1.0)],
+        obligations=Obligations(prevented_loss=30_000.0),
+    )
+    s = signals_from_defender(dverdict, phase=Phase.PRE_EXEC)
+    assert s.prevented_loss == 30_000.0

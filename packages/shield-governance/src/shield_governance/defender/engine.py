@@ -31,6 +31,7 @@ from shield_sdk.schema import (
     Decision,
     GovernanceVerdict,
     Guardian,
+    Obligations,
     ServedVia,
     ShieldActionRecord,
     VerdictReason,
@@ -132,8 +133,22 @@ class DefenderEngine:
         t0 = time.perf_counter()
 
         def _verdict(
-            decision: Decision, reasons: list[VerdictReason], risk: float
+            decision: Decision,
+            reasons: list[VerdictReason],
+            risk: float,
+            *,
+            prevented_loss: float | None = None,
         ) -> GovernanceVerdict:
+            # A.4 / Task #31: populate FROZEN §4.2 Obligations.prevented_loss
+            # when the deterministic outcome carries an env-diff $ (single_cap
+            # or cumulative.structuring BLOCK). Only when this verdict's own
+            # decision is BLOCK/ROLLBACK — never on PASS/ALERT (no fabrication).
+            obligations = Obligations()
+            if prevented_loss is not None and decision in (
+                Decision.BLOCK,
+                Decision.ROLLBACK,
+            ):
+                obligations.prevented_loss = prevented_loss
             return GovernanceVerdict(
                 decision=decision,
                 correlation_id=record.correlation_id,
@@ -141,6 +156,7 @@ class DefenderEngine:
                 run_id=record.run_id,
                 risk_score=max(0.0, min(1.0, risk)),
                 reasons=reasons,
+                obligations=obligations,
                 latency_ms=(time.perf_counter() - t0) * 1000.0,
             )
 
@@ -156,6 +172,11 @@ class DefenderEngine:
         reasons: list[VerdictReason] = []
         tool_name = record.payload.tool_name or ""
         args = dict(record.payload.tool_args)
+        # A.4 / Task #31: env-diff $ from the deterministic outcome (single_cap
+        # → transfer.amount; cumulative.structuring → projected Σ-at-fire).
+        # None for non-enumerated BLOCKs (scanner/invariant/exfil) — no
+        # fabrication; server falls back to 0.0 on None.
+        det_prev_loss: float | None = None
 
         # 1. Deterministic, model-free (the authoritative structuring catcher).
         if tool_name == "send_money":
@@ -164,6 +185,8 @@ class DefenderEngine:
             reasons.append(outcome.to_verdict_reason())
             if outcome.decision in (Decision.PASS, Decision.ALERT):
                 tracker.commit(str(args.get("recipient", "")), _amount(args))
+            elif outcome.decision in (Decision.BLOCK, Decision.ROLLBACK):
+                det_prev_loss = outcome.prevented_loss
 
         # 2. LlamaFirewall scan on the free-text subject (model-free/local).
         if self._cfg.run_scanner:
@@ -191,7 +214,7 @@ class DefenderEngine:
             if _SEVERITY[d] > _SEVERITY[decision]:
                 decision = d
         risk = max((r.score or 0.0) for r in reasons) if reasons else 0.0
-        return _verdict(decision, reasons, risk)
+        return _verdict(decision, reasons, risk, prevented_loss=det_prev_loss)
 
 
 def _amount(args: dict[str, Any]) -> float:

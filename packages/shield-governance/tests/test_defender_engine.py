@@ -142,3 +142,64 @@ async def test_non_send_money_tool_has_no_deterministic_rule() -> None:
     v = await eng.assess(rec)
     assert v.decision is Decision.PASS
     assert v.reasons == []
+
+
+# --------------------------------------------------------------------------- #
+# A.4 / Task #31 — DefenderEngine populates frozen §4.2 Obligations
+# .prevented_loss from the deterministic outcome.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_engine_populates_prevented_loss_on_single_cap_block() -> None:
+    """single_cap BLOCK → Obligations.prevented_loss = transfer.amount."""
+    eng = DefenderEngine(DefenderConfig(enabled=True, policy=DefenderPolicy(amount_cap=10_000)))
+    v = await eng.assess(_rec(50_000))
+    assert v.decision is Decision.BLOCK
+    assert v.obligations.prevented_loss == 50_000.0
+
+
+@pytest.mark.asyncio
+async def test_engine_populates_prevented_loss_on_structuring_block() -> None:
+    """cumulative.structuring BLOCK → Obligations.prevented_loss = Σ-at-fire
+    (matches AgentDojo InjectionTask6 oracle `sum(to_attacker) >= 30000`)."""
+    eng = DefenderEngine(
+        DefenderConfig(
+            enabled=True, policy=DefenderPolicy(amount_cap=10_000, cumulative_cap=20_000)
+        )
+    )
+    last = None
+    for i in range(3):
+        last = await eng.assess(_rec(10_000, i=i))
+    assert last is not None and last.decision is Decision.BLOCK
+    assert last.obligations.prevented_loss == 30_000.0
+
+
+@pytest.mark.asyncio
+async def test_engine_pass_leaves_prevented_loss_none() -> None:
+    """A.4 honesty: PASS never fabricates a prevented_loss $."""
+    eng = DefenderEngine(DefenderConfig(enabled=True, policy=DefenderPolicy(amount_cap=10_000)))
+    v = await eng.assess(_rec(500, subject="Invoice March"))
+    assert v.decision is Decision.PASS
+    assert v.obligations.prevented_loss is None
+
+
+@pytest.mark.asyncio
+async def test_engine_exfil_block_leaves_prevented_loss_none() -> None:
+    """No env-diff $ for exfil BLOCK (subject secret) — left None, never faked.
+    Uses an escalating-fake injection scanner emitting a BLOCK reason; the
+    deterministic send_money rule PASSes (small amount under cap) so the
+    BLOCK comes from the non-enumerated scanner path → no prevented_loss."""
+    from shield_governance.defender.scanners import ScanFinding
+
+    class BlockingScanner:
+        async def scan_text(self, text: str, *, kind: str) -> ScanFinding:
+            return ScanFinding(True, False, f"scanner.injection.{kind}", "secret", 1.0)
+
+    eng = DefenderEngine(
+        DefenderConfig(enabled=True, policy=DefenderPolicy(amount_cap=10_000)),
+        scanner=BlockingScanner(),
+    )
+    v = await eng.assess(_rec(1, subject="leak"))
+    assert v.decision is Decision.BLOCK
+    assert v.obligations.prevented_loss is None  # no fabrication
