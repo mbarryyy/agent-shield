@@ -1,0 +1,12 @@
+# ADR-0013 PR#25 — silence the historical introduction commit fingerprint for
+# the test fixture password that was already replaced with a well-known XKCD-
+# 936 sentinel ('correct-horse-battery-staple') in the follow-up additive
+# commit. The original fixture value 'from-env-1234' tripped gitleaks'
+# generic-api-key entropy threshold; the fix lands additively (no force-push)
+# so the introduction commit stays in PR history and gitleaks-action's
+# default --log-opts=--no-merges --first-parent range scan otherwise re-trips
+# on every push.
+#
+# Fingerprint format = <commit_sha>:<file>:<rule_id>:<line>. The line+commit
+# uniquely identify this single false-positive across the PR history.
+bd341fc12e80665ea4969246ce302613e7261357:packages/shield-server/tests/auth/test_coverage_top_up.py:generic-api-key:296

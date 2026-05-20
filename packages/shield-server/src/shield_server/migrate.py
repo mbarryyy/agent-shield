@@ -272,31 +272,54 @@ async def _apply_down(execute: _Executor, version: int) -> None:
     )
 
 
+def _ssl_param_for(dsn: str) -> object:
+    """Resolve the ``ssl=`` kwarg for ``asyncpg.connect`` from the DSN.
+
+    asyncpg defaults to "prefer" SSL on plain ``postgresql://`` DSNs, which is
+    silently incompatible with the docker-compose postgres:16 image we run in
+    CI / local (no SSL listener). Default to ``False`` so the local-postgres-
+    no-SSL convention works out of the box; honour ``?sslmode=require`` /
+    ``verify-ca`` / ``verify-full`` if the operator put one in the DSN for
+    production-managed Postgres.
+    """
+    lowered = dsn.lower()
+    for token in ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"):
+        if token in lowered:
+            return True
+    return False
+
+
 async def apply(dsn: str) -> None:  # pragma: no cover - integration-only (real PG)
     """Public entrypoint: apply W3 baseline + every ADR-0013 up revision.
 
     Idempotent (all DDL is ``CREATE TABLE IF NOT EXISTS``); safe to rerun.
 
-    SSL handling: asyncpg defaults to "prefer" SSL on plain ``postgresql://``
-    DSNs, which is silently incompatible with the docker-compose postgres:16
-    image we run in CI/local (no SSL listener). Honour ``?sslmode=...`` if the
-    operator put one in the DSN; otherwise default to ``ssl=False`` so the
-    local-postgres-no-SSL convention works out of the box (the
-    ``auth-integration`` Migrate step was tripping on this without an explicit
-    setting). Production deployments behind a managed Postgres set
-    ``?sslmode=require`` or stronger explicitly in their ``DATABASE_URL``.
+    Connection robustness: the docker-compose postgres:16 container's TCP
+    listener comes up before the server is fully ready for client queries,
+    so a connect attempt can succeed at the TCP layer and then drop with
+    ``ConnectionDoesNotExistError`` mid-startup-message (seen in the
+    ``auth-integration`` job on the GitHub-hosted runner). Retry with linear
+    backoff up to ~12 s total — well below the workflow's overall budget,
+    and a no-op on healthy infra.
     """
-    import asyncpg
+    import asyncio as _asyncio
 
-    ssl_param: object = False
-    lowered_dsn = dsn.lower()
-    for token in ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"):
-        if token in lowered_dsn:
-            ssl_param = True
+    import asyncpg
+    from asyncpg.exceptions import ConnectionDoesNotExistError, PostgresError
+
+    ssl_param = _ssl_param_for(dsn)
+    last_exc: Exception | None = None
+    conn = None
+    for _attempt in range(6):  # 6 tries × 2 s ≈ 12 s ceiling
+        try:
+            conn = await asyncpg.connect(dsn, ssl=ssl_param)
             break
-    if "sslmode=disable" in lowered_dsn:
-        ssl_param = False
-    conn = await asyncpg.connect(dsn, ssl=ssl_param)
+        except (ConnectionDoesNotExistError, OSError, PostgresError) as exc:
+            last_exc = exc
+            await _asyncio.sleep(2.0)
+    if conn is None:
+        assert last_exc is not None
+        raise last_exc
     try:
         await _apply_schema(conn.execute)
         for rev in MIGRATIONS:
