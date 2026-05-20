@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useTranslation } from 'react-i18next';
-import { authFetch } from '@/lib/auth-client';
+import { authFetch, resolveAuthErrorMessage } from '@/lib/auth-client';
 import BrandMark from '@/components/ui/BrandMark';
 import type { OkResponse } from '@/types/auth';
 
@@ -24,10 +24,14 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email }),
       });
       setSent(true);
-    } catch {
-      // Email-enumeration safety: surface the same success state on any
-      // backend error so we don't leak whether the email exists.
-      setSent(true);
+    } catch (err) {
+      // Email-enumeration safety is the SERVER's responsibility (it returns
+      // 200 OK for both existing and non-existing emails — see
+      // shield_server/auth/routes.py:password_reset_request). A 4xx/5xx
+      // received here is therefore a real server error (rate-limit, 500,
+      // network) NOT an enumeration leak — surface it via the unified
+      // renderer for honest feedback. Task #29 (A.2).
+      setError(resolveAuthErrorMessage(err, t('forgotPassword.sent')));
     } finally {
       setIsSubmitting(false);
     }

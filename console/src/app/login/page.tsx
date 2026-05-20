@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { signIn } from '@/lib/auth-client';
+import { signIn, resolveAuthErrorMessage } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
 import BrandMark from '@/components/ui/BrandMark';
 
@@ -36,7 +36,7 @@ export default function LoginPage() {
       }
       router.push('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('login.loginFailed'));
+      setError(resolveAuthErrorMessage(err, t('login.loginFailed')));
     } finally {
       setIsSubmitting(false);
     }

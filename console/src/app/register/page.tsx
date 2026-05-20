@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { signUp } from '@/lib/auth-client';
+import { signUp, resolveAuthErrorMessage } from '@/lib/auth-client';
 import { useTranslation } from 'react-i18next';
 import BrandMark from '@/components/ui/BrandMark';
 
@@ -25,7 +25,7 @@ export default function RegisterPage() {
       await signUp.email({ email, password, name: displayName });
       router.push('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('register.registrationFailed'));
+      setError(resolveAuthErrorMessage(err, t('register.registrationFailed')));
     } finally {
       setIsSubmitting(false);
     }

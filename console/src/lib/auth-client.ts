@@ -31,14 +31,59 @@ function setCsrf(token: string | null | undefined): void {
 
 const SESSION_KEY = '/v1/auth/session';
 
+/**
+ * Auth/API error carrying the full server `{error:{code,message,details}}`
+ * envelope (per the FastAPI shape in shield_server/errors.py) — so callers
+ * can surface the real server message instead of a generic "Load failed".
+ * Message-resolution cascade (Task #29 / A.2): server `body.error.message`
+ * → server `body.error.code` → fallback `"auth <status>"`. Code + details
+ * are also exposed as fields for programmatic consumers (form-field
+ * highlighting, telemetry, etc.).
+ */
 export class AuthError extends Error {
+  public readonly code: string | null;
+  public readonly details: Record<string, unknown> | null;
   constructor(
     public readonly status: number,
     public readonly body: unknown,
   ) {
-    super(`auth ${status}`);
+    const envelope =
+      body && typeof body === 'object' && 'error' in body
+        ? ((body as { error: unknown }).error as Record<string, unknown> | null)
+        : null;
+    const msgField = envelope && typeof envelope['message'] === 'string'
+      ? (envelope['message'] as string)
+      : null;
+    const codeField = envelope && typeof envelope['code'] === 'string'
+      ? (envelope['code'] as string)
+      : null;
+    super(msgField ?? codeField ?? `auth ${status}`);
     this.name = 'AuthError';
+    this.code = codeField;
+    this.details =
+      envelope && envelope['details'] && typeof envelope['details'] === 'object'
+        ? (envelope['details'] as Record<string, unknown>)
+        : null;
   }
+}
+
+/** Shared inline-error message resolver used by login/register/reset/etc.
+ *  Cascade: AuthError or Error `.message` → fallback i18n string. Hides
+ *  noisy network-layer messages like Safari's "Load failed" by deferring
+ *  to the page-supplied i18n fallback only when the underlying error has
+ *  no usable message at all. */
+export function resolveAuthErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof AuthError) return err.message || err.code || fallback;
+  if (err instanceof Error && err.message) {
+    // Browser network-layer placeholders → fallback so the UI never shows
+    // "Load failed" / "Failed to fetch" verbatim.
+    const lower = err.message.toLowerCase();
+    if (lower === 'load failed' || lower === 'failed to fetch' || lower.startsWith('networkerror')) {
+      return fallback;
+    }
+    return err.message;
+  }
+  return fallback;
 }
 
 async function _fetch<T>(path: string, init: RequestInit = {}): Promise<T> {
