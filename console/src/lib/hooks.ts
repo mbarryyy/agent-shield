@@ -19,6 +19,7 @@ import type {
   ProvenanceGraph,
   CostRollup,
   IncidentList,
+  DashboardKpi,
 } from '@/types/governance';
 
 export function useAgent(agentId: string | undefined) {
@@ -146,6 +147,19 @@ export function useIncidents(
     ['/gov/incidents', params.run_id ?? '', params.status ?? ''],
     () => api.governance.incidents(params),
     { revalidateOnFocus: false },
+  );
+}
+
+/** Task #31.b — org-wide Dashboard KPI rollup. Server-authoritative;
+ *  console renders verbatim. Retries disabled: the KPI card is low-stakes
+ *  dashboard sugar, and 401 is already handled globally by the
+ *  SessionExpiredModal — silently retrying just delays the visible error
+ *  state for the StatCard subtitle. */
+export function useDashboardKpi() {
+  return useSWR<DashboardKpi>(
+    '/gov/dashboard/kpi',
+    () => api.governance.dashboardKpi(),
+    { revalidateOnFocus: false, shouldRetryOnError: false },
   );
 }
 

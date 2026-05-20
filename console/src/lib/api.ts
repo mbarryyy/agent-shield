@@ -31,6 +31,7 @@ import type {
   CostRollup,
   IncidentList,
   ShieldVerdictEvent,
+  DashboardKpi,
 } from '@/types/governance';
 import { getCsrfToken } from '@/lib/auth-client';
 
@@ -310,6 +311,13 @@ export const api = {
       return request<CostRollup>(
         `/v1/governance/runs/${encodeURIComponent(runId)}/cost`,
       );
+    },
+
+    /** Task #31.b — org-wide Dashboard KPI rollup; server NEVER recomputes
+     *  `prevented_loss_total` (the figure is Σ obligations.prevented_loss
+     *  over signed verdicts, MEASURED env-diff). Console renders verbatim. */
+    dashboardKpi(): Promise<DashboardKpi> {
+      return request<DashboardKpi>('/v1/governance/dashboard/kpi');
     },
 
     /** U6 incidents list — ESCALATE-only; server-authoritative HITL state. */
