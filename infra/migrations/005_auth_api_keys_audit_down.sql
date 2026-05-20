@@ -1,0 +1,5 @@
+-- ADR-0013 — Enterprise Auth v1 / schema_version 5 (DOWN; CI-fire-drill-only, §A5)
+--
+-- Placeholder: server-builder fills with `DROP TABLE IF EXISTS api_keys,
+-- audit_log_auth CASCADE`. Same constraints as 004 down: NEVER touches W3
+-- protected tables, invoked ONLY by the test harness.

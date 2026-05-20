@@ -1,0 +1,10 @@
+-- ADR-0013 — Enterprise Auth v1 / schema_version 5 (UP)
+--
+-- Placeholder: server-builder fills with `CREATE TABLE IF NOT EXISTS` for
+-- `api_keys` (tri-mode scoping per D1 / §A8: org_id NOT NULL, agent_id
+-- NULLABLE, agent_id_allowlist TEXT[]) and `audit_log_auth` (mirrors the
+-- W3 `intervention_log:110` SINK pattern; reserves the `created_at` index
+-- for the future PII-retention purge per D7).
+--
+-- Same invariants as 004: additive idempotent, no ALTER on W3 tables,
+-- no FK back-refs into W3 tables.

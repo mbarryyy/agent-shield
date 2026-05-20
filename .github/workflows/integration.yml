@@ -43,3 +43,43 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: integration-logs, path: compose.log }
+
+  # ADDED beyond cicd.md §3 (ADR-0013): enterprise-auth integration. Brings up
+  # the same compose stack + Mailhog (5th service), exports SHIELD_AUTH_MODE=
+  # enterprise and EPHEMERAL secrets (no `secrets.*` references — cicd.md §3),
+  # runs the integration_auth-marked suite + the §A5 migration fire-drill
+  # asserting byte-identity of W3 protected tables across up→down.
+  auth-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, cache-dependency-glob: "uv.lock" }
+      - name: Sync (frozen lock)
+        run: uv sync --frozen --dev
+      - name: Generate ephemeral auth secrets
+        run: |
+          {
+            echo "SHIELD_AUTH_MODE=enterprise"
+            echo "SHIELD_SESSION_SECRETS=ci:$(uv run python infra/secrets/gen.py session)"
+            echo "SHIELD_PASSWORD_PEPPERS=ci:$(uv run python infra/secrets/gen.py pepper)"
+            echo "SHIELD_AUTH_FERNET_KEYS=ci:$(uv run python infra/secrets/gen.py fernet)"
+            echo "SHIELD_EMAIL_BACKEND=smtp"
+            echo "SMTP_HOST=localhost"
+            echo "SMTP_PORT=1025"
+            echo "MAILHOG_HOST=localhost"
+            echo "MAILHOG_API_PORT=8025"
+          } >> "$GITHUB_ENV"
+      - name: Bring up infra (incl. Mailhog)
+        run: docker compose -f infra/docker-compose.yml up -d postgres redis minio chromadb mailhog
+      - name: Wait for health (includes Mailhog under SHIELD_AUTH_MODE=enterprise)
+        run: uv run python infra/wait_for_health.py
+      - name: Migrate
+        run: uv run python -m shield_server.migrate
+      - name: Auth integration suite + migration fire-drill (ADR-0013 §A5)
+        run: uv run pytest tests/integration/auth -m integration_auth
+      - if: always()
+        run: docker compose -f infra/docker-compose.yml logs > compose-auth.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: auth-integration-logs, path: compose-auth.log }

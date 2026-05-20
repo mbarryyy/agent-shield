@@ -1,6 +1,6 @@
 # Agent Shield — developer entrypoints.
 .DEFAULT_GOAL := help
-.PHONY: help doctor test integration smoke eval air-gap-verify lint typecheck
+.PHONY: help doctor test integration integration-auth smoke eval air-gap-verify lint typecheck
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -27,6 +27,15 @@ integration: ## docker-compose smoke + mocked AgentDojo A/B (no secrets)
 	docker compose -f infra/docker-compose.yml up -d postgres redis minio chromadb
 	uv run python infra/wait_for_health.py
 	uv run pytest tests/integration -m integration
+
+integration-auth: ## Enterprise-auth integration (mailhog + ephemeral secrets, ADR-0013)
+	docker compose -f infra/docker-compose.yml up -d postgres redis minio chromadb mailhog
+	SHIELD_AUTH_MODE=enterprise uv run python infra/wait_for_health.py
+	SHIELD_AUTH_MODE=enterprise \
+	  SHIELD_SESSION_SECRETS="local:$$(uv run python infra/secrets/gen.py session)" \
+	  SHIELD_PASSWORD_PEPPERS="local:$$(uv run python infra/secrets/gen.py pepper)" \
+	  SHIELD_AUTH_FERNET_KEYS="local:$$(uv run python infra/secrets/gen.py fernet)" \
+	  uv run pytest tests/integration/auth -m integration_auth
 
 smoke: ## Quick mocked AgentDojo user_task_0 smoke
 	SHIELD_LLM_BACKEND=mock uv run python -m shield_eval.run_ab \
