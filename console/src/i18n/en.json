@@ -27,7 +27,11 @@
     "copyJwks": "Copy JWKS",
     "links": "LINKS",
     "governance": "Governance",
-    "incidents": "Incidents"
+    "incidents": "Incidents",
+    "saved": "Saved.",
+    "devSessionBadge": "Dev session — auth bypass for local/CI; production is enterprise auth.",
+    "brandMarkAlt": "Agent Shield",
+    "missingPermission": "You do not have permission to view this page."
   },
   "sidebar": {
     "overview": "OVERVIEW",
@@ -336,7 +340,11 @@
     "submitSignIn": "Sign In",
     "noAccount": "No account? ",
     "createOne": "Create one",
-    "loginFailed": "Login failed"
+    "loginFailed": "Login failed",
+    "twoFactorTitle": "Two-factor verification",
+    "twoFactorCode": "Authenticator code",
+    "twoFactorInvalid": "Invalid code. Try again.",
+    "twoFactorUseRecovery": "Use a recovery code"
   },
   "register": {
     "createAccount": "Create account",
@@ -352,7 +360,9 @@
     "submitCreateAccount": "Create Account",
     "hasAccount": "Already have an account? ",
     "signIn": "Sign in",
-    "registrationFailed": "Registration failed"
+    "registrationFailed": "Registration failed",
+    "passwordMismatch": "Passwords do not match.",
+    "weakPassword": "Password is too weak."
   },
   "agentRegistration": {
     "displayName": "Display Name",
@@ -444,5 +454,77 @@
     "enterprise": "Your own internal agent",
     "gui": "Desktop or web-based agent",
     "other": "Any custom integration"
+  },
+  "forgotPassword": {
+    "title": "Reset your password",
+    "instruction": "Enter your account email and we will send a reset link.",
+    "email": "Email",
+    "send": "Send reset link",
+    "sent": "If an account exists for that email, a reset link has been sent.",
+    "backToLogin": "Back to sign in"
+  },
+  "resetPassword": {
+    "title": "Set a new password",
+    "newPassword": "New password",
+    "confirm": "Confirm new password",
+    "submit": "Update password",
+    "success": "Password updated.",
+    "tokenExpired": "This reset link is invalid or expired."
+  },
+  "verifyEmail": {
+    "title": "Verify your email",
+    "verifying": "Verifying…",
+    "success": "Email verified.",
+    "expired": "This verification link is invalid or expired.",
+    "resend": "Resend verification email",
+    "resent": "If your account is unverified, a new link has been sent.",
+    "alreadyVerified": "Open the link in your verification email to confirm."
+  },
+  "twoFactorSetup": {
+    "title": "Two-factor authentication",
+    "scanQR": "Scan the QR code with an authenticator app (or enter the key below manually).",
+    "manualKey": "Manual setup key",
+    "enterCode": "Enter the 6-digit code",
+    "enable": "Enable two-factor",
+    "recoveryCodesTitle": "Save your recovery codes",
+    "recoveryCodesNotice": "These recovery codes are shown ONCE. Store them somewhere safe — they let you sign in if you lose your authenticator. Pre-release: SDK packages shown in install snippets are not yet published; recovery codes apply to your console account regardless.",
+    "finish": "I have saved my codes"
+  },
+  "account": {
+    "title": "Account",
+    "profile": "Profile",
+    "password": "Password",
+    "twoFactor": "Two-factor",
+    "sessions": "Active sessions",
+    "signOutAllSessions": "Sign out of all sessions",
+    "dangerZone": "Danger zone",
+    "changePassword": "Change password",
+    "currentPassword": "Current password",
+    "passwordChangeFailed": "Password change failed."
+  },
+  "team": {
+    "title": "Team",
+    "invite": "Invite member",
+    "role": "Role",
+    "status": "Status",
+    "pending": "Pending",
+    "member": "Member",
+    "revoke": "Revoke",
+    "removeMember": "Remove member",
+    "changeRoleConfirm": "Change this member's role?",
+    "noMembers": "No members.",
+    "inviteSent": "Invite sent."
+  },
+  "invite": {
+    "title": "Accept your invite",
+    "expired": "This invite is invalid or expired.",
+    "accepting": "Accepting…",
+    "accept": "Accept invite",
+    "alreadyMember": "You are already a member of this organization."
+  },
+  "sessionExpired": {
+    "title": "Session expired",
+    "message": "Your session has expired. Sign in again to continue.",
+    "signInAgain": "Sign in again"
   }
 }
