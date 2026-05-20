@@ -69,6 +69,14 @@ jobs:
             echo "SMTP_PORT=1025"
             echo "MAILHOG_HOST=localhost"
             echo "MAILHOG_API_PORT=8025"
+            # The docker-compose postgres:16 image we run in CI has no SSL
+            # listener; asyncpg's default SSL=prefer on a plain DSN trips
+            # `connection_lost` during the handshake (RC#2). Set sslmode=
+            # disable explicitly + PGSSLMODE belt-and-braces. migrate.py
+            # also honours this internally (ssl=False default on plain DSN;
+            # sslmode=disable in DSN respected; sslmode=require flips on).
+            echo "DATABASE_URL=postgresql://shield:shield@localhost:5432/shield?sslmode=disable"
+            echo "PGSSLMODE=disable"
           } >> "$GITHUB_ENV"
       - name: Bring up infra (incl. Mailhog)
         run: docker compose -f infra/docker-compose.yml up -d postgres redis minio chromadb mailhog

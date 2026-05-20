@@ -293,8 +293,11 @@ def test_cli_argparse_no_subcommand_prints_help(monkeypatch: pytest.MonkeyPatch)
 def test_cli_prompt_password_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
     from shield_server.auth.cli import _prompt_password
 
-    monkeypatch.setenv("SHIELD_SEED_ADMIN_PASSWORD", "from-env-1234")
-    assert _prompt_password() == "from-env-1234"
+    # Well-known low-entropy test sentinel (XKCD-936 passphrase) — explicitly
+    # signals "this is fixture data" and falls under gitleaks' generic-api-key
+    # entropy threshold. NEVER use as a real credential.
+    monkeypatch.setenv("SHIELD_SEED_ADMIN_PASSWORD", "correct-horse-battery-staple")
+    assert _prompt_password() == "correct-horse-battery-staple"
 
 
 # Suppress unused import warnings — the symbols above are intentionally
