@@ -14,18 +14,19 @@ identical logic (same discipline as `audit.query_audit`).
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from typing import Any, cast
 
-import shield_sdk.crypto as sdk_crypto
 from shield_sdk.schema import Decision
 
 from ._ids import generate_uuid7
 from .audit import decode_cursor, encode_cursor
 from .config import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 from .errors import AppError
-from .merkle import merkle_root
+from .export_report import render_compliance_pdf
+from .merkle import epoch_artifact_bytes, epoch_from_operation_rows, sign_eer
 from .models import (
     EER,
     CostRollup,
@@ -67,54 +68,23 @@ def _pct(values: list[float], q: float) -> float:
     return float(s[idx])
 
 
-def _leaf_bytes(chain_hash: object) -> bytes:
-    value = str(chain_hash)
-    try:
-        return sdk_crypto.base64url_decode(value)
-    except Exception:
-        return value.encode("utf-8")
-
-
-def _epoch_id(org_id: str, start: int, end: int, root_hash: str, leaf_count: int) -> str:
-    seed = f"{org_id}|{start}|{end}|{root_hash}|{leaf_count}"
-    return "epoch_" + sdk_crypto.sha256_base64url(seed)
-
-
-def _eer_signable(eer: EER) -> bytes:
-    body = eer.model_dump(mode="json", exclude={"signature_by_elydora"})
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+async def _persisted_epochs(storage: Storage, org_id: str) -> list[Epoch]:
+    rows = await storage.db.fetch("SELECT * FROM epochs")
+    persisted = [Epoch.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    persisted.sort(key=lambda e: e.created_at, reverse=True)
+    return persisted
 
 
 async def _computed_epochs(storage: Storage, org_id: str) -> list[Epoch]:
-    rows = await storage.db.fetch("SELECT * FROM epochs")
-    persisted = [Epoch.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    persisted = await _persisted_epochs(storage, org_id)
     if persisted:
-        persisted.sort(key=lambda e: e.created_at, reverse=True)
         return persisted
 
     ops = await storage.db.fetch("SELECT * FROM operations")
-    scoped = [o for o in ops if o["org_id"] == org_id]
-    if not scoped:
+    epoch = epoch_from_operation_rows(org_id, ops)
+    if epoch is None:
         return []
-    scoped.sort(key=lambda r: (_i(r["created_at"]), str(r["operation_id"])))
-    start = _i(scoped[0]["created_at"])
-    end = _i(scoped[-1]["created_at"])
-    leaves = [_leaf_bytes(o["chain_hash"]) for o in scoped]
-    root_hash = sdk_crypto.base64url_encode(merkle_root(leaves))
-    leaf_count = len(leaves)
-    eid = _epoch_id(org_id, start, end, root_hash, leaf_count)
-    return [
-        Epoch(
-            epoch_id=eid,
-            org_id=org_id,
-            start_time=start,
-            end_time=end,
-            root_hash=root_hash,
-            leaf_count=leaf_count,
-            r2_epoch_key=f"{org_id}/epochs/{eid}.json",
-            created_at=end,
-        )
-    ]
+    return [epoch]
 
 
 async def epochs(storage: Storage, org_id: str) -> ListEpochsResponse:
@@ -124,30 +94,22 @@ async def epochs(storage: Storage, org_id: str) -> ListEpochsResponse:
 async def epoch_detail(
     storage: Storage, org_id: str, epoch_id: str, signing_key: str
 ) -> GetEpochResponseModel:
-    matches = [
-        epoch for epoch in await _computed_epochs(storage, org_id) if epoch.epoch_id == epoch_id
-    ]
+    persisted = await _persisted_epochs(storage, org_id)
+    candidates = persisted if persisted else await _computed_epochs(storage, org_id)
+    matches = [epoch for epoch in candidates if epoch.epoch_id == epoch_id]
     if not matches:
         raise AppError(404, "NOT_FOUND", "Epoch not found.")
     epoch = matches[0]
-    eer = EER(
-        epoch_id=epoch.epoch_id,
-        org_id=epoch.org_id,
-        start_time=epoch.start_time,
-        end_time=epoch.end_time,
-        leaf_count=epoch.leaf_count,
-        root_hash=epoch.root_hash,
-        hash_alg="sha256-binary-merkle-v1",
-        signature_by_elydora="",
-    )
-    eer.signature_by_elydora = sdk_crypto.sign_ed25519(signing_key, _eer_signable(eer))
+    artifact = await _load_json(storage, epoch.r2_epoch_key)
+    if persisted and artifact is not None and isinstance(artifact.get("eer"), dict):
+        eer = EER.model_validate(artifact["eer"])
+        if eer.epoch_id == epoch.epoch_id and eer.org_id == epoch.org_id:
+            return GetEpochResponseModel(epoch=epoch, eer=eer)
+
+    eer = sign_eer(epoch, signing_key)
     await storage.objects.put(
         epoch.r2_epoch_key,
-        json.dumps(
-            {"epoch": epoch.model_dump(mode="json"), "eer": eer.model_dump(mode="json")},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8"),
+        epoch_artifact_bytes(epoch, eer),
         "application/json",
     )
     return GetEpochResponseModel(epoch=epoch, eer=eer)
@@ -173,8 +135,6 @@ async def create_export(
 ) -> GetExportResponseModel:
     if params.start_time < 0 or params.end_time < 0 or params.start_time > params.end_time:
         raise AppError(400, "VALIDATION_ERROR", "Invalid export time range.")
-    if params.format != "json":
-        raise AppError(400, "VALIDATION_ERROR", "Only JSON compliance exports are available.")
 
     ops = await storage.db.fetch("SELECT * FROM operations")
     scoped_ops = [
@@ -195,7 +155,8 @@ async def create_export(
     ]
     now = int(time.time() * 1000)
     export_id = generate_uuid7()
-    key = f"{org_id}/exports/{export_id}.json"
+    extension = "pdf" if params.format == "pdf" else "json"
+    key = f"{org_id}/exports/{export_id}.{extension}"
     query = _export_query(params)
     payload = {
         "export_id": export_id,
@@ -206,11 +167,32 @@ async def create_export(
         "governance_verdicts": scoped_verdicts,
         "epochs": [e.model_dump(mode="json") for e in await _computed_epochs(storage, org_id)],
     }
-    await storage.objects.put(
-        key,
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-        "application/json",
-    )
+    if params.format == "pdf":
+        verdict_keys = [
+            None if v.get("r2_verdict_key") is None else str(v["r2_verdict_key"])
+            for v in scoped_verdicts
+        ]
+        verdict_bodies = [
+            body
+            for body in [await _load_json(storage, key) for key in verdict_keys]
+            if body is not None
+        ]
+        verdict_ids = {str(v["verdict_id"]) for v in scoped_verdicts}
+        intervention_log = await storage.db.fetch("SELECT * FROM intervention_log")
+        pdf_payload = {
+            **payload,
+            "verdict_bodies": verdict_bodies,
+            "intervention_log": [
+                dict(r) for r in intervention_log if str(r.get("verdict_id")) in verdict_ids
+            ],
+        }
+        await storage.objects.put(key, render_compliance_pdf(pdf_payload), "application/pdf")
+    else:
+        await storage.objects.put(
+            key,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            "application/json",
+        )
     await storage.db.execute(
         "INSERT INTO exports (export_id, org_id, status, query_params, r2_export_key, "
         "created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -251,6 +233,13 @@ async def download_export(storage: Storage, org_id: str, export_id: str) -> dict
     raw = await storage.objects.get(export.r2_export_key)
     if raw is None:
         raise AppError(404, "NOT_FOUND", "Export artifact not found.")
+    if export.r2_export_key.endswith(".pdf"):
+        return {
+            "export_id": export.export_id,
+            "content_type": "application/pdf",
+            "filename": f"{export.export_id}.pdf",
+            "body_base64": base64.b64encode(raw).decode("ascii"),
+        }
     parsed = json.loads(raw)
     return parsed if isinstance(parsed, dict) else {"export": parsed}
 

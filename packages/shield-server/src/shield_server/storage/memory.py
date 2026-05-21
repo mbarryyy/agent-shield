@@ -146,6 +146,11 @@ class MemoryDatabase:
                 if r["operation_id"] == args[0]:
                     return dict(r)
             return None
+        if s.startswith("SELECT * FROM governance_verdicts WHERE record_id"):
+            for v in self.governance_verdicts.values():
+                if v["record_id"] == args[0]:
+                    return dict(v)
+            return None
         if s.startswith("SELECT * FROM exports WHERE export_id"):
             row = self.exports.get(str(args[0]))
             return None if row is None else (dict(row) if row["org_id"] == args[1] else None)
