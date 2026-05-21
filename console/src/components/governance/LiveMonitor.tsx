@@ -46,53 +46,55 @@ export default function LiveMonitor({
           {t('governance.emptyVerdicts')}
         </div>
       ) : (
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              {['colTime', 'colCorrelation', 'colDecision', 'colRisk', 'colLatency'].map(
-                (k) => (
-                  <th
-                    key={k}
-                    className="px-4 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-dim"
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px]">
+            <thead>
+              <tr className="border-b border-border">
+                {['colTime', 'colCorrelation', 'colDecision', 'colRisk', 'colLatency'].map(
+                  (k) => (
+                    <th
+                      key={k}
+                      className="px-4 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-dim"
+                    >
+                      {t(`governance.${k}`)}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const tint = BAND_ROW[riskBand(r.risk_score)] ?? '';
+                const selected = selectedVerdictId === r.verdict_id;
+                return (
+                  <tr
+                    key={r.verdict_id}
+                    onClick={() => onSelect?.(r)}
+                    className={`border-b border-border last:border-0 ${tint} ${
+                      onSelect ? 'cursor-pointer hover:bg-surface' : ''
+                    } ${selected ? 'outline outline-1 outline-ink' : ''}`}
                   >
-                    {t(`governance.${k}`)}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const tint = BAND_ROW[riskBand(r.risk_score)] ?? '';
-              const selected = selectedVerdictId === r.verdict_id;
-              return (
-                <tr
-                  key={r.verdict_id}
-                  onClick={() => onSelect?.(r)}
-                  className={`border-b border-border last:border-0 ${tint} ${
-                    onSelect ? 'cursor-pointer hover:bg-surface' : ''
-                  } ${selected ? 'outline outline-1 outline-ink' : ''}`}
-                >
-                  <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
-                    {formatRelativeTime(r.created_at)}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[13px] text-ink break-all">
-                    {r.correlation_id}
-                  </td>
-                  <td className="px-4 py-3">
-                    <DecisionBadge decision={r.decision} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <RiskBadge score={r.risk_score} />
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
-                    {r.latency_ms != null ? `${r.latency_ms} ms` : '—'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
+                      {formatRelativeTime(r.created_at)}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[13px] text-ink break-all">
+                      {r.correlation_id}
+                    </td>
+                    <td className="px-4 py-3">
+                      <DecisionBadge decision={r.decision} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <RiskBadge score={r.risk_score} />
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
+                      {r.latency_ms != null ? `${r.latency_ms} ms` : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

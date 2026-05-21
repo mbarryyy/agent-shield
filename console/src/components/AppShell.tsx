@@ -97,7 +97,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       <div className="fixed top-0 left-0 right-0 z-30 flex items-center gap-3 px-4 h-14 bg-ink md:hidden">
         <button
           onClick={() => setSidebarOpen(true)}
-          className="p-2 -ml-2 text-[#EAEAE5]"
+          className="console-mobile-icon-button -ml-2 text-[#EAEAE5]"
           aria-label="Open menu"
         >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">

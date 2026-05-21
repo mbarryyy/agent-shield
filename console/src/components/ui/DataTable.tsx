@@ -70,32 +70,34 @@ export default function DataTable<T extends Record<string, unknown>>({
   if (isLoading) {
     return (
       <div className="border border-border">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-border">
-              {columns.map((col) => (
-                <th
-                  key={col.key}
-                  className="table-header text-left px-4 py-3"
-                  style={col.width ? { width: col.width } : undefined}
-                >
-                  {col.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i} className="border-b border-border last:border-b-0">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse min-w-[600px]">
+            <thead>
+              <tr className="border-b border-border">
                 {columns.map((col) => (
-                  <td key={col.key} className="px-4 py-3">
-                    <div className="skeleton h-4 w-3/4" />
-                  </td>
+                  <th
+                    key={col.key}
+                    className="table-header text-left px-4 py-3"
+                    style={col.width ? { width: col.width } : undefined}
+                  >
+                    {col.label}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i} className="border-b border-border last:border-b-0">
+                  {columns.map((col) => (
+                    <td key={col.key} className="px-4 py-3">
+                      <div className="skeleton h-4 w-3/4" />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
@@ -103,21 +105,23 @@ export default function DataTable<T extends Record<string, unknown>>({
   if (data.length === 0) {
     return (
       <div className="border border-border bg-surface">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-border">
-              {columns.map((col) => (
-                <th
-                  key={col.key}
-                  className="table-header text-left px-4 py-3"
-                  style={col.width ? { width: col.width } : undefined}
-                >
-                  {col.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse min-w-[600px]">
+            <thead>
+              <tr className="border-b border-border">
+                {columns.map((col) => (
+                  <th
+                    key={col.key}
+                    className="table-header text-left px-4 py-3"
+                    style={col.width ? { width: col.width } : undefined}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          </table>
+        </div>
         <div className="py-16 text-center">
           <p className="font-mono text-sm text-ink-dim">{emptyMessage}</p>
         </div>
@@ -126,7 +130,7 @@ export default function DataTable<T extends Record<string, unknown>>({
   }
 
   return (
-    <div className="border border-border overflow-hidden">
+    <div className="border border-border">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse min-w-[600px]">
           <thead>

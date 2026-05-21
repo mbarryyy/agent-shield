@@ -194,11 +194,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       )}
 
       <aside
-        className={`fixed left-0 top-0 bottom-0 bg-ink text-[#EAEAE5] flex flex-col z-50 transition-transform duration-300 ease-in-out md:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed left-0 top-0 bottom-0 bg-ink text-[#EAEAE5] flex flex-col overflow-hidden z-50 transition-transform duration-300 ease-in-out md:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ width: 'var(--sidebar-width)' }}
       >
         {/* Logo */}
-        <div className="px-5 py-6 border-b border-[rgba(234,234,229,0.1)]">
+        <div className="px-5 py-6 border-b border-[rgba(234,234,229,0.1)] flex-none">
           <Link href="/" className="flex items-center gap-3 no-underline" onClick={onClose}>
             <div className="w-8 h-8 border border-[#EAEAE5] flex items-center justify-center">
               <span className="font-mono text-sm font-bold text-[#EAEAE5]">AS</span>
@@ -214,27 +214,28 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </Link>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto py-4">
-          {sections.map((section) => (
-            <div key={section.title} className="mb-4">
-              <div className="px-5 py-2 font-mono text-[10px] font-medium tracking-[0.15em] uppercase text-[rgba(234,234,229,0.3)]">
-                {section.title}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          {/* Navigation */}
+          <nav className="py-4">
+            {sections.map((section) => (
+              <div key={section.title} className="mb-4">
+                <div className="px-5 py-2 font-mono text-[10px] font-medium tracking-[0.15em] uppercase text-[rgba(234,234,229,0.3)]">
+                  {section.title}
+                </div>
+                {section.items.map((item) => (
+                  <Link
+                    key={item.href + item.label}
+                    href={item.href}
+                    onClick={onClose}
+                    className={`sidebar-nav-item mx-2 rounded-sm ${isActive(item.href) ? 'active' : ''}`}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Link>
+                ))}
               </div>
-              {section.items.map((item) => (
-                <Link
-                  key={item.href + item.label}
-                  href={item.href}
-                  onClick={onClose}
-                  className={`sidebar-nav-item mx-2 rounded-sm ${isActive(item.href) ? 'active' : ''}`}
-                >
-                  {item.icon}
-                  {item.label}
-                </Link>
-              ))}
-            </div>
-          ))}
-        </nav>
+            ))}
+          </nav>
 
       {/* External links */}
       <div className="px-5 py-3 border-t border-[rgba(234,234,229,0.1)]">
@@ -250,7 +251,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           href="https://agent-shield.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"
+          className="sidebar-footer-link flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M6 3H3v10h10v-3M9 2h5v5M14 2L7 9" />
@@ -261,7 +262,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           href="https://docs.agent-shield.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"
+          className="sidebar-footer-link flex items-center gap-2 px-3 py-1.5 text-[rgba(234,234,229,0.6)] hover:text-[#EAEAE5] transition-colors no-underline font-mono text-[12px]"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M6 3H3v10h10v-3M9 2h5v5M14 2L7 9" />
@@ -293,7 +294,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
           <button
             onClick={logout}
-            className="p-1.5 rounded transition-colors hover:bg-[rgba(234,234,229,0.1)]"
+            className="console-mobile-icon-button p-1.5 rounded transition-colors hover:bg-[rgba(234,234,229,0.1)]"
+            aria-label={t('common.signOut')}
             title={t('common.signOut')}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="rgba(234,234,229,0.4)" strokeWidth="1.5">
@@ -302,6 +304,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </button>
         </div>
       </div>
+        </div>
     </aside>
     </>
   );
