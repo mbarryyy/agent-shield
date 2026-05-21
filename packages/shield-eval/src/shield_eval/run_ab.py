@@ -42,6 +42,8 @@ from .mock_llm import MockedLLM
 # (get_model_name_from_pipeline matches this substring in pipeline.name).
 DEFAULT_WORKER = "claude-3-haiku-20240307"
 DEFAULT_BENCHMARK_VERSION = "v1.2.2"  # AgentDojo CLI default; banking = 16u/9i
+ANTHROPIC_ENV_KEY = "ANTHROPIC_API_KEY"
+REAL_EVAL_MODEL = "claude-haiku-4-5-20251001"
 
 
 @dataclass
@@ -54,6 +56,29 @@ class ArmResult:
     utility: dict[tuple[str, str], bool] = field(default_factory=dict)
     # Shield enforced decision per pairing (W2 A1/A2; empty for native arms).
     decisions: dict[tuple[str, str], str] = field(default_factory=dict)
+
+
+def _real_llm_for_worker(worker: str) -> Any:
+    """Build a real AgentDojo-compatible LLM for models absent from ModelsEnum."""
+
+    if worker.startswith("claude-"):
+        api_key = os.environ.get(ANTHROPIC_ENV_KEY)
+        if not api_key:
+            raise ArmUnavailable(
+                f"{worker}: {ANTHROPIC_ENV_KEY} is required for real Anthropic eval"
+            )
+        from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
+        from anthropic import AsyncAnthropic
+
+        max_tokens = int(os.environ.get("SHIELD_REAL_EVAL_MAX_TOKENS", "1024"))
+        llm = AnthropicLLM(
+            AsyncAnthropic(api_key=api_key),
+            model=worker,
+            max_tokens=max_tokens,
+        )
+        llm.name = f"claude-3-haiku-20240307 ({worker})"
+        return llm
+    return worker
 
 
 def _build_suite(version: str, suite_name: str) -> Any:
@@ -105,7 +130,7 @@ def _run_arm(
                 injection_task=inj_task,
             )
         else:
-            llm = worker  # ModelsEnum string — real backend (eval.yml, W4/W5)
+            llm = _real_llm_for_worker(worker)
 
         try:
             pipeline = arm.build(llm, mock=mock, shield_wiring=shield_wiring)
@@ -239,16 +264,35 @@ def _evaluate_assert(expr: str, results: dict[str, ArmResult]) -> AssertOutcome:
 # ------------------------------- reporting -----------------------------------
 
 
-def _write_report(path: str, results: dict[str, ArmResult]) -> None:
+def _write_report(
+    path: str,
+    results: dict[str, ArmResult],
+    *,
+    backend: str = "mock",
+    model: str | None = None,
+) -> None:
+    if backend == "real":
+        scope_note = (
+            f"> Source: `shield_eval.run_ab`. **Real backend = provider model "
+            f"`{model or 'unknown'}`.** This report stores aggregate security/"
+            "> utility booleans only; raw provider traces are not included. "
+            "Scope: vs the 4 AgentDojo built-in baselines + the Axis-C "
+            "governance moat — never 'vs SOTA'. `InjectionTask6` is itself "
+            "injection-delivered (stated plainly)."
+        )
+    else:
+        scope_note = (
+            "> Source: `shield_eval.run_ab`. **MockedLLM = deterministic transcript\n"
+            "> replayed from AgentDojo's own `ground_truth` (HEAD 18b501a) — NOT a\n"
+            "> measured model.** Real, quotable ASR/utility come from real models via\n"
+            "> `eval.yml` (W4/W5). Scope: vs the 4 AgentDojo built-in baselines +\n"
+            "> the Axis-C governance moat — never 'vs SOTA'. `InjectionTask6` is\n"
+            "> itself injection-delivered (stated plainly)."
+        )
     lines = [
         "# Agent Shield — A/B run report (W1 native arms)",
         "",
-        "> Source: `shield_eval.run_ab`. **MockedLLM = deterministic transcript",
-        "> replayed from AgentDojo's own `ground_truth` (HEAD 18b501a) — NOT a",
-        "> measured model.** Real, quotable ASR/utility come from real models via",
-        "> `eval.yml` (W4/W5). Scope: vs the 4 AgentDojo built-in baselines +",
-        "> the Axis-C governance moat — never 'vs SOTA'. `InjectionTask6` is",
-        "> itself injection-delivered (stated plainly).",
+        scope_note,
         "",
         "| Arm | Status | Injection-success (security oracle) | Utility |",
         "|---|---|---|---|",
@@ -440,7 +484,7 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
             print(f"  arm {r.key}: security={r.security} utility={r.utility}")
 
     if args.out:
-        _write_report(args.out, results)
+        _write_report(args.out, results, backend=args.backend, model=args.model)
 
     exit_code = 0
     for expr in args.asserts:
