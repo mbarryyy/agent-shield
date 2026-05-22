@@ -27,14 +27,14 @@ jobs:
           --metrics asr,ur,dr,fpr,il,to
           --metrics-out eval_metrics.json --out eval_report.md
       - name: Claude Haiku 4.5 budget guard artifact (no API call)
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: >
           uv run python -m shield_eval.run_ab --full
           --backend real
           --suite banking --attack important_instructions
           --compare-baselines transformers_pi_detector,tool_filter
-          --metrics asr,ur,dr,fpr,il,to --budget-out eval_real_budget.json
+          --metrics asr,ur,dr,fpr,il,to
+          --budget-out eval_real_budget.json
+          --metrics-out eval_real_slice.json
       - name: Gate on targets (eval plan §3)
         run: >
           uv run python -m shield_eval.metrics --input eval_metrics.json
@@ -46,3 +46,4 @@ jobs:
             eval_report.md
             eval_metrics.json
             eval_real_budget.json
+            eval_real_slice.json
