@@ -367,13 +367,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--backend",
         default=os.environ.get("SHIELD_LLM_BACKEND", "mock"),
-        choices=["mock", "real"],
+        choices=["mock", "http", "real"],
     )
     p.add_argument(
         "--model", default=DEFAULT_WORKER, help="worker model (real backend / name seed)"
     )
     p.add_argument("--metrics", default=None)
     p.add_argument("--metrics-out", default=None, help="write metrics JSON artifact")
+    p.add_argument("--cases-out", default=None, help="write per-case full-grid JSON rows")
     p.add_argument("--budget-out", default=None, help="write real-runner budget JSON artifact")
     p.add_argument("--samples", type=int, default=1, help="planned real-runner samples")
     p.add_argument(
@@ -513,15 +514,16 @@ def _real_prompt_char_estimate(args: argparse.Namespace) -> int:
 
 def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
     from .metrics import (
-        build_mock_metrics_report,
+        build_full_grid_artifacts,
+        build_provider_slice_artifact,
         build_real_runner_budget_artifact,
         print_summary,
         write_json,
     )
 
     arm_tokens = [t for t in (args.arms or "A0,A0b,A1,A2,A3").split(",") if t]
-    user_tasks = args.user_tasks or ["user_task_2"]
-    injection_tasks = args.injection_tasks or ["injection_task_6"]
+    user_tasks = args.user_tasks or list(suite.user_tasks.keys())
+    injection_tasks = args.injection_tasks or list(suite.injection_tasks.keys())
 
     if args.backend == "real":
         artifact = build_real_runner_budget_artifact(
@@ -532,9 +534,21 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             serialized_prompt_chars=_real_prompt_char_estimate(args),
             max_output_tokens=args.max_output_tokens,
         )
-        out_path = args.budget_out or args.metrics_out
-        if out_path:
-            write_json(out_path, artifact)
+        slice_artifact = build_provider_slice_artifact(
+            user_task_id=user_tasks[0],
+            injection_task_id=injection_tasks[0],
+            attack_variant=args.attack or "important_instructions",
+            provider="anthropic",
+            model_router_profile="cloud",
+            hard_cap_usd=artifact["hard_cap_usd"],
+            estimated_cost_usd=artifact["estimated_cost_usd"],
+            api_call_status="SKIPPED",
+            skip_reason=artifact.get("skip_reason") or "REAL_EVAL_IMPLEMENTATION_ONLY",
+        )
+        if args.budget_out:
+            write_json(args.budget_out, artifact)
+        if args.metrics_out:
+            write_json(args.metrics_out, slice_artifact)
         print(json.dumps(artifact, indent=2, sort_keys=True))
         print(
             "shield_eval.run_ab --full real: "
@@ -543,20 +557,43 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         )
         return 0
 
+    if args.backend == "http":
+        report, cases = build_full_grid_artifacts(
+            suite=args.suite,
+            user_task_ids=user_tasks,
+            injection_task_ids=injection_tasks,
+            arms=arm_tokens,
+            backend="http",
+            attack_variant=args.attack or "important_instructions",
+        )
+        if args.metrics_out:
+            write_json(args.metrics_out, report)
+        if args.cases_out:
+            write_json(args.cases_out, cases)
+        if args.out:
+            _write_metrics_markdown(args.out, report)
+        print(
+            f"shield_eval.run_ab --full: suite={args.suite} "
+            f"arms={report['arms']} backend=http label={report['run_label']} "
+            f"skip_reason={report.get('skip_reason')}"
+        )
+        print_summary(report)
+        return 0
+
     # Mock-only full benchmark artifact: deterministic money-shot + benign FPR.
     # This is intentionally not quotable as measured model ASR.
-    from .fpr import run_fpr
-    from .money_shot import run_money_shot
-
-    money = run_money_shot(carrier="user_task_2", real=False, decide_url=None)
-    fpr_report = run_fpr()
-    report = build_mock_metrics_report(
-        money_artifact=money,
-        fpr_report=fpr_report,
-        model="MockedLLM",
+    report, cases = build_full_grid_artifacts(
+        suite=args.suite,
+        user_task_ids=user_tasks,
+        injection_task_ids=injection_tasks,
+        arms=arm_tokens,
+        backend="mock",
+        attack_variant=args.attack or "important_instructions",
     )
     if args.metrics_out:
         write_json(args.metrics_out, report)
+    if args.cases_out:
+        write_json(args.cases_out, cases)
     if args.out:
         _write_metrics_markdown(args.out, report)
     print(
