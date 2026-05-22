@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from shield_sdk.schema import GovernanceVerdict, ShieldActionRecord
 
+from shield_governance.evidence import GuardianEvidence
+
 DEFAULT_VERDICTS_PREFIX = "shield:verdicts"
 
 
@@ -44,10 +46,15 @@ class AsyncVerdictHandoff:
     phase: str
     record: ShieldActionRecord
     verdict: GovernanceVerdict
+    guardian_evidence: tuple[GuardianEvidence, ...] = ()
 
     @classmethod
     def from_record(
-        cls, record: ShieldActionRecord, verdict: GovernanceVerdict
+        cls,
+        record: ShieldActionRecord,
+        verdict: GovernanceVerdict,
+        *,
+        guardian_evidence: tuple[GuardianEvidence, ...] = (),
     ) -> AsyncVerdictHandoff:
         normalized = verdict.model_copy(
             update={
@@ -63,6 +70,7 @@ class AsyncVerdictHandoff:
             phase=record.phase.value,
             record=record,
             verdict=normalized,
+            guardian_evidence=guardian_evidence,
         )
 
     def server_fields(self) -> dict[str, str]:

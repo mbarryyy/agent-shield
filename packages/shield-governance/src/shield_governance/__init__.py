@@ -24,6 +24,7 @@ from shield_governance.evaluator import (
     EvaluatorResult,
     SbertChromaDriftDetector,
 )
+from shield_governance.evidence import GuardianEvidence, GuardianEvidenceRecorder
 from shield_governance.graph import (
     GovApp,
     build_decide_app,
@@ -34,7 +35,13 @@ from shield_governance.graph import (
     resume,
 )
 from shield_governance.model_router import ResolvedModel, ShieldModelRouter
+from shield_governance.router_guardians import (
+    RouterBackedGuardians,
+    build_router_backed_guardians,
+    make_router_backed_async_channel2_handler,
+)
 from shield_governance.supervisor import (
+    ArbitrationResult,
     GuardianSignals,
     Supervisor,
     SupervisorPolicy,
@@ -54,21 +61,27 @@ __all__ = [
     "EvaluatorConfig",
     "EvaluatorResult",
     "GovApp",
+    "GuardianEvidence",
+    "GuardianEvidenceRecorder",
     "GuardianSignals",
     "InterventionTokenRow",
     "MerkleVerification",
     "ProvenanceGraph",
     "ResolvedModel",
+    "RouterBackedGuardians",
     "SbertChromaDriftDetector",
     "ShieldModelRouter",
     "Supervisor",
     "SupervisorPolicy",
     "TokenCounter",
+    "ArbitrationResult",
     "AsyncVerdictHandoff",
     "build_decide_app",
     "build_graph",
+    "build_router_backed_guardians",
     "decide",
     "make_async_channel2_handler",
     "make_channel2_handler",
+    "make_router_backed_async_channel2_handler",
     "resume",
 ]

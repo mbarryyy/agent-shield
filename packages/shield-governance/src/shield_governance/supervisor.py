@@ -89,9 +89,16 @@ class GuardianSignals:
         return [*self.defender_reasons, *self.evaluator_reasons, *self.auditor_reasons]
 
 
-# arbitrate(signals) -> Decision. Routed through ShieldModelRouter at the call
-# site (Sonnet/Opus, conflict-only). Default = deterministic conservative.
-Arbiter = Callable[[GuardianSignals], Decision]
+@dataclass(frozen=True, slots=True)
+class ArbitrationResult:
+    decision: Decision
+    reason: VerdictReason | None = None
+
+
+# arbitrate(signals) -> Decision|ArbitrationResult. Routed through
+# ShieldModelRouter at the call site (Sonnet/Opus, conflict-only). Default =
+# deterministic conservative.
+Arbiter = Callable[[GuardianSignals], Decision | ArbitrationResult]
 
 
 def _conservative_arbiter(signals: GuardianSignals) -> Decision:
@@ -171,15 +178,24 @@ class Supervisor:
             escalate = True
         elif _is_conflict(signals, p):
             # CONFLICT → arbitrate (LLM via injected ShieldModelRouter arbiter).
-            decision = self._arbiter(signals)
-            reasons.append(
-                VerdictReason(
+            raw_arbitration = self._arbiter(signals)
+            if isinstance(raw_arbitration, ArbitrationResult):
+                decision = raw_arbitration.decision
+                arbiter_reason = raw_arbitration.reason
+            else:
+                decision = raw_arbitration
+                arbiter_reason = None
+            if arbiter_reason is None:
+                arbiter_reason = VerdictReason(
                     agent=Guardian.SUPERVISOR,
                     label="supervisor.arbitrated",
                     detail="Defender<->Evaluator conflict resolved by arbitrate()",
                     score=risk,
                 )
-            )
+            reasons.append(arbiter_reason)
+            record_evidence = getattr(self._arbiter, "record_evidence", None)
+            if callable(record_evidence):
+                record_evidence(record, decision, arbiter_reason)
             rollback = decision == Decision.BLOCK and signals.post_exec
         else:
             # No hard override / no conflict: the Defender's own decision is a
