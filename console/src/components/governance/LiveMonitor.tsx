@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { formatRelativeTime } from '@/lib/hooks';
 import type { TimelineRow } from '@/types/governance';
 import { riskBand } from '@/types/governance';
-import { DecisionBadge, RiskBadge } from './badges';
+import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
 // U2 — the live monitor. Presentational over the LOCKED timeline feed
 // (GET /v1/governance/runs/{id}/timeline rows: flat
@@ -50,7 +50,7 @@ export default function LiveMonitor({
           <table className="w-full min-w-[600px]">
             <thead>
               <tr className="border-b border-border">
-                {['colTime', 'colCorrelation', 'colDecision', 'colRisk', 'colLatency'].map(
+                {['colTime', 'colCorrelation', 'colDecision', 'colRisk', 'colLatency', 'colEvidence'].map(
                   (k) => (
                     <th
                       key={k}
@@ -88,6 +88,9 @@ export default function LiveMonitor({
                     </td>
                     <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
                       {r.latency_ms != null ? `${r.latency_ms} ms` : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <EvidenceBadge label={r.evidence_label} />
                     </td>
                   </tr>
                 );

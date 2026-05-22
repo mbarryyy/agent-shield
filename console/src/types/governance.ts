@@ -18,11 +18,37 @@ import type {
   ShieldActionRecord,
 } from '@elydora/shared';
 
+export const EVIDENCE_LABELS = [
+  'MOCKED',
+  'MEASURED',
+  'ESTIMATED',
+  'SKIPPED',
+  'PROVIDER_BACKED',
+] as const;
+export type EvidenceLabel = (typeof EVIDENCE_LABELS)[number];
+
+export interface EvidenceMetadata {
+  evidence_label?: EvidenceLabel | null;
+  evidence_note?: string | null;
+  backend?: string | null;
+  arm?: string | null;
+  api_call_status?: string | null;
+  cost_usd?: number | null;
+}
+
+export function evidenceLabelFrom(value: unknown): EvidenceLabel | null {
+  if (!value || typeof value !== 'object') return null;
+  const label = (value as { evidence_label?: unknown }).evidence_label;
+  return typeof label === 'string' && EVIDENCE_LABELS.includes(label as EvidenceLabel)
+    ? (label as EvidenceLabel)
+    : null;
+}
+
 // --- GET /v1/governance/runs/{run_id}/timeline?cursor=&limit= -------------
 // LOCKED: { rows:[{...}], cursor, total_count } (keyset-paginated,
 // org-scoped) — the live-monitor feed. Flat lightweight rows; the full
 // verdict + paired records come from /verdicts/{correlation_id}.
-export interface TimelineRow {
+export interface TimelineRow extends EvidenceMetadata {
   verdict_id: string;
   record_id: string; // server: required str
   correlation_id: string;
@@ -46,7 +72,7 @@ export interface TimelinePage {
 // Server VerdictView: verdict / pre_exec / post_exec are each dict|null
 // (opaque frozen §4 envelopes; null when not yet present / 404-adjacent).
 // Callers guard `verdict` before rendering VerdictPanel.
-export interface VerdictDetail {
+export interface VerdictDetail extends EvidenceMetadata {
   correlation_id: string;
   verdict: GovernanceVerdict | null;
   pre_exec: ShieldActionRecord | null;
@@ -104,7 +130,7 @@ export interface ShieldVerdictEvent {
 // recomputes. `$cost`/BCR are intentionally NOT here (eval/commercial
 // ESTIMATED, off the console). `prevented_loss_total` is the MEASURED
 // AgentDojo env-diff oracle ($30k on the money-shot).
-export interface CostRollup {
+export interface CostRollup extends EvidenceMetadata {
   tokens: { prompt: number; completion: number; total: number };
   decision_mix: Record<Decision, number>;
   prevented_loss_total: number;

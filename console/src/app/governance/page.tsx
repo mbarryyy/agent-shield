@@ -10,7 +10,7 @@ import { useCost } from '@/lib/hooks';
 import { useLiveGovernance } from '@/lib/useLiveGovernance';
 import { stableRowKey } from '@/lib/governanceKeys';
 import type { CostRollup, TimelineRow, VerdictDetail } from '@/types/governance';
-import { riskBand } from '@/types/governance';
+import { evidenceLabelFrom, riskBand } from '@/types/governance';
 
 const WORKFLOW_ID = process.env.NEXT_PUBLIC_GOV_WORKFLOW_ID ?? 'banking';
 const RUN_ID = process.env.NEXT_PUBLIC_GOV_RUN_ID ?? 'banking';
@@ -22,14 +22,14 @@ const RUN_ID = process.env.NEXT_PUBLIC_GOV_RUN_ID ?? 'banking';
 // InjectionTask6 money-shot; tokens=0 = the model-free decisive block.
 const NOW = 1_716_000_000_000;
 const FALLBACK_ROWS: TimelineRow[] = [
-  { verdict_id: 'v-0001', record_id: 'r-0001', correlation_id: 'corr-0001', run_id: RUN_ID, decision: 'PASS', risk_score: 0.03, latency_ms: 4, created_at: NOW - 9000 },
-  { verdict_id: 'v-0002', record_id: 'r-0002', correlation_id: 'corr-0002', run_id: RUN_ID, decision: 'ESCALATE', risk_score: 0.41, latency_ms: 7, created_at: NOW - 6000 },
-  { verdict_id: 'v-0003', record_id: 'r-0003', correlation_id: 'corr-0003', run_id: RUN_ID, decision: 'BLOCK', risk_score: 0.92, latency_ms: 6, created_at: NOW - 3000 },
+  { verdict_id: 'v-0001', record_id: 'r-0001', correlation_id: 'corr-0001', run_id: RUN_ID, decision: 'PASS', risk_score: 0.03, latency_ms: 4, created_at: NOW - 9000, evidence_label: 'MOCKED' },
+  { verdict_id: 'v-0002', record_id: 'r-0002', correlation_id: 'corr-0002', run_id: RUN_ID, decision: 'ESCALATE', risk_score: 0.41, latency_ms: 7, created_at: NOW - 6000, evidence_label: 'MOCKED' },
+  { verdict_id: 'v-0003', record_id: 'r-0003', correlation_id: 'corr-0003', run_id: RUN_ID, decision: 'BLOCK', risk_score: 0.92, latency_ms: 6, created_at: NOW - 3000, evidence_label: 'MOCKED' },
 ];
 const FALLBACK_DETAIL: Record<string, VerdictDetail> = {
-  'v-0001': { correlation_id: 'corr-0001', verdict: { correlation_id: 'corr-0001', decision: 'PASS', risk_score: 0.03, latency_ms: 4, reasons: [{ agent: 'defender', label: 'DETERMINISTIC_CLEAR', score: 0.0 }] }, pre_exec: null, post_exec: null },
-  'v-0002': { correlation_id: 'corr-0002', verdict: { correlation_id: 'corr-0002', decision: 'ESCALATE', risk_score: 0.41, reasons: [{ agent: 'defender', label: 'AMOUNT_ABOVE_BASELINE', score: 0.4 }, { agent: 'supervisor', label: 'HUMAN_REVIEW' }], obligations: { require_human: true } }, pre_exec: null, post_exec: null },
-  'v-0003': { correlation_id: 'corr-0003', verdict: { correlation_id: 'corr-0003', decision: 'BLOCK', risk_score: 0.92, reasons: [{ agent: 'defender', label: 'RECIPIENT_NOT_ALLOWLISTED', score: 0.8 }, { agent: 'evaluator', label: 'STRUCTURING', detail: '$30k pattern across run (InjectionTask6).', score: 0.95 }, { agent: 'supervisor', label: 'HARD_OVERRIDE_BLOCK', score: 0.92 }, { agent: 'auditor', label: 'PROVENANCE_RECORDED' }], obligations: { prevented_loss: 30000, require_human: true } }, pre_exec: null, post_exec: null },
+  'v-0001': { correlation_id: 'corr-0001', verdict: { correlation_id: 'corr-0001', decision: 'PASS', risk_score: 0.03, latency_ms: 4, reasons: [{ agent: 'defender', label: 'DETERMINISTIC_CLEAR', score: 0.0 }] }, pre_exec: null, post_exec: null, evidence_label: 'MOCKED' },
+  'v-0002': { correlation_id: 'corr-0002', verdict: { correlation_id: 'corr-0002', decision: 'ESCALATE', risk_score: 0.41, reasons: [{ agent: 'defender', label: 'AMOUNT_ABOVE_BASELINE', score: 0.4 }, { agent: 'supervisor', label: 'HUMAN_REVIEW' }], obligations: { require_human: true } }, pre_exec: null, post_exec: null, evidence_label: 'MOCKED' },
+  'v-0003': { correlation_id: 'corr-0003', verdict: { correlation_id: 'corr-0003', decision: 'BLOCK', risk_score: 0.92, reasons: [{ agent: 'defender', label: 'RECIPIENT_NOT_ALLOWLISTED', score: 0.8 }, { agent: 'evaluator', label: 'STRUCTURING', detail: '$30k pattern across run (InjectionTask6).', score: 0.95 }, { agent: 'supervisor', label: 'HARD_OVERRIDE_BLOCK', score: 0.92 }, { agent: 'auditor', label: 'PROVENANCE_RECORDED' }], obligations: { prevented_loss: 30000, require_human: true } }, pre_exec: null, post_exec: null, evidence_label: 'MOCKED' },
 };
 const FALLBACK_ROLLUP: CostRollup = {
   tokens: { prompt: 0, completion: 0, total: 0 },
@@ -37,6 +37,7 @@ const FALLBACK_ROLLUP: CostRollup = {
   prevented_loss_total: 30000,
   latency_p50_ms: 5,
   latency_p95_ms: 7,
+  evidence_label: 'MOCKED',
 };
 
 export default function GovernancePage() {
@@ -63,6 +64,10 @@ export default function GovernancePage() {
     ? rows.reduce((s, r) => s + r.risk_score, 0) / rows.length
     : 0;
   const sourceLabel = t(`governance.source_${live.source}`);
+  const selectedVerdict =
+    detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
+      ? { ...detail.verdict, evidence_label: detail.evidence_label }
+      : detail?.verdict;
 
   return (
     <div className="fade-in">
@@ -93,11 +98,11 @@ export default function GovernancePage() {
           <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
             {t('governance.verdictPanelTitle')}
           </div>
-          {detail?.verdict ? (
+          {selectedVerdict ? (
             <VerdictPanel
-              verdict={detail.verdict}
-              preExec={detail.pre_exec}
-              postExec={detail.post_exec}
+              verdict={selectedVerdict}
+              preExec={detail?.pre_exec ?? null}
+              postExec={detail?.post_exec ?? null}
             />
           ) : (
             <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">

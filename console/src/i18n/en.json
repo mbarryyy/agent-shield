@@ -83,6 +83,7 @@
     "colTool": "Tool",
     "colPhase": "Phase",
     "colLatency": "Latency",
+    "colEvidence": "Evidence",
     "incidentStatus_pending": "Pending",
     "incidentStatus_resolved": "Resolved",
     "incidentResolution": "Resolution",

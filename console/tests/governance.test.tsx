@@ -3,8 +3,9 @@ import { render, screen } from '@testing-library/react';
 import VerdictPanel from '@/components/governance/VerdictPanel';
 import KpiCards from '@/components/governance/KpiCards';
 import ProvenanceDAG from '@/components/governance/ProvenanceDAG';
+import LiveMonitor from '@/components/governance/LiveMonitor';
 import type { GovernanceVerdict } from '@elydora/shared';
-import type { CostRollup, ProvenanceGraph } from '@/types/governance';
+import type { CostRollup, ProvenanceGraph, TimelineRow } from '@/types/governance';
 
 // W3 governance-component smoke tests — closes part of the G3-NOTE
 // tracked-debt while protecting the demo-centerpiece invariants:
@@ -34,6 +35,47 @@ describe('VerdictPanel', () => {
     expect(screen.getByText('supervisor')).toBeInTheDocument();
     expect(screen.getByText('auditor')).toBeInTheDocument();
   });
+
+  it('renders provider, model, latency, evidence label, and record token evidence when present', () => {
+    const verdict: GovernanceVerdict & { evidence_label: 'PROVIDER_BACKED' } = {
+      correlation_id: 'c-provider',
+      decision: 'ESCALATE',
+      risk_score: 0.42,
+      latency_ms: 90,
+      evidence_label: 'PROVIDER_BACKED',
+      reasons: [
+        {
+          agent: 'evaluator',
+          label: 'MODEL_POLICY_REVIEW',
+          model_id: 'claude-haiku-4-5-20251001',
+          served_via: 'anthropic',
+        },
+      ],
+    };
+    render(
+      <VerdictPanel
+        verdict={verdict}
+        preExec={{
+          run_id: 'run-provider',
+          phase: 'pre_exec',
+          payload: {
+            llm: {
+              model: 'claude-haiku-4-5-20251001',
+              prompt_tokens: 150,
+              completion_tokens: 40,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('PROVIDER_BACKED')).toBeInTheDocument();
+    expect(screen.getByText(/latency 90 ms/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/claude-haiku-4-5-20251001/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/anthropic/i)).toBeInTheDocument();
+    expect(screen.getByText(/pre_exec llm/i)).toBeInTheDocument();
+    expect(screen.getByText(/150 prompt \/ 40 completion/i)).toBeInTheDocument();
+  });
 });
 
 describe('KpiCards', () => {
@@ -50,6 +92,58 @@ describe('KpiCards', () => {
     expect(screen.getByText('$30,000')).toBeInTheDocument();
     // 0 tokens = the model-free decisive block (honest, rendered verbatim).
     expect(screen.getByText(/0 tokens/i)).toBeInTheDocument();
+  });
+
+  it('surfaces the rollup evidence label and token breakdown without recomputing cost', () => {
+    const rollup: CostRollup & { evidence_label: 'MEASURED'; cost_usd: number } = {
+      tokens: { prompt: 120, completion: 40, total: 160 },
+      decision_mix: { PASS: 1, ALERT: 0, BLOCK: 1, ESCALATE: 1, ROLLBACK: 0, REWRITE: 0 },
+      prevented_loss_total: 30000,
+      latency_p50_ms: 8,
+      latency_p95_ms: 21,
+      evidence_label: 'MEASURED',
+      cost_usd: 0.0123,
+    };
+    render(<KpiCards rollup={rollup} />);
+
+    expect(screen.getByText('MEASURED')).toBeInTheDocument();
+    expect(screen.getByText(/160 tokens/i)).toBeInTheDocument();
+    expect(screen.getByText(/120 prompt \/ 40 completion/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$0.01 cost/i)).toBeInTheDocument();
+  });
+});
+
+describe('LiveMonitor evidence labels', () => {
+  it('renders row-level evidence labels distinctly from the data-source label', () => {
+    const rows: Array<TimelineRow & { evidence_label: 'MOCKED' | 'SKIPPED' }> = [
+      {
+        verdict_id: 'v1',
+        record_id: 'r1',
+        correlation_id: 'corr-mocked',
+        run_id: 'run-1',
+        decision: 'BLOCK',
+        risk_score: 0.92,
+        latency_ms: 18,
+        created_at: Date.now(),
+        evidence_label: 'MOCKED',
+      },
+      {
+        verdict_id: 'v2',
+        record_id: 'r2',
+        correlation_id: 'corr-skipped',
+        run_id: 'run-1',
+        decision: 'PASS',
+        risk_score: 0.03,
+        latency_ms: null,
+        created_at: Date.now(),
+        evidence_label: 'SKIPPED',
+      },
+    ];
+
+    render(<LiveMonitor rows={rows} />);
+
+    expect(screen.getByText('MOCKED')).toBeInTheDocument();
+    expect(screen.getByText('SKIPPED')).toBeInTheDocument();
   });
 });
 

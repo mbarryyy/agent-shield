@@ -17,7 +17,7 @@ import {
 } from '@/lib/hooks';
 import { stableRowKey } from '@/lib/governanceKeys';
 import type { CostRollup, ProvenanceGraph, TimelineRow, VerdictDetail } from '@/types/governance';
-import { riskBand } from '@/types/governance';
+import { evidenceLabelFrom, riskBand } from '@/types/governance';
 
 // PRE-RECORDED-DEMO FALLBACK (data-layer resilience ONLY — used if the
 // server READ returns nothing/errors; NOT a zero-backend mode). Typed
@@ -31,14 +31,15 @@ function fallbackRollup(): CostRollup {
     prevented_loss_total: 30000,
     latency_p50_ms: 5,
     latency_p95_ms: 7,
+    evidence_label: 'MOCKED',
   };
 }
 function fallbackTimeline(runId: string): TimelineRow[] {
   return [
-    { verdict_id: 'v-run-0001', record_id: 'r-0001', correlation_id: 'corr-0001', run_id: runId, decision: 'PASS', risk_score: 0.03, latency_ms: 4, created_at: 1_716_000_000_000 },
-    { verdict_id: 'v-run-0002', record_id: 'r-0002', correlation_id: 'corr-0002', run_id: runId, decision: 'PASS', risk_score: 0.05, latency_ms: 6, created_at: 1_716_000_001_000 },
-    { verdict_id: 'v-run-0003', record_id: 'r-0003', correlation_id: 'corr-0003', run_id: runId, decision: 'PASS', risk_score: 0.04, latency_ms: 5, created_at: 1_716_000_002_000 },
-    { verdict_id: 'v-run-0004', record_id: 'r-0004', correlation_id: 'corr-0004', run_id: runId, decision: 'BLOCK', risk_score: 0.92, latency_ms: 7, created_at: 1_716_000_003_000 },
+    { verdict_id: 'v-run-0001', record_id: 'r-0001', correlation_id: 'corr-0001', run_id: runId, decision: 'PASS', risk_score: 0.03, latency_ms: 4, created_at: 1_716_000_000_000, evidence_label: 'MOCKED' },
+    { verdict_id: 'v-run-0002', record_id: 'r-0002', correlation_id: 'corr-0002', run_id: runId, decision: 'PASS', risk_score: 0.05, latency_ms: 6, created_at: 1_716_000_001_000, evidence_label: 'MOCKED' },
+    { verdict_id: 'v-run-0003', record_id: 'r-0003', correlation_id: 'corr-0003', run_id: runId, decision: 'PASS', risk_score: 0.04, latency_ms: 5, created_at: 1_716_000_002_000, evidence_label: 'MOCKED' },
+    { verdict_id: 'v-run-0004', record_id: 'r-0004', correlation_id: 'corr-0004', run_id: runId, decision: 'BLOCK', risk_score: 0.92, latency_ms: 7, created_at: 1_716_000_003_000, evidence_label: 'MOCKED' },
   ];
 }
 function fallbackDetail(): VerdictDetail {
@@ -57,6 +58,7 @@ function fallbackDetail(): VerdictDetail {
     },
     pre_exec: null,
     post_exec: null,
+    evidence_label: 'MOCKED',
   };
 }
 function fallbackGraph(runId: string): ProvenanceGraph {
@@ -101,6 +103,10 @@ export default function GovernanceRunShell() {
     ? rows.reduce((total, row) => total + row.risk_score, 0) / rows.length
     : 0;
   const pendingIncidents = incidents.filter((incident) => incident.status === 'pending');
+  const selectedVerdict =
+    detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
+      ? { ...detail.verdict, evidence_label: detail.evidence_label }
+      : detail?.verdict;
 
   if (!runId) return null;
 
@@ -141,11 +147,11 @@ export default function GovernanceRunShell() {
           <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
             {t('governance.verdictPanelTitle')}
           </div>
-          {detail?.verdict ? (
+          {selectedVerdict ? (
             <VerdictPanel
-              verdict={detail.verdict}
-              preExec={detail.pre_exec}
-              postExec={detail.post_exec}
+              verdict={selectedVerdict}
+              preExec={detail?.pre_exec ?? null}
+              postExec={detail?.post_exec ?? null}
             />
           ) : (
             <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
