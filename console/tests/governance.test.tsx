@@ -76,6 +76,42 @@ describe('VerdictPanel', () => {
     expect(screen.getByText(/pre_exec llm/i)).toBeInTheDocument();
     expect(screen.getByText(/150 prompt \/ 40 completion/i)).toBeInTheDocument();
   });
+
+  it('renders server guardian evidence rows without relying on verdict reasons', () => {
+    const verdict: GovernanceVerdict & { evidence_label: 'MOCKED' } = {
+      correlation_id: 'c-guardian-evidence',
+      decision: 'ALERT',
+      risk_score: 0.42,
+      evidence_label: 'MOCKED',
+      reasons: [],
+    };
+    render(
+      <VerdictPanel
+        verdict={verdict}
+        guardianEvidence={[
+          {
+            record_id: 'r-guardian',
+            correlation_id: 'c-guardian-evidence',
+            guardian: 'auditor',
+            decision: 'ALERT',
+            reasons: ['ARQ audit queue requested'],
+            model_id: 'fixture-auditor-v1',
+            served_via: 'local',
+            prompt_tokens: 3,
+            completion_tokens: 2,
+            latency_ms: 4.5,
+            cost_usd: 0,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('MOCKED')).toBeInTheDocument();
+    expect(screen.getByText('ARQ audit queue requested')).toBeInTheDocument();
+    expect(screen.getByText(/fixture-auditor-v1/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 prompt \/ 2 completion/i)).toBeInTheDocument();
+    expect(screen.getByText(/4.5 ms/i)).toBeInTheDocument();
+  });
 });
 
 describe('KpiCards', () => {

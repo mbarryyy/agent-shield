@@ -7,6 +7,7 @@ import type {
   ShieldActionRecord,
   VerdictReason,
 } from '@elydora/shared';
+import type { GuardianEvidenceRow } from '@/types/governance';
 import { evidenceLabelFrom } from '@/types/governance';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
@@ -18,18 +19,21 @@ const GUARDIANS: Guardian[] = ['defender', 'evaluator', 'supervisor', 'auditor']
 function GuardianLane({
   guardian,
   reasons,
+  evidenceRows,
   noSignal,
 }: {
   guardian: Guardian;
   reasons: VerdictReason[];
+  evidenceRows: GuardianEvidenceRow[];
   noSignal: string;
 }) {
+  const hasSignal = reasons.length > 0 || evidenceRows.length > 0;
   return (
     <div className="border border-border p-3">
       <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim mb-2">
         {guardian}
       </div>
-      {reasons.length === 0 ? (
+      {!hasSignal ? (
         <div className="font-mono text-[12px] text-ink-dim italic">{noSignal}</div>
       ) : (
         <ul className="space-y-1.5">
@@ -54,6 +58,29 @@ function GuardianLane({
               )}
             </li>
           ))}
+          {evidenceRows.map((row, i) => (
+            <li
+              key={`${guardian}-evidence-${i}`}
+              className="font-mono text-[12px] text-ink"
+            >
+              <span className="uppercase tracking-wider">{row.decision}</span>
+              {row.reasons.map((reason) => (
+                <div key={reason} className="text-ink-dim normal-case mt-0.5 break-words">
+                  {reason}
+                </div>
+              ))}
+              <div className="text-ink-dim normal-case mt-0.5 break-words">
+                {row.prompt_tokens} prompt / {row.completion_tokens} completion
+                <span> · {row.latency_ms} ms</span>
+                {row.served_via && <span> · {row.served_via}</span>}
+              </div>
+              {row.model_id && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  model {row.model_id}
+                </div>
+              )}
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -64,10 +91,12 @@ export default function VerdictPanel({
   verdict,
   preExec,
   postExec,
+  guardianEvidence = [],
 }: {
   verdict: GovernanceVerdict;
   preExec?: ShieldActionRecord | null;
   postExec?: ShieldActionRecord | null;
+  guardianEvidence?: GuardianEvidenceRow[];
 }) {
   const { t } = useTranslation();
   const reasons = verdict.reasons ?? [];
@@ -98,6 +127,7 @@ export default function VerdictPanel({
             key={g}
             guardian={g}
             reasons={reasons.filter((r) => r.agent === g)}
+            evidenceRows={guardianEvidence.filter((row) => row.guardian === g)}
             noSignal={t('governance.noSignal')}
           />
         ))}
