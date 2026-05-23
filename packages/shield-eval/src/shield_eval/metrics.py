@@ -570,7 +570,13 @@ def build_provider_slice_artifact(
 
     status = api_call_status.upper()
     executed = status == "EXECUTED"
+    if executed and per_guardian is None:
+        raise ValueError("PROVIDER_BACKED artifacts require explicit per_guardian rows")
     guardians = per_guardian if per_guardian is not None else _default_slice_guardians()
+    reported_a0_latency_ms = a0_latency_ms if executed else 0.0
+    reported_a2_latency_ms = a2_latency_ms if executed else 0.0
+    reported_actual_cost_usd = actual_cost_usd if executed else 0.0
+    reported_prevented_loss_usd = prevented_loss_usd if executed else 0.0
     prompt_tokens = sum(_int(g.get("prompt_tokens")) for g in guardians)
     completion_tokens = sum(_int(g.get("completion_tokens")) for g in guardians)
     artifact: dict[str, Any] = {
@@ -590,28 +596,28 @@ def build_provider_slice_artifact(
         "budget": {
             "hard_cap_usd": hard_cap_usd,
             "estimated_cost_usd": estimated_cost_usd,
-            "actual_cost_usd": actual_cost_usd if executed else 0.0,
+            "actual_cost_usd": reported_actual_cost_usd,
         },
         "arms": {
             "A0": {
                 "security": None,
                 "utility": None,
-                "latency_ms": a0_latency_ms,
+                "latency_ms": reported_a0_latency_ms,
                 "per_guardian": [],
             },
             "A2": {
                 "security": None,
                 "utility": None,
-                "latency_ms": a2_latency_ms,
+                "latency_ms": reported_a2_latency_ms,
                 "per_guardian": guardians,
             },
         },
         "totals": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "latency_ms": a0_latency_ms + a2_latency_ms,
-            "cost_usd": actual_cost_usd if executed else 0.0,
-            "prevented_loss_usd": prevented_loss_usd,
+            "latency_ms": reported_a0_latency_ms + reported_a2_latency_ms,
+            "cost_usd": reported_actual_cost_usd,
+            "prevented_loss_usd": reported_prevented_loss_usd,
         },
     }
     if not executed:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from shield_eval import metrics
 
 
@@ -38,6 +39,59 @@ def test_provider_slice_skipped_artifact_matches_required_schema() -> None:
         "auditor",
     ]
     assert all(g["cost_usd"] == 0.0 for g in guardians)
+    required_guardian_fields = {
+        "guardian",
+        "decision",
+        "model_id",
+        "served_via",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_ms",
+        "cost_usd",
+        "reasons",
+    }
+    assert all(set(g) == required_guardian_fields for g in guardians)
+
+
+def test_provider_slice_skipped_artifact_drops_measured_totals() -> None:
+    artifact = metrics.build_provider_slice_artifact(
+        user_task_id="user_task_2",
+        injection_task_id="injection_task_6",
+        attack_variant="important_instructions",
+        provider="anthropic",
+        model_router_profile="cloud",
+        hard_cap_usd=5.0,
+        estimated_cost_usd=5.25,
+        api_call_status="SKIPPED",
+        actual_cost_usd=0.03,
+        a0_latency_ms=1200.0,
+        a2_latency_ms=1800.0,
+        prevented_loss_usd=30_000.0,
+        skip_reason="REAL_EVAL_SKIPPED_BUDGET_GUARD",
+    )
+
+    assert artifact["evidence_label"] == "SKIPPED"
+    assert artifact["budget"]["actual_cost_usd"] == 0.0
+    assert artifact["arms"]["A0"]["latency_ms"] == 0.0
+    assert artifact["arms"]["A2"]["latency_ms"] == 0.0
+    assert artifact["totals"]["latency_ms"] == 0.0
+    assert artifact["totals"]["cost_usd"] == 0.0
+    assert artifact["totals"]["prevented_loss_usd"] == 0.0
+
+
+def test_provider_slice_executed_requires_explicit_guardian_rows() -> None:
+    with pytest.raises(ValueError, match="explicit per_guardian"):
+        metrics.build_provider_slice_artifact(
+            user_task_id="user_task_2",
+            injection_task_id="injection_task_6",
+            attack_variant="important_instructions",
+            provider="anthropic",
+            model_router_profile="cloud",
+            hard_cap_usd=5.0,
+            estimated_cost_usd=0.04,
+            actual_cost_usd=0.03,
+            api_call_status="EXECUTED",
+        )
 
 
 def test_provider_slice_provider_backed_fixture_schema_records_usage() -> None:
@@ -89,3 +143,18 @@ def test_provider_slice_provider_backed_fixture_schema_records_usage() -> None:
     assert artifact["totals"]["latency_ms"] == 3000.0
     assert artifact["totals"]["cost_usd"] == 0.03
     assert artifact["totals"]["prevented_loss_usd"] == 30_000.0
+    assert all(
+        set(g)
+        == {
+            "guardian",
+            "decision",
+            "model_id",
+            "served_via",
+            "prompt_tokens",
+            "completion_tokens",
+            "latency_ms",
+            "cost_usd",
+            "reasons",
+        }
+        for g in artifact["arms"]["A2"]["per_guardian"]
+    )
