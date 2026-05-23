@@ -14,7 +14,9 @@
 import type {
   Decision,
   GovernanceVerdict,
+  Guardian,
   Phase,
+  ServedVia,
   ShieldActionRecord,
 } from '@elydora/shared';
 
@@ -66,9 +68,24 @@ export interface TimelinePage {
   total_count: number;
 }
 
+export interface GuardianEvidenceRow {
+  record_id: string;
+  correlation_id: string;
+  guardian: Guardian;
+  decision: Decision;
+  reasons: string[];
+  model_id: string | null;
+  served_via: ServedVia | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  latency_ms: number;
+  cost_usd: number;
+}
+
 // --- GET /v1/governance/verdicts/{correlation_id} ------------------------
 // LOCKED: { correlation_id, verdict:<SIGNED §4 GovernanceVerdict JSON>,
-// pre_exec:<§4 record JSON>, post_exec:<§4 record JSON> } (404 if unknown).
+// pre_exec:<§4 record JSON>, post_exec:<§4 record JSON>,
+// guardian_evidence:[server-owned per-guardian rows] } (404 if unknown).
 // Server VerdictView: verdict / pre_exec / post_exec are each dict|null
 // (opaque frozen §4 envelopes; null when not yet present / 404-adjacent).
 // Callers guard `verdict` before rendering VerdictPanel.
@@ -77,6 +94,7 @@ export interface VerdictDetail extends EvidenceMetadata {
   verdict: GovernanceVerdict | null;
   pre_exec: ShieldActionRecord | null;
   post_exec: ShieldActionRecord | null;
+  guardian_evidence?: GuardianEvidenceRow[];
 }
 
 // --- GET /v1/governance/runs/{run_id}/provenance ------------------------
