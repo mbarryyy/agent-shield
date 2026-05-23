@@ -102,6 +102,7 @@ class AsyncVerdictWorker:
                 handoff.record,
                 handoff.verdict,
                 self._settings,
+                guardian_evidence=handoff.guardian_evidence,
             )
 
         self._handler = make_async_channel2_handler(

@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 
 import shield_sdk.canonical as canonical
+from shield_governance.evidence import GuardianEvidence
 from shield_sdk.crypto import GENESIS_CHAIN_HASH
 from shield_sdk.schema import GovernanceVerdict, Phase, ShieldActionRecord
 
@@ -67,6 +69,31 @@ def _now_ms() -> int:
 
 def _json(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def guardian_evidence_key(verdict_key: str) -> str:
+    return f"{verdict_key}.guardian_evidence"
+
+
+def _guardian_evidence_payload(
+    rec: ShieldActionRecord, rows: Sequence[GuardianEvidence]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "record_id": rec.record_id,
+            "correlation_id": rec.correlation_id,
+            "guardian": row.guardian.value,
+            "decision": row.decision.value,
+            "reasons": list(row.reasons),
+            "model_id": row.model_id,
+            "served_via": None if row.served_via is None else row.served_via.value,
+            "prompt_tokens": row.prompt_tokens,
+            "completion_tokens": row.completion_tokens,
+            "latency_ms": row.latency_ms,
+            "cost_usd": row.cost_usd,
+        }
+        for row in rows
+    ]
 
 
 def _validate(rec: ShieldActionRecord, received_at: int, expected_phase: Phase) -> None:
@@ -285,6 +312,8 @@ async def publish_async_verdict(
     rec: ShieldActionRecord,
     verdict: GovernanceVerdict,
     settings: Settings,
+    *,
+    guardian_evidence: Sequence[GuardianEvidence] = (),
 ) -> GovernanceVerdict:
     """Server-owned boundary for late Channel-2 governance verdicts.
 
@@ -307,6 +336,13 @@ async def publish_async_verdict(
     await storage.objects.put(
         verdict_key, signed.model_dump_json().encode("utf-8"), "application/json"
     )
+    evidence_payload = _guardian_evidence_payload(rec, guardian_evidence)
+    if evidence_payload:
+        await storage.objects.put(
+            guardian_evidence_key(verdict_key),
+            _json(evidence_payload).encode("utf-8"),
+            "application/json",
+        )
     sql, args = _governance_verdict_insert(rec, signed, verdict_key, _now_ms())
     await storage.db.execute(sql, *args)
     await _fan_verdicts(storage, rec, signed)

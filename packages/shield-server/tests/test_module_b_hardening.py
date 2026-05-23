@@ -12,9 +12,19 @@ import json
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
 from fastapi.testclient import TestClient
-from shield_sdk.schema import ActionRef, Decision, GovernanceVerdict, Phase, ShieldActionRecord
+from shield_governance.evidence import GuardianEvidence
+from shield_sdk.schema import (
+    ActionRef,
+    Decision,
+    GovernanceVerdict,
+    Guardian,
+    Phase,
+    ServedVia,
+    ShieldActionRecord,
+)
 from shield_server import agents as agent_svc
 from shield_server import governance as governance_svc
+from shield_server import reads as reads_svc
 from shield_server.config import CONSUMER_GROUPS, Settings
 from shield_server.governance import record
 from shield_server.merkle import merkle_root
@@ -125,6 +135,64 @@ async def test_async_verdict_publication_is_signed_persisted_and_streamed(
     assert json.loads(fields["verdict"])["signature_by_shield"]
     for group in CONSUMER_GROUPS:
         assert ("shield:verdicts:banking", group) in storage.cache.groups  # type: ignore[attr-defined]
+
+
+async def test_async_verdict_publication_persists_guardian_evidence_sidecar(
+    storage: Storage, settings: Settings
+) -> None:
+    await _register(storage)
+    rec = _signed_record()
+    await record(storage, rec, settings)
+    unsigned = GovernanceVerdict(
+        record_id="wrong-record",
+        correlation_id="wrong-correlation",
+        run_id="wrong-run",
+        decision=Decision.BLOCK,
+        risk_score=0.93,
+        reasons=[],
+    )
+
+    evidence = (
+        GuardianEvidence(
+            record_id="wrong-record",
+            correlation_id="wrong-correlation",
+            guardian=Guardian.EVALUATOR,
+            decision=Decision.BLOCK,
+            reasons=("C1 malicious transfer risk", "F8 suspicious recipient"),
+            model_id="fixture-evaluator-v1",
+            served_via=ServedVia.LOCAL,
+            prompt_tokens=17,
+            completion_tokens=5,
+            latency_ms=12.5,
+            cost_usd=0.0,
+        ),
+    )
+
+    signed = await governance_svc.publish_async_verdict(
+        storage, rec, unsigned, settings, guardian_evidence=evidence
+    )
+    rows = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    row = next(r for r in rows if r["verdict_id"] == signed.verdict_id)
+    sidecar_key = f"{row['r2_verdict_key']}.guardian_evidence"
+    stored = json.loads((await storage.objects.get(sidecar_key)).decode())
+    assert stored == [
+        {
+            "record_id": rec.record_id,
+            "correlation_id": rec.correlation_id,
+            "guardian": "evaluator",
+            "decision": "BLOCK",
+            "reasons": ["C1 malicious transfer risk", "F8 suspicious recipient"],
+            "model_id": "fixture-evaluator-v1",
+            "served_via": "local",
+            "prompt_tokens": 17,
+            "completion_tokens": 5,
+            "latency_ms": 12.5,
+            "cost_usd": 0.0,
+        }
+    ]
+
+    view = await reads_svc.verdict_by_correlation(storage, ORG, rec.correlation_id)
+    assert view.guardian_evidence == stored
 
 
 def test_epoch_routes_return_epoch_and_signed_eer_shape(client: TestClient) -> None:
