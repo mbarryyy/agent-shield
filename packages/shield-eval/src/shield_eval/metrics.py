@@ -358,24 +358,37 @@ def build_full_grid_metrics_report(
     )
 
     metric_label = evidence_label
-    # F1 (Phase F, EM-2): a 3rd evidence_label branch — ``MEASURED-INLINE-DECIDE``.
-    # The values below come from REAL benchmark_suite_with_injections execution
-    # via decide.real_server_transport() (the inline /decide path), NOT from
-    # a template. Pre-Phase-A the inline /decide is still the 2-node
-    # deterministic graph, so this measures THAT surface honestly; post-Phase-A
-    # the same code path will measure the router-backed 4-guardian surface.
-    measured = metric_label == "MEASURED-INLINE-DECIDE"
+    # F1 (Phase F, EM-2): ``MEASURED-INLINE-DECIDE`` — values from REAL
+    # benchmark_suite_with_injections via decide.real_server_transport()
+    # with the MockedLLM worker (keyless, CI-runnable).
+    # F2 (Phase F, EM-3): ``MEASURED-REAL-MODEL`` — same plumbing as F1
+    # but with the REAL provider model as the worker LLM (M3 execution —
+    # gated on ``--execute-real-run`` + ``ANTHROPIC_API_KEY``; NEVER
+    # entered in CI without an explicit M3 flip).
+    # Both labels are "MEASURED" against the AgentDojo oracle; what differs
+    # is whether the worker is MockedLLM (F1) or a real provider (F2/M3).
+    # NEVER fabricated; pre-Phase-A vs post-Phase-A nuance handled by the
+    # source strings below.
+    measured_inline = metric_label == "MEASURED-INLINE-DECIDE"
+    measured_real = metric_label == "MEASURED-REAL-MODEL"
+    measured = measured_inline or measured_real
     populated = metric_label == "MOCKED" or measured
-    asr_source = (
-        "Full 16x9 banking grid under CI mock path"
-        if metric_label == "MOCKED"
-        else (
+    if metric_label == "MOCKED":
+        asr_source = "Full 16x9 banking grid under CI mock path"
+    elif measured_inline:
+        asr_source = (
             "MEASURED — AgentDojo security() oracle across the full grid via "
-            "the real shield decide() (decide.real_server_transport())"
-            if measured
-            else "Full-grid backend path was not executed"
+            "the real shield decide() (decide.real_server_transport()) with "
+            "the deterministic MockedLLM worker (F1)"
         )
-    )
+    elif measured_real:
+        asr_source = (
+            "MEASURED — AgentDojo security() oracle across the full grid via "
+            "the real shield decide() with a REAL provider model as worker "
+            "(F2 wiring; M3 execution via --execute-real-run + protected key)"
+        )
+    else:
+        asr_source = "Full-grid backend path was not executed"
     values = {
         "asr": _metric(
             _ratio(attack_successes, attack_total),
@@ -486,19 +499,29 @@ def build_full_grid_metrics_report(
         },
         "notes": (
             [
-                "MEASURED-INLINE-DECIDE: per-cell oracle scoring via "
+                "MEASURED-INLINE-DECIDE (F1): per-cell oracle scoring via "
                 "decide.real_server_transport() — real shield_server.create_app "
                 "+ load_governance_app() in-process. Inline /decide measures the "
                 "deployed gov surface (2-node pre-Phase-A; router-backed "
-                "post-Phase-A — no code change here).",
-                "Provider-backed real-model ASR remains a future step (the "
-                "real-runner slice runs no Anthropic API calls in CI).",
+                "post-Phase-A — no code change here). Worker = MockedLLM (keyless).",
+                "Provider-backed real-model ASR remains a future step (M3 = AndyHu).",
             ]
-            if metric_label == "MEASURED-INLINE-DECIDE"
-            else [
-                "Default full-grid evidence is MOCKED and CI-friendly.",
-                "Provider-backed execution requires an explicit later run.",
-            ]
+            if measured_inline
+            else (
+                [
+                    "MEASURED-REAL-MODEL (F2 wiring; M3 execution): per-cell "
+                    "oracle scoring via decide.real_server_transport() with a "
+                    "REAL provider model as worker LLM. Gated on "
+                    "--execute-real-run + ANTHROPIC_API_KEY + budget OK; default "
+                    "OFF, CI never enters this branch. Quotable only after an "
+                    "explicit M3 run in a protected environment.",
+                ]
+                if measured_real
+                else [
+                    "Default full-grid evidence is MOCKED and CI-friendly.",
+                    "Provider-backed execution requires an explicit later run.",
+                ]
+            )
         ),
     }
     if skip_reason:
