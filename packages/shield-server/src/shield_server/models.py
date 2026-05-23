@@ -314,6 +314,7 @@ class VerdictView(BaseModel):
     verdict: dict[str, Any] | None = None
     pre_exec: dict[str, Any] | None = None
     post_exec: dict[str, Any] | None = None
+    guardian_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProvenanceNode(BaseModel):

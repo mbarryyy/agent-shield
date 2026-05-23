@@ -115,6 +115,7 @@ class AsyncVerdictWorker:
                 handoff.record,
                 handoff.verdict,
                 self._settings,
+                guardian_evidence=handoff.guardian_evidence,
             )
 
         key_resolver = self._build_key_resolver()

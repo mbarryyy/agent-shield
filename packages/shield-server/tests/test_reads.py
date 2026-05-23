@@ -187,8 +187,15 @@ def test_console_pact_http_shapes(client: TestClient) -> None:
 
     vv = client.get(f"/v1/governance/verdicts/{corr}")
     assert vv.status_code == 200
-    assert set(vv.json()) == {"correlation_id", "verdict", "pre_exec", "post_exec"}
+    assert set(vv.json()) == {
+        "correlation_id",
+        "verdict",
+        "pre_exec",
+        "post_exec",
+        "guardian_evidence",
+    }
     assert vv.json()["verdict"]["decision"] == "PASS"
+    assert vv.json()["guardian_evidence"] == []
 
     pr = client.get("/v1/governance/runs/run-pact/provenance")
     assert pr.status_code == 200
