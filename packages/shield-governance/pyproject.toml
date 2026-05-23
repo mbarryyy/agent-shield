@@ -1,7 +1,7 @@
 [project]
 name = "shield-governance"
 version = "0.1.0"
-description = "Agent Shield Layer-2: LangGraph 4-guardian graph + ShieldModelRouter (zero-egress local-serving moat)"
+description = "Agent Shield Layer-2: deterministic Defender sync gate + async router-backed Channel-2 handler (Evaluator create_agent LLM agent per M2 Phase B; Supervisor/Auditor single-prompt scaffold) + ShieldModelRouter (zero-egress local-serving moat)"
 requires-python = ">=3.11"
 dependencies = [
     "shield-sdk",
