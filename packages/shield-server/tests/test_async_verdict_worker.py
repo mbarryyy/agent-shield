@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 
 import pytest
-import shield_server.async_verdict_worker as worker_mod
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
+import shield_server.async_verdict_worker as worker_mod
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from shield_governance.auditor import Auditor
