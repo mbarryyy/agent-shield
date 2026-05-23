@@ -43,7 +43,7 @@ class RouterTextClient:
     async def acomplete(self, prompt: str) -> RouterCallMeasurement:
         started = time.perf_counter()
         resolved, client = self._resolved_client()
-        raw = _invoke_text_client(client, resolved, prompt)
+        raw = _invoke_text_client(client, resolved, prompt, prefer_async=True)
         if inspect.isawaitable(raw):
             raw = await raw
         return self._measurement(resolved, raw, started)
@@ -51,7 +51,7 @@ class RouterTextClient:
     def complete(self, prompt: str) -> RouterCallMeasurement:
         started = time.perf_counter()
         resolved, client = self._resolved_client()
-        raw = _invoke_text_client(client, resolved, prompt)
+        raw = _invoke_text_client(client, resolved, prompt, prefer_async=False)
         if inspect.isawaitable(raw):
             raise RuntimeError("router role returned an async client for a synchronous call")
         return self._measurement(resolved, raw, started)
@@ -73,7 +73,27 @@ class RouterTextClient:
         )
 
 
-def _invoke_text_client(client: object, resolved: ResolvedModel, prompt: str) -> object:
+def _invoke_text_client(
+    client: object,
+    resolved: ResolvedModel,
+    prompt: str,
+    *,
+    prefer_async: bool = False,
+) -> object:
+    # Phase B / ADR-0009: ``model_factory`` now returns a LangChain
+    # ``BaseChatModel`` (``ChatAnthropic`` / ``ChatOpenAI``). Prefer the
+    # ``invoke`` / ``ainvoke`` shape — this is the same callable
+    # ``langchain.agents.create_agent`` wraps under the hood. Pre-Phase-B
+    # raw-SDK clients (``anthropic.Anthropic`` / ``openai.OpenAI``) and
+    # test mocks (``.complete``) keep working via the legacy shapes below.
+    if prefer_async:
+        ainvoke = getattr(client, "ainvoke", None)
+        if callable(ainvoke):
+            return ainvoke(prompt)
+    invoke = getattr(client, "invoke", None)
+    if callable(invoke):
+        return invoke(prompt)
+
     complete = getattr(client, "complete", None)
     if callable(complete):
         return complete(
@@ -107,8 +127,8 @@ def _invoke_text_client(client: object, resolved: ResolvedModel, prompt: str) ->
         return chat_create(**kwargs)
 
     raise TypeError(
-        f"router client for role {resolved.role!r} must expose complete(), "
-        "messages.create(), or chat.completions.create()"
+        f"router client for role {resolved.role!r} must expose invoke(), "
+        "ainvoke(), complete(), messages.create(), or chat.completions.create()"
     )
 
 
@@ -126,6 +146,16 @@ def _coerce_result(raw: object) -> RouterCallResult:
         )
 
     text = _object_text(raw)
+    # LangChain BaseChatModel responses expose ``usage_metadata`` on AIMessage
+    # with ``input_tokens`` / ``output_tokens`` keys; raw provider SDKs use
+    # ``usage`` with various aliases. Sniff both.
+    usage_metadata = getattr(raw, "usage_metadata", None)
+    if isinstance(usage_metadata, dict):
+        return RouterCallResult(
+            text=text,
+            prompt_tokens=_int(usage_metadata.get("input_tokens", 0)),
+            completion_tokens=_int(usage_metadata.get("output_tokens", 0)),
+        )
     usage = getattr(raw, "usage", None)
     return RouterCallResult(
         text=text,

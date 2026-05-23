@@ -10,3 +10,30 @@
 # Fingerprint format = <commit_sha>:<file>:<rule_id>:<line>. The line+commit
 # uniquely identify this single false-positive across the PR history.
 bd341fc12e80665ea4969246ce302613e7261357:packages/shield-server/tests/auth/test_coverage_top_up.py:generic-api-key:296
+
+# M2 Phase A squash-merge — the 456-substrate `air_gap_verify.py` landed on
+# `main` for the first time at commit 6cc8550 (PR #38 squash) and again
+# rode along with PR #39 (Phase F squash, 65e1229) without touching the
+# offending line. Both commits are pinned here because gitleaks-action's
+# default first-parent push range walks the squash-merge boundary on every
+# subsequent push.
+#
+# Verified 100% false positive: line 426 is a plain Python variable
+# assignment whose RHS is an 18-character identifier referencing the
+# resolved Ed25519 key-material variable from the enclosing scope. No
+# secret literal appears in the source. gitleaks' ``generic-api-key``
+# rule scores the identifier name against its entropy threshold and
+# flags it; no secret material is exposed. (The line itself is
+# deliberately NOT quoted here so this comment does not re-trigger the
+# same entropy heuristic on the .gitleaksignore file itself.)
+6cc855076e2f43588148df6ae171fb35084b74fa:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
+65e1229:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
+
+# Self-reference: commit 92de6d5 of this same hotfix bundle added a
+# comment block that literally quoted the offending source line. Push-
+# range gitleaks scans the diff at 92de6d5 and re-flags the same
+# identifier, even though the follow-up commit (3b028fa) removed the
+# quote. The next commit (this one) cannot rewrite history non-
+# destructively, so we suppress the historical bad addition by its
+# fingerprint and keep the explanatory comment quote-free thereafter.
+92de6d5dbe9e72f59952c3c4a25f0f3dc25b5471:.gitleaksignore:generic-api-key:22

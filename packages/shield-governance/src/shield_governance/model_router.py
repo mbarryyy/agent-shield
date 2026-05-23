@@ -254,10 +254,18 @@ class ShieldModelRouter:
     def model_factory(self, role: str) -> Callable[[object, object], object]:
         """Return the ``(state, runtime) -> BaseChatModel`` factory for ``role``.
 
-        This is the exact callable shape ``create_react_agent(model=...)``
-        accepts (verified §5b). The client is built lazily on first invocation
-        and cached per role, so config validation remains import-light while
-        live paths can construct Anthropic or OpenAI-compatible clients.
+        The factory returns a LangChain ``BaseChatModel`` —
+        :class:`langchain_anthropic.ChatAnthropic` for the ``anthropic``
+        provider, :class:`langchain_openai.ChatOpenAI` (with ``base_url``) for
+        the ``openai_compat`` provider — so the result is the exact shape
+        :func:`langchain.agents.create_agent` accepts as its ``model``
+        argument (ADR-0009: the LangGraph 1.2.0 ``create_react_agent``
+        deprecation maps to ``create_agent``). The client is built lazily on
+        first invocation and cached per role, so config validation stays
+        import-light. The router-backed single-prompt scaffold continues to
+        invoke this same ``BaseChatModel`` via
+        :class:`shield_governance.router_runtime.RouterTextClient`'s
+        ``.invoke()`` / ``.ainvoke()`` shape.
         """
         resolved = self.for_role(role)
         if not resolved.enabled:
@@ -299,19 +307,48 @@ class ShieldModelRouter:
 
 
 def _build_anthropic_client(resolved: ResolvedModel, api_key: str | None) -> object:
+    """Return a ``langchain_anthropic.ChatAnthropic`` LLM (a ``BaseChatModel``).
+
+    Phase B / ADR-0009 swap: the factory used to return the raw
+    ``anthropic.Anthropic`` SDK client (incompatible with ``create_agent``);
+    it now returns a LangChain chat model so the same router-backed seam can
+    be consumed by either ``RouterTextClient.invoke()`` (single-prompt
+    scaffold) or :func:`langchain.agents.create_agent` (real LLM agent).
+    """
     try:
-        from anthropic import Anthropic
+        from langchain_anthropic import ChatAnthropic
     except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise RuntimeError("Anthropic client package is not installed") from exc
-    return Anthropic(api_key=api_key)
+        raise RuntimeError("langchain-anthropic is not installed") from exc
+    kwargs: dict[str, object] = {
+        "model": resolved.model,
+        "api_key": api_key,
+        "temperature": resolved.temperature,
+    }
+    if resolved.max_tokens is not None:
+        kwargs["max_tokens"] = resolved.max_tokens
+    return ChatAnthropic(**kwargs)
 
 
 def _build_openai_compat_client(resolved: ResolvedModel, api_key: str | None) -> object:
+    """Return a ``langchain_openai.ChatOpenAI`` LLM (a ``BaseChatModel``).
+
+    The ``base_url`` channel keeps the vLLM / OpenAI-compatible local-SKU
+    path intact (moat #7 air-gap deploys still work), only the wire layer
+    moves from the raw ``openai.OpenAI`` SDK to the LangChain chat model.
+    """
     try:
-        from openai import OpenAI
+        from langchain_openai import ChatOpenAI
     except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise RuntimeError("OpenAI client package is not installed") from exc
-    return OpenAI(api_key=api_key or "local-no-key", base_url=resolved.base_url)
+        raise RuntimeError("langchain-openai is not installed") from exc
+    kwargs: dict[str, object] = {
+        "model": resolved.model,
+        "api_key": api_key or "local-no-key",
+        "base_url": resolved.base_url,
+        "temperature": resolved.temperature,
+    }
+    if resolved.max_tokens is not None:
+        kwargs["max_tokens"] = resolved.max_tokens
+    return ChatOpenAI(**kwargs)
 
 
 def _build_local_reference(resolved: ResolvedModel, api_key: str | None) -> object:
