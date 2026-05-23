@@ -358,14 +358,30 @@ def build_full_grid_metrics_report(
     )
 
     metric_label = evidence_label
+    # F1 (Phase F, EM-2): a 3rd evidence_label branch — ``MEASURED-INLINE-DECIDE``.
+    # The values below come from REAL benchmark_suite_with_injections execution
+    # via decide.real_server_transport() (the inline /decide path), NOT from
+    # a template. Pre-Phase-A the inline /decide is still the 2-node
+    # deterministic graph, so this measures THAT surface honestly; post-Phase-A
+    # the same code path will measure the router-backed 4-guardian surface.
+    measured = metric_label == "MEASURED-INLINE-DECIDE"
+    populated = metric_label == "MOCKED" or measured
+    asr_source = (
+        "Full 16x9 banking grid under CI mock path"
+        if metric_label == "MOCKED"
+        else (
+            "MEASURED — AgentDojo security() oracle across the full grid via "
+            "the real shield decide() (decide.real_server_transport())"
+            if measured
+            else "Full-grid backend path was not executed"
+        )
+    )
     values = {
         "asr": _metric(
             _ratio(attack_successes, attack_total),
             label=metric_label,
             unit="rate",
-            source="Full 16x9 banking grid under CI mock path"
-            if metric_label == "MOCKED"
-            else "Full-grid backend path was not executed",
+            source=asr_source,
         ),
         "utility_retention": _metric(
             _ratio(utility_ok, utility_total),
@@ -392,28 +408,56 @@ def build_full_grid_metrics_report(
             source="Per-case full-grid latency rows",
         ),
         "token_overhead_total": _metric(
-            token_overhead if metric_label == "MOCKED" else None,
+            token_overhead if populated else None,
             label=metric_label,
             unit="tokens",
-            source="Mock grid uses deterministic zero-token governance",
+            source=(
+                "Mock grid uses deterministic zero-token governance"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — inline /decide path is keyless + model-free "
+                    "pre-Phase-A; tokens auto-populate when router-backed "
+                    "guardians surface evidence post-Phase-A"
+                )
+                if measured
+                else "Token counter not populated outside the mock / measured paths"
+            ),
         ),
         "prevented_loss_usd": _metric(
-            prevented_loss if metric_label == "MOCKED" else None,
+            prevented_loss if populated else None,
             label=metric_label,
             unit="USD",
-            source="Mock InjectionTask6-at-risk amount only; not measured provider loss",
+            source=(
+                "Mock InjectionTask6-at-risk amount only; not measured provider loss"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — AgentDojo InjectionTask6 env-diff oracle "
+                    "($30,000 per BLOCKED cell; never recomputed)"
+                )
+                if measured
+                else "Not populated outside the mock / measured paths"
+            ),
         ),
         "estimated_cost_usd": _metric(
-            0.0 if metric_label == "MOCKED" else None,
+            0.0 if populated else None,
             label=metric_label,
             unit="USD",
-            source="Default mock grid performs no provider calls",
+            source=(
+                "Default mock grid performs no provider calls"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — inline /decide path is keyless; per-guardian "
+                    "cost flows in via the F3 passthrough post-Phase-A"
+                )
+                if measured
+                else "Not populated outside the mock / measured paths"
+            ),
         ),
         "benefit_cost_usd": _metric(
-            prevented_loss if metric_label == "MOCKED" else None,
+            prevented_loss if populated else None,
             label=metric_label,
             unit="USD",
-            source="prevented_loss_usd - estimated_cost_usd for the mock grid",
+            source="prevented_loss_usd - estimated_cost_usd",
         ),
         "benefit_cost_ratio": _metric(
             None,
@@ -440,10 +484,22 @@ def build_full_grid_metrics_report(
             "malicious_trials": attack_total,
             "false_positives": 0,
         },
-        "notes": [
-            "Default full-grid evidence is MOCKED and CI-friendly.",
-            "Provider-backed execution requires an explicit later run.",
-        ],
+        "notes": (
+            [
+                "MEASURED-INLINE-DECIDE: per-cell oracle scoring via "
+                "decide.real_server_transport() — real shield_server.create_app "
+                "+ load_governance_app() in-process. Inline /decide measures the "
+                "deployed gov surface (2-node pre-Phase-A; router-backed "
+                "post-Phase-A — no code change here).",
+                "Provider-backed real-model ASR remains a future step (the "
+                "real-runner slice runs no Anthropic API calls in CI).",
+            ]
+            if metric_label == "MEASURED-INLINE-DECIDE"
+            else [
+                "Default full-grid evidence is MOCKED and CI-friendly.",
+                "Provider-backed execution requires an explicit later run.",
+            ]
+        ),
     }
     if skip_reason:
         report["skip_reason"] = skip_reason
