@@ -1,5 +1,5 @@
 # Transcribed faithfully from Research/07_delivery/cicd.md §4
-# (full metrics — real models, gated, never on fork PRs).
+# (mock full-grid by default; real-provider path is budget-gated and skipped here).
 name: Eval
 on:
   schedule: [{ cron: "0 3 * * *" }]      # nightly

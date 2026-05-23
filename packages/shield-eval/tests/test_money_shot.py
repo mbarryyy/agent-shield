@@ -67,9 +67,9 @@ def test_assert_money_shot_cli_exits_zero() -> None:
 
 
 def test_real_graph_in_process_blocks_injectiontask6_30k() -> None:
-    """--real (no --decide-url) drives the REAL gov 4-guardian decide()
-    in-process (keyless; model-free InjectionTask6 BLOCK — HG#5). Strawman
-    SUCCEEDS, real-gov A2/A3 BLOCK, $30k prevented — scored by AgentDojo's
+    """--real (no --decide-url) drives the server-backed governance decide()
+    path in-process (keyless; model-free InjectionTask6 BLOCK — HG#5). Strawman
+    SUCCEEDS, server-backed A2/A3 BLOCK, $30k prevented — scored by AgentDojo's
     OWN security() oracle (not recomputed)."""
     art = run_money_shot(carrier="user_task_2", real=True, decide_url=None)
     assert art["mode"].startswith("real-graph")

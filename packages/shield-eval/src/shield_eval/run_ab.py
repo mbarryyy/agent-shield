@@ -284,8 +284,8 @@ def _write_report(
         scope_note = (
             "> Source: `shield_eval.run_ab`. **MockedLLM = deterministic transcript\n"
             "> replayed from AgentDojo's own `ground_truth` (HEAD 18b501a) — NOT a\n"
-            "> measured model.** Real, quotable ASR/utility come from real models via\n"
-            "> `eval.yml` (W4/W5). Scope: vs the 4 AgentDojo built-in baselines +\n"
+            "> measured model.** Real, quotable ASR/utility require a separate\n"
+            "> explicit provider-backed run. Scope: vs the 4 AgentDojo built-in baselines +\n"
             "> the Axis-C governance moat — never 'vs SOTA'. `InjectionTask6` is\n"
             "> itself injection-delivered (stated plainly)."
         )

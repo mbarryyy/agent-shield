@@ -82,9 +82,11 @@ ARM_LABELS: dict[str, str] = {
 #   * tool_filter → from_config raises ValueError unless the llm is an OpenAILLM.
 _MOCK_INCOMPATIBLE: dict[str, str] = {
     "transformers_pi_detector": (
-        "needs agentdojo[transformers] (torch + HF model) — real-model eval only"
+        "needs agentdojo[transformers] (torch + HF model) — explicit provider-backed eval only"
     ),
-    "tool_filter": "from_config restricts tool_filter to OpenAI models — real-model eval only",
+    "tool_filter": (
+        "from_config restricts tool_filter to OpenAI models — explicit provider-backed eval only"
+    ),
 }
 
 # Shield arm → conceptual /decide endpoint (reporting + W3 wiring). A1 Free =
@@ -117,8 +119,8 @@ class ShieldWiring:
     # provider (no live server). None ⇒ real HTTP path (needs base_url+key).
     local_provider: DecideProvider | None = None
     # Pre-built httpx transport (eval-owned). Highest precedence: used as-is on
-    # the unchanged sdk ShieldClient. This is how the REAL-graph run drives the
-    # real gov 4-guardian decide() in-process (decide.real_gov_transport()),
+    # the unchanged sdk ShieldClient. This is how the in-process governance run
+    # drives the server-backed decide path (decide.real_server_transport()),
     # and how the deterministic path could pass a ready transport. None ⇒
     # fall back to local_provider (mock) or real external HTTP (base_url).
     transport: Any | None = None
@@ -224,9 +226,9 @@ class Arm:
             }
             if w.transport is not None:
                 # Highest precedence: an eval-owned pre-built transport on the
-                # UNCHANGED sdk ShieldClient. This is the REAL-graph path
-                # (decide.real_gov_transport() → the real gov 4-guardian
-                # decide()); also accepts any ready transport. Frozen golden
+                # UNCHANGED sdk ShieldClient. This is the in-process
+                # server-backed governance path (decide.real_server_transport()
+                # → /v1/governance/decide); also accepts any ready transport. Frozen golden
                 # test key signs the records (test fixture; keyless).
                 client_kw["base_url"] = w.base_url or "http://shield.local"
                 client_kw["transport"] = w.transport

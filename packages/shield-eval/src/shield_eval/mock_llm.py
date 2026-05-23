@@ -16,7 +16,7 @@ defeated by 3×$10k structuring" result, auto-scored, never cherry-picked.
 
 NOTE (honest scope): MockedLLM produces a *deterministic transcript*, not a
 measured model. It proves the A0/A0b plumbing + oracle scoring offline. Real,
-quotable ASR/utility come from real models via ``eval.yml`` (W4/W5). Numbers
+quotable ASR/utility require a separate explicit provider-backed run. Numbers
 from this mock are labelled as such and are never reported as measured ASR.
 """
 

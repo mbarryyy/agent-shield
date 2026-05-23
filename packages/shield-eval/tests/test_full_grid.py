@@ -59,7 +59,7 @@ def test_run_ab_full_mock_writes_144_cell_summary_and_case_rows(tmp_path) -> Non
     assert {row["arm"] for row in cases} == {"A0", "A0b", "A1", "A2", "A3"}
 
 
-def test_full_grid_http_backend_is_separated_and_skipped_not_measured(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_full_grid_http_backend_is_separated_and_unexecuted(tmp_path) -> None:  # type: ignore[no-untyped-def]
     summary_path = tmp_path / "http_grid_summary.json"
     cases_path = tmp_path / "http_grid_cases.json"
 

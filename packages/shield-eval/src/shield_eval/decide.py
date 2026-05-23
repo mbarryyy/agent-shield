@@ -287,9 +287,9 @@ _GOLDEN_VECTORS = (
 def real_server_transport() -> Any:
     """The team-lead-APPROVED REAL-graph method: an ``httpx.ASGITransport``
     over the **real** ``shield_server.create_app`` (in-memory storage, real
-    ShieldSdkCrypto) pre-warmed with the **real** gov 4-guardian app
+    ShieldSdkCrypto) pre-warmed with the server governance adapter
     (``load_governance_app()`` → the merged gov adapter). This exercises the
-    REAL server 12-step ingest + verdict signing + the REAL gov ``decide()``
+    REAL server 12-step ingest + verdict signing + the server governance ``decide()``
     end-to-end — NOT a mock. Keyless is valid: the InjectionTask6 BLOCK is the
     HG#5 model-free path (0 LLM tokens on decide→BLOCK).
 
@@ -336,8 +336,8 @@ def real_server_transport() -> Any:
             "demo-org",
         )
         # load_governance_app() is the server's OWN pre-warm resolver: with
-        # gov-W3 merged it returns the real Protocol-complete 4-guardian
-        # adapter (decide+resume) — exactly what create_app's lifespan does.
+        # gov-W3 merged it returns the governance adapter (decide+resume) —
+        # exactly what create_app's lifespan does.
         return create_app(
             storage=storage,
             settings=Settings.from_env(),

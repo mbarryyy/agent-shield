@@ -22,8 +22,7 @@ Arms:
 Two run modes, both confirmed:
 * deterministic — eval-owned MockDecide served in-process to the UNCHANGED
   sdk ``ShieldClient`` (the documented demo-safety mitigation; no server).
-* ``--real`` — the **REAL** gov 4-guardian ``decide()`` (the now-merged
-  ``shield_governance`` build_decide_app/decide), in-process & keyless
+* ``--real`` — the server-backed governance ``decide()`` path, in-process & keyless
   (model-free InjectionTask6 BLOCK — HG#5, 0 LLM tokens THROUGH the real
   ``decide()``), or the live server at ``--decide-url``.
 
@@ -322,14 +321,14 @@ def run_money_shot(*, carrier: str, real: bool, decide_url: str | None) -> dict[
         )
         # Shield-arm wiring strategy:
         #   real + --decide-url   → external live server over real HTTP
-        #   real + no url         → REAL gov 4-guardian decide() in-process
-        #                           (decide.real_gov_transport(), keyless,
+        #   real + no url         → server-backed governance decide() in-process
+        #                           (decide.real_server_transport(), keyless,
         #                           model-free InjectionTask6 BLOCK — HG#5)
         #   not real              → deterministic MockDecide (demo-safety)
         real_transport: Any | None = None
         if real and not decide_url:
-            # Team-lead-APPROVED real-graph method: ASGITransport over the
-            # REAL shield_server.create_app + REAL gov 4-guardian decide()
+            # Team-lead-APPROVED server-backed method: ASGITransport over the
+            # real shield_server.create_app + governance decide() path
             # (keyless; HG#5 model-free). Built once; reused A2+A3. Raises
             # RealGovUnavailable if server in-process is blocked → caller
             # SKIPs + flags honestly (never fakes).
@@ -375,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         "--real",
         action="store_true",
         help=(
-            "real-graph mode: REAL gov 4-guardian decide() — in-process "
+            "server-backed governance mode: decide() — in-process "
             "(keyless, model-free InjectionTask6 BLOCK) when no --decide-url, "
             "or the live server at --decide-url"
         ),
