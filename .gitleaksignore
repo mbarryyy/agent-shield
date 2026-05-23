@@ -18,11 +18,13 @@ bd341fc12e80665ea4969246ce302613e7261357:packages/shield-server/tests/auth/test_
 # default first-parent push range walks the squash-merge boundary on every
 # subsequent push.
 #
-# Verified 100% false positive: line 426 reads
-#   `        key = signing_key_b64url`
-# i.e. a Python variable assignment whose RHS is the identifier
-# ``signing_key_b64url`` (18 characters, no secret literal). gitleaks'
-# ``generic-api-key`` rule scores the identifier name against its entropy
-# threshold and flags it; no secret material is exposed.
+# Verified 100% false positive: line 426 is a plain Python variable
+# assignment whose RHS is an 18-character identifier referencing the
+# resolved Ed25519 key-material variable from the enclosing scope. No
+# secret literal appears in the source. gitleaks' ``generic-api-key``
+# rule scores the identifier name against its entropy threshold and
+# flags it; no secret material is exposed. (The line itself is
+# deliberately NOT quoted here so this comment does not re-trigger the
+# same entropy heuristic on the .gitleaksignore file itself.)
 6cc855076e2f43588148df6ae171fb35084b74fa:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
 65e1229:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
