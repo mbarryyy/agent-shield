@@ -28,3 +28,12 @@ bd341fc12e80665ea4969246ce302613e7261357:packages/shield-server/tests/auth/test_
 # same entropy heuristic on the .gitleaksignore file itself.)
 6cc855076e2f43588148df6ae171fb35084b74fa:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
 65e1229:packages/shield-governance/src/shield_governance/air_gap_verify.py:generic-api-key:426
+
+# Self-reference: commit 92de6d5 of this same hotfix bundle added a
+# comment block that literally quoted the offending source line. Push-
+# range gitleaks scans the diff at 92de6d5 and re-flags the same
+# identifier, even though the follow-up commit (3b028fa) removed the
+# quote. The next commit (this one) cannot rewrite history non-
+# destructively, so we suppress the historical bad addition by its
+# fingerprint and keep the explanatory comment quote-free thereafter.
+92de6d5dbe9e72f59952c3c4a25f0f3dc25b5471:.gitleaksignore:generic-api-key:22
