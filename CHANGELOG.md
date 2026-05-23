@@ -10,3 +10,5 @@ to Semantic Versioning, where a `shield_version` (§4 contract) break is a MAJOR
 - W0 repo scaffold: uv workspace skeleton, `contracts/` frozen-§4 boundary,
   `infra/` docker-compose, CI/integration/eval/release workflows, CODEOWNERS,
   ADR-0001..0006, and the design corpus.
+- Release-readiness checklist for evidence labels, real-model eval budget
+  guard, claim scans, and artifact hygiene.

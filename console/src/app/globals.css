@@ -162,6 +162,59 @@ body {
   background: #EAEAE5;
 }
 
+.console-mobile-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+@media (max-width: 767px) {
+  .btn-brutalist,
+  .btn-ghost,
+  .sidebar-nav-item,
+  .sidebar-footer-link,
+  .page-header-crumb-link,
+  .page-header-actions button,
+  .page-header-actions a,
+  button,
+  button[title],
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .console-mobile-icon-button,
+  button[title] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .btn-brutalist,
+  .btn-ghost,
+  .sidebar-footer-link,
+  .page-header-crumb-link,
+  .page-header-actions button,
+  .page-header-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .sidebar-nav-item {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Marquee */
 .marquee-container {
   overflow: hidden;

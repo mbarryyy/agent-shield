@@ -13,6 +13,7 @@ import type {
   AuditQueryResponse,
   JWKSResponse,
 } from '@elydora/shared';
+import type { ApiKeysListResponse } from '@/types/auth';
 import type {
   TimelinePage,
   VerdictDetail,
@@ -102,6 +103,14 @@ export function useJWKS() {
   );
 }
 
+export function useApiKeys() {
+  return useSWR<ApiKeysListResponse>(
+    '/auth/api-keys',
+    () => api.auth.apiKeys.list(),
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+}
+
 // --- W3 governance READ hooks (SWR over the server console-READ contract).
 //     `poll` enables SWR polling = the deterministic pre-recorded-demo
 //     fallback; the live monitor's primary path is the SSE stream. ---------
@@ -142,10 +151,11 @@ export function useCost(runId: string | undefined) {
 
 export function useIncidents(
   params: { run_id?: string; status?: string } = {},
+  enabled = true,
 ) {
   return useSWR<IncidentList>(
-    ['/gov/incidents', params.run_id ?? '', params.status ?? ''],
-    () => api.governance.incidents(params),
+    enabled ? ['/gov/incidents', params.run_id ?? '', params.status ?? ''] : null,
+    enabled ? () => api.governance.incidents(params) : null,
     { revalidateOnFocus: false },
   );
 }

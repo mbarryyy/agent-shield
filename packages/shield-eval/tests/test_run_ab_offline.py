@@ -33,12 +33,12 @@ def test_resolve_arms_expands_a0b_and_resolves_shield() -> None:
         "repeat_user_prompt",
         "tool_filter",
     }
-    # W2: A2/shielded now RESOLVE to a shield Arm (no longer an early raise);
-    # SKIP-not-fake moves to Arm.build() while sdk-w2's elements are absent.
+    # Full-build: A2/shielded resolves and builds with the in-process mock
+    # decide provider by default; `--decide http` is the live-server path.
     a2 = resolve_arms(["shielded"])
     assert len(a2) == 1 and a2[0].key == "A2" and a2[0].kind == "shield"
-    with pytest.raises(ArmUnavailable):
-        a2[0].build(MockedLLM(name="mocked-x"), mock=True)
+    pipe = a2[0].build(MockedLLM(name="mocked-x"), mock=True)
+    assert pipe.name.endswith("-a2")
     with pytest.raises(ArmUnavailable):
         resolve_arms(["bogus-arm"])
 
@@ -99,6 +99,24 @@ def test_tool_filter_and_pi_detector_are_skipped_in_mock() -> None:
     for d in ("tool_filter", "transformers_pi_detector"):
         with pytest.raises(ArmUnavailable):
             Arm(key=d, defense=d).build(MockedLLM(name="mocked-x"), mock=True)
+
+
+def test_real_eval_model_builds_anthropic_llm_without_modelsenum(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("SHIELD_REAL_EVAL_MAX_TOKENS", "64")
+
+    llm = run_ab._real_llm_for_worker("claude-haiku-4-5-20251001")
+
+    assert llm.name == "claude-3-haiku-20240307 (claude-haiku-4-5-20251001)"
+    assert llm.model == "claude-haiku-4-5-20251001"
+    assert llm._MAX_TOKENS == 64
+
+
+def test_real_eval_model_requires_anthropic_key(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ArmUnavailable, match="ANTHROPIC_API_KEY"):
+        run_ab._real_llm_for_worker("claude-haiku-4-5-20251001")
 
 
 def _run(argv: list[str]) -> tuple[int, str]:
@@ -165,3 +183,23 @@ def test_report_is_written_and_labelled(tmp_path) -> None:  # type: ignore[no-un
     text = out_file.read_text()
     assert "NOT a" in text and "measured model" in text  # honest-scope label
     assert "never 'vs SOTA'" in text
+
+
+def test_real_report_is_labelled_measured_backend(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    out_file = tmp_path / "real-report.md"
+    run_ab._write_report(
+        str(out_file),
+        {
+            "A0": run_ab.ArmResult(
+                key="A0",
+                security={("user_task_2", "injection_task_6"): False},
+                utility={("user_task_2", "injection_task_6"): False},
+            )
+        },
+        backend="real",
+        model="claude-haiku-4-5-20251001",
+    )
+
+    text = out_file.read_text()
+    assert "Real backend = provider model `claude-haiku-4-5-20251001`" in text
+    assert "MockedLLM" not in text

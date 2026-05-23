@@ -47,7 +47,7 @@ from typing import Any
 from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 
-from .decide import DecideProvider, mock_transport
+from .decide import DecideProvider, build_decider, mock_transport
 
 # Frozen Ed25519 test keypair shipped in the repo (W0 golden vectors). Used to
 # sign records in DETERMINISTIC shield runs only (offline demo-safety path);
@@ -66,6 +66,14 @@ NATIVE_BASELINES: tuple[str, ...] = (
     "repeat_user_prompt",
     "tool_filter",
 )
+
+ARM_LABELS: dict[str, str] = {
+    "A0": "A0 — no defense baseline",
+    "A0b": "A0b — AgentDojo built-in defense baselines",
+    "A1": "A1 — Agent Shield installed, free no-op PASS gate",
+    "A2": "A2 — Agent Shield Paid, governed /decide verdict",
+    "A3": "A3 — Agent Shield deterministic-only ablation",
+}
 
 # Built-ins that need a heavy/incompatible backend and are therefore N/A under
 # the offline MockedLLM (only runnable in the real-model eval.yml, W4/W5):
@@ -193,7 +201,10 @@ class Arm:
             ) from e
 
         w = wiring or ShieldWiring()
-        in_process = w.transport is not None or w.local_provider is not None
+        provider = w.local_provider
+        if w.transport is None and provider is None and self.decide_mode in {"noop", "mock"}:
+            provider = build_decider(self.decide_mode)
+        in_process = w.transport is not None or provider is not None
         if not in_process and (not w.base_url or not w.agent_private_key_b64url):
             raise ArmUnavailable(
                 f"{self.key}: real shield wiring not configured "
@@ -220,11 +231,11 @@ class Arm:
                 client_kw["base_url"] = w.base_url or "http://shield.local"
                 client_kw["transport"] = w.transport
                 agent_key = w.agent_private_key_b64url or _frozen_test_key()
-            elif w.local_provider is not None:
+            elif provider is not None:
                 # Deterministic demo-safety path: eval-owned provider served
                 # in-process to the UNCHANGED sdk ShieldClient via MockTransport.
                 client_kw["base_url"] = w.base_url or "http://shield.local"
-                client_kw["transport"] = mock_transport(w.local_provider)
+                client_kw["transport"] = mock_transport(provider)
                 agent_key = w.agent_private_key_b64url or _frozen_test_key()
             else:
                 client_kw["base_url"] = w.base_url

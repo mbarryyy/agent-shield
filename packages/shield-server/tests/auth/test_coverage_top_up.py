@@ -250,6 +250,18 @@ def test_totp_disable_flow(client: TestClient) -> None:
 
 def test_api_keys_issue_list_revoke(client: TestClient) -> None:
     _signup(client, email="ak@example.com")
+    storage = client.app_storage  # type: ignore[attr-defined]
+    for agent_id in ("ag-1", "ag-2"):
+        storage.db.agents[agent_id] = {
+            "agent_id": agent_id,
+            "org_id": "demo-org",
+            "display_name": agent_id,
+            "responsible_entity": "owner",
+            "integration_type": "sdk",
+            "status": "active",
+            "created_at": 1,
+            "updated_at": 1,
+        }
     r = client.post(
         "/v1/auth/api-keys",
         json={

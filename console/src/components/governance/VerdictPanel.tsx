@@ -7,7 +7,8 @@ import type {
   ShieldActionRecord,
   VerdictReason,
 } from '@elydora/shared';
-import { DecisionBadge, RiskBadge } from './badges';
+import { evidenceLabelFrom } from '@/types/governance';
+import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
 // The four guardian lanes are a fixed, ordered set (master §3.3 / demo
 // L77 — the audience must learn these four names). Always render all four,
@@ -41,6 +42,11 @@ function GuardianLane({
               {r.served_via && (
                 <span className="text-ink-dim"> · {r.served_via}</span>
               )}
+              {r.model_id && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  model {r.model_id}
+                </div>
+              )}
               {r.detail && (
                 <div className="text-ink-dim normal-case mt-0.5 break-words">
                   {r.detail}
@@ -66,6 +72,11 @@ export default function VerdictPanel({
   const { t } = useTranslation();
   const reasons = verdict.reasons ?? [];
   const ob = verdict.obligations;
+  const evidenceLabel = evidenceLabelFrom(verdict);
+  const usageRows = [
+    { label: 'pre_exec llm', llm: preExec?.payload?.llm },
+    { label: 'post_exec llm', llm: postExec?.payload?.llm },
+  ].filter((row) => row.llm);
 
   return (
     <div className="border border-border">
@@ -73,10 +84,12 @@ export default function VerdictPanel({
         <div className="flex items-center gap-3">
           <DecisionBadge decision={verdict.decision} />
           <RiskBadge score={verdict.risk_score} />
+          {evidenceLabel && <EvidenceBadge label={evidenceLabel} />}
         </div>
-        <span className="font-mono text-[11px] text-ink-dim break-all">
-          {verdict.correlation_id}
-        </span>
+        <div className="font-mono text-[11px] text-ink-dim text-right">
+          {verdict.latency_ms != null && <div>latency {verdict.latency_ms} ms</div>}
+          <div className="break-all">{verdict.correlation_id}</div>
+        </div>
       </div>
 
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -119,6 +132,16 @@ export default function VerdictPanel({
             {t('governance.postExec')}:{' '}
             {postExec ? (postExec.record_id ?? '—') : t('governance.pending')}
           </span>
+          {usageRows.map((row) => (
+            <span key={row.label}>
+              {row.label}:{' '}
+              <span className="text-ink">
+                {row.llm?.prompt_tokens ?? 0} prompt / {row.llm?.completion_tokens ?? 0}{' '}
+                completion
+              </span>
+              {row.llm?.model && <span> · {row.llm.model}</span>}
+            </span>
+          ))}
         </div>
       )}
     </div>

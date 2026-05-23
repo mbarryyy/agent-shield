@@ -249,6 +249,70 @@ async def _fan_verdicts(
     )
 
 
+def _governance_verdict_insert(
+    rec: ShieldActionRecord,
+    verdict: GovernanceVerdict,
+    verdict_key: str,
+    created_at: int,
+) -> tuple[str, tuple[object, ...]]:
+    sql = (
+        "INSERT INTO governance_verdicts (verdict_id, record_id, "
+        "correlation_id, run_id, org_id, agent_id, decision, risk_score, "
+        "latency_ms, prevented_loss, r2_verdict_key, created_at) VALUES "
+        "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+    )
+    args: tuple[object, ...] = (
+        verdict.verdict_id,
+        rec.record_id,
+        rec.correlation_id,
+        rec.run_id,
+        rec.org_id,
+        rec.agent_id,
+        verdict.decision.value,
+        verdict.risk_score,
+        verdict.latency_ms,
+        # Server persists the value supplied by governance/sdk; it does not
+        # infer or synthesize prevented loss.
+        verdict.obligations.prevented_loss or 0.0,
+        verdict_key,
+        created_at,
+    )
+    return sql, args
+
+
+async def publish_async_verdict(
+    storage: Storage,
+    rec: ShieldActionRecord,
+    verdict: GovernanceVerdict,
+    settings: Settings,
+) -> GovernanceVerdict:
+    """Server-owned boundary for late Channel-2 governance verdicts.
+
+    Governance computes an unsigned async outcome. This function forces the
+    action-record identity, attaches server timing/kid fields, signs with the
+    shield-server key, stores the signed envelope, and publishes the locked
+    ``shield:verdicts`` stream envelope.
+    """
+    from .config import SHIELD_KID
+
+    started = time.perf_counter()
+    verdict.record_id = rec.record_id
+    verdict.correlation_id = rec.correlation_id
+    verdict.run_id = rec.run_id
+    verdict.served_at = _now_ms()
+    verdict.latency_ms = (time.perf_counter() - started) * 1000.0
+    verdict.shield_kid = SHIELD_KID
+    signed = canonical.finalize_verdict(verdict, settings.server_signing_key)
+    verdict_key = f"{rec.org_id}/{rec.agent_id}/verdicts/{signed.verdict_id}"
+    await storage.objects.put(
+        verdict_key, signed.model_dump_json().encode("utf-8"), "application/json"
+    )
+    sql, args = _governance_verdict_insert(rec, signed, verdict_key, _now_ms())
+    await storage.db.execute(sql, *args)
+    await _fan_verdicts(storage, rec, signed)
+    return signed
+
+
 async def decide(
     storage: Storage,
     rec: ShieldActionRecord,
@@ -296,26 +360,8 @@ async def decide(
     async with storage.db.transaction() as tx:
         sql, args = _operations_insert(rec, next_seq, chain_hash, r2_key, received_at)
         await tx.execute(sql, *args)
-        await tx.execute(
-            "INSERT INTO governance_verdicts (verdict_id, record_id, "
-            "correlation_id, run_id, org_id, agent_id, decision, risk_score, "
-            "latency_ms, prevented_loss, r2_verdict_key, created_at) VALUES "
-            "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-            verdict.verdict_id,
-            rec.record_id,
-            rec.correlation_id,
-            rec.run_id,
-            rec.org_id,
-            rec.agent_id,
-            verdict.decision.value,
-            verdict.risk_score,
-            verdict.latency_ms,
-            # Server STORES (never computes) the §4 obligations.prevented_loss
-            # gov/sdk set — the MEASURED env-diff; /cost read-rolls it up.
-            verdict.obligations.prevented_loss or 0.0,
-            verdict_key,
-            received_at,
-        )
+        sql, args = _governance_verdict_insert(rec, verdict, verdict_key, received_at)
+        await tx.execute(sql, *args)
         await tx.execute(
             "INSERT INTO intervention_log (verdict_id, record_id, correlation_id, "
             "run_id, decision, step_index, triggered_rule_id, tokens_in, "

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import sys
 import tempfile
@@ -41,6 +42,8 @@ from .mock_llm import MockedLLM
 # (get_model_name_from_pipeline matches this substring in pipeline.name).
 DEFAULT_WORKER = "claude-3-haiku-20240307"
 DEFAULT_BENCHMARK_VERSION = "v1.2.2"  # AgentDojo CLI default; banking = 16u/9i
+ANTHROPIC_ENV_KEY = "ANTHROPIC_API_KEY"
+REAL_EVAL_MODEL = "claude-haiku-4-5-20251001"
 
 
 @dataclass
@@ -53,6 +56,29 @@ class ArmResult:
     utility: dict[tuple[str, str], bool] = field(default_factory=dict)
     # Shield enforced decision per pairing (W2 A1/A2; empty for native arms).
     decisions: dict[tuple[str, str], str] = field(default_factory=dict)
+
+
+def _real_llm_for_worker(worker: str) -> Any:
+    """Build a real AgentDojo-compatible LLM for models absent from ModelsEnum."""
+
+    if worker.startswith("claude-"):
+        api_key = os.environ.get(ANTHROPIC_ENV_KEY)
+        if not api_key:
+            raise ArmUnavailable(
+                f"{worker}: {ANTHROPIC_ENV_KEY} is required for real Anthropic eval"
+            )
+        from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
+        from anthropic import AsyncAnthropic
+
+        max_tokens = int(os.environ.get("SHIELD_REAL_EVAL_MAX_TOKENS", "1024"))
+        llm = AnthropicLLM(
+            AsyncAnthropic(api_key=api_key),
+            model=worker,
+            max_tokens=max_tokens,
+        )
+        llm.name = f"claude-3-haiku-20240307 ({worker})"
+        return llm
+    return worker
 
 
 def _build_suite(version: str, suite_name: str) -> Any:
@@ -104,7 +130,7 @@ def _run_arm(
                 injection_task=inj_task,
             )
         else:
-            llm = worker  # ModelsEnum string — real backend (eval.yml, W4/W5)
+            llm = _real_llm_for_worker(worker)
 
         try:
             pipeline = arm.build(llm, mock=mock, shield_wiring=shield_wiring)
@@ -238,16 +264,35 @@ def _evaluate_assert(expr: str, results: dict[str, ArmResult]) -> AssertOutcome:
 # ------------------------------- reporting -----------------------------------
 
 
-def _write_report(path: str, results: dict[str, ArmResult]) -> None:
+def _write_report(
+    path: str,
+    results: dict[str, ArmResult],
+    *,
+    backend: str = "mock",
+    model: str | None = None,
+) -> None:
+    if backend == "real":
+        scope_note = (
+            f"> Source: `shield_eval.run_ab`. **Real backend = provider model "
+            f"`{model or 'unknown'}`.** This report stores aggregate security/"
+            "> utility booleans only; raw provider traces are not included. "
+            "Scope: vs the 4 AgentDojo built-in baselines + the Axis-C "
+            "governance moat — never 'vs SOTA'. `InjectionTask6` is itself "
+            "injection-delivered (stated plainly)."
+        )
+    else:
+        scope_note = (
+            "> Source: `shield_eval.run_ab`. **MockedLLM = deterministic transcript\n"
+            "> replayed from AgentDojo's own `ground_truth` (HEAD 18b501a) — NOT a\n"
+            "> measured model.** Real, quotable ASR/utility come from real models via\n"
+            "> `eval.yml` (W4/W5). Scope: vs the 4 AgentDojo built-in baselines +\n"
+            "> the Axis-C governance moat — never 'vs SOTA'. `InjectionTask6` is\n"
+            "> itself injection-delivered (stated plainly)."
+        )
     lines = [
         "# Agent Shield — A/B run report (W1 native arms)",
         "",
-        "> Source: `shield_eval.run_ab`. **MockedLLM = deterministic transcript",
-        "> replayed from AgentDojo's own `ground_truth` (HEAD 18b501a) — NOT a",
-        "> measured model.** Real, quotable ASR/utility come from real models via",
-        "> `eval.yml` (W4/W5). Scope: vs the 4 AgentDojo built-in baselines +",
-        "> the Axis-C governance moat — never 'vs SOTA'. `InjectionTask6` is",
-        "> itself injection-delivered (stated plainly).",
+        scope_note,
         "",
         "| Arm | Status | Injection-success (security oracle) | Utility |",
         "|---|---|---|---|",
@@ -259,6 +304,26 @@ def _write_report(path: str, results: dict[str, ArmResult]) -> None:
         sec = "; ".join(f"{k[0]}×{k[1]}={v}" for k, v in r.security.items() if k[1]) or "—"
         ut = "; ".join(f"{k[0]}={v}" for k, v in r.utility.items()) or "—"
         lines.append(f"| {r.key} | run | {sec} | {ut} |")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def _write_metrics_markdown(path: str, report: dict[str, Any]) -> None:
+    lines = [
+        "# Agent Shield — eval metrics",
+        "",
+        f"- schema: `{report.get('schema_version')}`",
+        f"- label: `{report.get('run_label')}`",
+        f"- backend: `{report.get('backend')}`",
+        "",
+        "| Metric | Value | Unit | Label |",
+        "|---|---:|---|---|",
+    ]
+    for key, item in (report.get("values") or {}).items():
+        if isinstance(item, dict):
+            lines.append(
+                f"| `{key}` | {item.get('value')} | {item.get('unit')} | {item.get('label')} |"
+            )
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
@@ -302,12 +367,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--backend",
         default=os.environ.get("SHIELD_LLM_BACKEND", "mock"),
-        choices=["mock", "real"],
+        choices=["mock", "http", "real"],
     )
     p.add_argument(
         "--model", default=DEFAULT_WORKER, help="worker model (real backend / name seed)"
     )
     p.add_argument("--metrics", default=None)
+    p.add_argument("--metrics-out", default=None, help="write metrics JSON artifact")
+    p.add_argument("--cases-out", default=None, help="write per-case full-grid JSON rows")
+    p.add_argument("--budget-out", default=None, help="write real-runner budget JSON artifact")
+    p.add_argument("--samples", type=int, default=1, help="planned real-runner samples")
+    p.add_argument(
+        "--serialized-prompt-chars",
+        type=int,
+        default=None,
+        help="dry-run prompt chars for real-runner budget estimation",
+    )
+    p.add_argument("--max-output-tokens", type=int, default=2_000)
     p.add_argument("--smoke", action="store_true")
     p.add_argument("--full", action="store_true")
     p.add_argument("--out", default=None)
@@ -330,6 +406,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
+    if args.full:
+        return _dispatch_full(args, suite)
+
     # --smoke: tiny real offline e2e — A0 + MockedLLM on banking user_task_0,
     # no injection; assert utility holds. Proves the plumbing end-to-end.
     if args.smoke:
@@ -406,7 +485,7 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
             print(f"  arm {r.key}: security={r.security} utility={r.utility}")
 
     if args.out:
-        _write_report(args.out, results)
+        _write_report(args.out, results, backend=args.backend, model=args.model)
 
     exit_code = 0
     for expr in args.asserts:
@@ -415,6 +494,114 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
         if outcome.status == "FAIL":
             exit_code = 1
     return exit_code
+
+
+def _real_prompt_char_estimate(args: argparse.Namespace) -> int:
+    if args.serialized_prompt_chars is not None:
+        return max(0, int(args.serialized_prompt_chars))
+    user_tasks = args.user_tasks or ["user_task_2"]
+    injection_tasks = args.injection_tasks or ["injection_task_6"]
+    payload = {
+        "suite": args.suite,
+        "attack": args.attack or "important_instructions",
+        "user_tasks": user_tasks,
+        "injection_tasks": injection_tasks,
+        "model": args.model,
+        "arms": args.arms or args.compare_baselines or "A0,A0b,A1,A2,A3",
+    }
+    return len(json.dumps(payload, sort_keys=True)) + 2_000
+
+
+def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
+    from .metrics import (
+        build_full_grid_artifacts,
+        build_provider_slice_artifact,
+        build_real_runner_budget_artifact,
+        print_summary,
+        write_json,
+    )
+
+    arm_tokens = [t for t in (args.arms or "A0,A0b,A1,A2,A3").split(",") if t]
+    user_tasks = args.user_tasks or list(suite.user_tasks.keys())
+    injection_tasks = args.injection_tasks or list(suite.injection_tasks.keys())
+
+    if args.backend == "real":
+        artifact = build_real_runner_budget_artifact(
+            arms=arm_tokens,
+            user_tasks=user_tasks,
+            injection_tasks=injection_tasks,
+            samples=args.samples,
+            serialized_prompt_chars=_real_prompt_char_estimate(args),
+            max_output_tokens=args.max_output_tokens,
+        )
+        slice_artifact = build_provider_slice_artifact(
+            user_task_id=user_tasks[0],
+            injection_task_id=injection_tasks[0],
+            attack_variant=args.attack or "important_instructions",
+            provider="anthropic",
+            model_router_profile="cloud",
+            hard_cap_usd=artifact["hard_cap_usd"],
+            estimated_cost_usd=artifact["estimated_cost_usd"],
+            api_call_status="SKIPPED",
+            skip_reason=artifact.get("skip_reason") or "REAL_EVAL_IMPLEMENTATION_ONLY",
+        )
+        if args.budget_out:
+            write_json(args.budget_out, artifact)
+        if args.metrics_out:
+            write_json(args.metrics_out, slice_artifact)
+        print(json.dumps(artifact, indent=2, sort_keys=True))
+        print(
+            "shield_eval.run_ab --full real: "
+            f"{artifact['status_label']} cost=${artifact['estimated_cost_usd']:.6f}; "
+            "Anthropic API call SKIPPED"
+        )
+        return 0
+
+    if args.backend == "http":
+        report, cases = build_full_grid_artifacts(
+            suite=args.suite,
+            user_task_ids=user_tasks,
+            injection_task_ids=injection_tasks,
+            arms=arm_tokens,
+            backend="http",
+            attack_variant=args.attack or "important_instructions",
+        )
+        if args.metrics_out:
+            write_json(args.metrics_out, report)
+        if args.cases_out:
+            write_json(args.cases_out, cases)
+        if args.out:
+            _write_metrics_markdown(args.out, report)
+        print(
+            f"shield_eval.run_ab --full: suite={args.suite} "
+            f"arms={report['arms']} backend=http label={report['run_label']} "
+            f"skip_reason={report.get('skip_reason')}"
+        )
+        print_summary(report)
+        return 0
+
+    # Mock-only full benchmark artifact: deterministic money-shot + benign FPR.
+    # This is intentionally not quotable as measured model ASR.
+    report, cases = build_full_grid_artifacts(
+        suite=args.suite,
+        user_task_ids=user_tasks,
+        injection_task_ids=injection_tasks,
+        arms=arm_tokens,
+        backend="mock",
+        attack_variant=args.attack or "important_instructions",
+    )
+    if args.metrics_out:
+        write_json(args.metrics_out, report)
+    if args.cases_out:
+        write_json(args.cases_out, cases)
+    if args.out:
+        _write_metrics_markdown(args.out, report)
+    print(
+        f"shield_eval.run_ab --full: suite={args.suite} "
+        f"arms={arm_tokens} backend=mock label={report['run_label']}"
+    )
+    print_summary(report)
+    return 0
 
 
 if __name__ == "__main__":

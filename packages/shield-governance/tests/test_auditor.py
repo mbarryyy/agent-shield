@@ -4,7 +4,7 @@ compliance report. Never blocks."""
 from __future__ import annotations
 
 import pytest
-from shield_governance.auditor import Auditor, ProvenanceGraph
+from shield_governance.auditor import Auditor, MerkleVerification, ProvenanceGraph
 from shield_sdk.schema import (
     ActionPayload,
     Decision,
@@ -62,6 +62,20 @@ def test_provenance_dag_pairs_pre_post_by_correlation() -> None:
     assert len(nl["edges"]) >= 1  # pre<->post correlation edge
 
 
+def test_merkle_verification_seam_adds_auditor_reason() -> None:
+    def merkle(records: list[ShieldActionRecord]) -> MerkleVerification:
+        return MerkleVerification(
+            verified=False,
+            root="root-1",
+            epoch_id="epoch-1",
+            detail="record absent from epoch",
+        )
+
+    res = Auditor(merkle_verifier=merkle).audit([_rec()], agent_pubkey_b64url="x")
+    reason = next(rr for rr in res.reasons if rr.label == "auditor.merkle_failed")
+    assert reason.detail == "record absent from epoch"
+
+
 @pytest.mark.asyncio
 async def test_compliance_report_json_and_narrative() -> None:
     a = Auditor()
@@ -78,7 +92,7 @@ async def test_compliance_report_json_and_narrative() -> None:
     assert rep["blocked"] == 1
     assert rep["dollars_prevented"] == 30000.0
     assert rep["decision_mix"] == {"BLOCK": 1, "PASS": 1}
-    assert rep["report_version"] == "w3-json"  # PDF/egress-attestation = W4
+    assert rep["report_version"] == "w4-json"
     assert "narrative" not in rep  # no narrator injected
 
     async def narrator(prompt: str) -> str:
@@ -87,3 +101,23 @@ async def test_compliance_report_json_and_narrative() -> None:
     a2 = Auditor(narrator=narrator)
     rep2 = await a2.generate_compliance_report(verdicts)
     assert "narrative" in rep2 and rep2["narrative"].startswith("All structuring")
+
+
+@pytest.mark.asyncio
+async def test_compliance_report_includes_merkle_and_zero_egress_attestation() -> None:
+    def signer(report: dict[str, object]) -> dict[str, object]:
+        return {"profile": "local", "egress": 0, "signature": "signed-report"}
+
+    a = Auditor(zero_egress_attestor=signer)
+    a.record_merkle_verification(
+        MerkleVerification(verified=True, root="root-ok", epoch_id="epoch-ok")
+    )
+    rep = await a.generate_compliance_report(
+        [GovernanceVerdict(decision=Decision.PASS, correlation_id="c-ok")]
+    )
+    assert rep["merkle"] == {"verified": True, "root": "root-ok", "epoch_id": "epoch-ok"}
+    assert rep["zero_egress_attestation"] == {
+        "profile": "local",
+        "egress": 0,
+        "signature": "signed-report",
+    }

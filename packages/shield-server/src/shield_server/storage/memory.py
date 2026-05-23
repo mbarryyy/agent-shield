@@ -103,6 +103,8 @@ class MemoryDatabase:
         self.receipts: dict[str, dict[str, Any]] = {}
         self.intervention_log: list[dict[str, Any]] = []
         self.governance_verdicts: dict[str, dict[str, Any]] = {}
+        self.epochs: dict[str, dict[str, Any]] = {}
+        self.exports: dict[str, dict[str, Any]] = {}
         # --- ADR-0013 enterprise-auth tables ---
         self.users: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, dict[str, Any]] = {}
@@ -125,6 +127,16 @@ class MemoryDatabase:
         if s.startswith("SELECT * FROM agent_keys WHERE kid"):
             row = self.agent_keys.get(str(args[0]))
             return None if row is None else (dict(row) if row["agent_id"] == args[1] else None)
+        if s.startswith("SELECT public_key, status FROM agent_keys WHERE kid"):
+            row = self.agent_keys.get(str(args[0]))
+            return (
+                None
+                if row is None
+                else {
+                    "public_key": row["public_key"],
+                    "status": row["status"],
+                }
+            )
         if s.startswith("SELECT chain_hash, seq_no FROM operations WHERE agent_id"):
             owned = [o for o in self.operations.values() if o["agent_id"] == args[0]]
             if not owned:
@@ -144,6 +156,17 @@ class MemoryDatabase:
                 if r["operation_id"] == args[0]:
                     return dict(r)
             return None
+        if s.startswith("SELECT * FROM governance_verdicts WHERE record_id"):
+            for v in self.governance_verdicts.values():
+                if v["record_id"] == args[0]:
+                    return dict(v)
+            return None
+        if s.startswith("SELECT * FROM exports WHERE export_id"):
+            row = self.exports.get(str(args[0]))
+            return None if row is None else (dict(row) if row["org_id"] == args[1] else None)
+        if s.startswith("SELECT * FROM epochs WHERE epoch_id"):
+            row = self.epochs.get(str(args[0]))
+            return None if row is None else (dict(row) if row["org_id"] == args[1] else None)
 
         # --- ADR-0013 auth shapes --------------------------------------- #
 
@@ -241,7 +264,11 @@ class MemoryDatabase:
         # AssertionError below.
         if "FROM receipts" in s:
             return [dict(r) for r in self.receipts.values()]
-        if "FROM epochs" in s or "FROM exports" in s or "FROM agent_sessions" in s:
+        if "FROM epochs" in s:
+            return [dict(e) for e in self.epochs.values()]
+        if "FROM exports" in s:
+            return [dict(e) for e in self.exports.values()]
+        if "FROM agent_sessions" in s:
             return []
         # --- auth tables ---
         if s.startswith("SELECT session_id, user_id, ip, user_agent"):
@@ -383,6 +410,31 @@ class MemoryDatabase:
             ]
             row = dict(zip(cols, args, strict=True))
             self.governance_verdicts[str(row["verdict_id"])] = row
+        elif s.startswith("INSERT INTO epochs"):
+            cols = [
+                "epoch_id",
+                "org_id",
+                "start_time",
+                "end_time",
+                "root_hash",
+                "leaf_count",
+                "r2_epoch_key",
+                "created_at",
+            ]
+            row = dict(zip(cols, args, strict=True))
+            self.epochs[str(row["epoch_id"])] = row
+        elif s.startswith("INSERT INTO exports"):
+            cols = [
+                "export_id",
+                "org_id",
+                "status",
+                "query_params",
+                "r2_export_key",
+                "created_at",
+                "completed_at",
+            ]
+            row = dict(zip(cols, args, strict=True))
+            self.exports[str(row["export_id"])] = row
         elif s.startswith("UPDATE governance_verdicts SET resolution"):
             gv = self.governance_verdicts.get(str(args[-1]))
             if gv is not None:

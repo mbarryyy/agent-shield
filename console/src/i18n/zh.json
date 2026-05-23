@@ -83,6 +83,7 @@
     "colTool": "工具",
     "colPhase": "阶段",
     "colLatency": "延迟",
+    "colEvidence": "证据",
     "incidentStatus_pending": "待处理",
     "incidentStatus_resolved": "已处理",
     "incidentResolution": "处理结果",

@@ -25,7 +25,7 @@ export default function PageHeader({ title, subtitle, breadcrumbs, actions }: Pa
               {crumb.href ? (
                 <Link
                   href={crumb.href}
-                  className="font-mono text-[11px] uppercase tracking-wider text-ink-dim hover:text-ink transition-colors no-underline whitespace-nowrap"
+                  className="page-header-crumb-link font-mono text-[11px] uppercase tracking-wider text-ink-dim hover:text-ink transition-colors no-underline whitespace-nowrap"
                 >
                   {crumb.label}
                 </Link>
@@ -45,14 +45,14 @@ export default function PageHeader({ title, subtitle, breadcrumbs, actions }: Pa
             {title}
           </h1>
           {subtitle && (
-            <p className="mt-1 font-mono text-[13px] text-ink-dim break-all">
+            <p className="mt-1 font-mono text-[13px] text-ink-dim break-words">
               {subtitle}
             </p>
           )}
         </div>
 
         {actions && (
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="page-header-actions flex w-full flex-wrap items-center gap-3 shrink-0 sm:w-auto sm:justify-end">
             {actions}
           </div>
         )}

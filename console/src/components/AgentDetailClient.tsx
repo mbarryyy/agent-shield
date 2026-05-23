@@ -9,6 +9,7 @@ import CopyButton from '@/components/ui/CopyButton';
 import DataTable from '@/components/ui/DataTable';
 import type { Column } from '@/components/ui/DataTable';
 import Modal from '@/components/ui/Modal';
+import AgentApiKeysPanel from '@/components/AgentApiKeysPanel';
 import Link from 'next/link';
 import type { AgentKey, Operation } from '@elydora/shared';
 import { useTranslation } from 'react-i18next';
@@ -321,6 +322,10 @@ export default function AgentDetailClient({ agentId }: { agentId: string }) {
           keyExtractor={(row) => row.kid}
           emptyMessage={t('agentDetail.noKeys')}
         />
+      </div>
+
+      <div className="mb-6">
+        <AgentApiKeysPanel agentId={agentId} />
       </div>
 
       {/* Recent Operations */}

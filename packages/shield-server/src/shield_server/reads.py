@@ -14,20 +14,33 @@ identical logic (same discipline as `audit.query_audit`).
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from typing import Any, cast
 
 from shield_sdk.schema import Decision
 
+from ._ids import generate_uuid7
 from .audit import decode_cursor, encode_cursor
 from .config import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 from .errors import AppError
+from .export_report import render_compliance_pdf
+from .merkle import epoch_artifact_bytes, epoch_from_operation_rows, sign_eer
 from .models import (
+    EER,
     CostRollup,
     CostTokens,
+    CreateExportRequest,
     DashboardKpi,
+    Epoch,
+    ExportModel,
+    GetEpochResponseModel,
+    GetExportResponseModel,
     IncidentRow,
     IncidentsResponse,
+    ListEpochsResponse,
+    ListExportsResponse,
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
@@ -53,6 +66,182 @@ def _pct(values: list[float], q: float) -> float:
     s = sorted(values)
     idx = max(0, min(len(s) - 1, int(round(q * (len(s) - 1)))))
     return float(s[idx])
+
+
+async def _persisted_epochs(storage: Storage, org_id: str) -> list[Epoch]:
+    rows = await storage.db.fetch("SELECT * FROM epochs")
+    persisted = [Epoch.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    persisted.sort(key=lambda e: e.created_at, reverse=True)
+    return persisted
+
+
+async def _computed_epochs(storage: Storage, org_id: str) -> list[Epoch]:
+    persisted = await _persisted_epochs(storage, org_id)
+    if persisted:
+        return persisted
+
+    ops = await storage.db.fetch("SELECT * FROM operations")
+    epoch = epoch_from_operation_rows(org_id, ops)
+    if epoch is None:
+        return []
+    return [epoch]
+
+
+async def epochs(storage: Storage, org_id: str) -> ListEpochsResponse:
+    return ListEpochsResponse(epochs=await _computed_epochs(storage, org_id))
+
+
+async def epoch_detail(
+    storage: Storage, org_id: str, epoch_id: str, signing_key: str
+) -> GetEpochResponseModel:
+    persisted = await _persisted_epochs(storage, org_id)
+    candidates = persisted if persisted else await _computed_epochs(storage, org_id)
+    matches = [epoch for epoch in candidates if epoch.epoch_id == epoch_id]
+    if not matches:
+        raise AppError(404, "NOT_FOUND", "Epoch not found.")
+    epoch = matches[0]
+    artifact = await _load_json(storage, epoch.r2_epoch_key)
+    if persisted and artifact is not None and isinstance(artifact.get("eer"), dict):
+        eer = EER.model_validate(artifact["eer"])
+        if eer.epoch_id == epoch.epoch_id and eer.org_id == epoch.org_id:
+            return GetEpochResponseModel(epoch=epoch, eer=eer)
+
+    eer = sign_eer(epoch, signing_key)
+    await storage.objects.put(
+        epoch.r2_epoch_key,
+        epoch_artifact_bytes(epoch, eer),
+        "application/json",
+    )
+    return GetEpochResponseModel(epoch=epoch, eer=eer)
+
+
+async def _export_rows(storage: Storage, org_id: str) -> list[ExportModel]:
+    rows = await storage.db.fetch("SELECT * FROM exports")
+    exports = [ExportModel.model_validate(r) for r in rows if r.get("org_id") == org_id]
+    exports.sort(key=lambda e: e.created_at, reverse=True)
+    return exports
+
+
+def _export_query(params: CreateExportRequest) -> str:
+    return json.dumps(params.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+
+async def list_exports(storage: Storage, org_id: str) -> ListExportsResponse:
+    return ListExportsResponse(exports=await _export_rows(storage, org_id))
+
+
+async def create_export(
+    storage: Storage, org_id: str, params: CreateExportRequest
+) -> GetExportResponseModel:
+    if params.start_time < 0 or params.end_time < 0 or params.start_time > params.end_time:
+        raise AppError(400, "VALIDATION_ERROR", "Invalid export time range.")
+
+    ops = await storage.db.fetch("SELECT * FROM operations")
+    scoped_ops = [
+        dict(o)
+        for o in ops
+        if o["org_id"] == org_id
+        and params.start_time <= _i(o["created_at"]) <= params.end_time
+        and (params.agent_id is None or o["agent_id"] == params.agent_id)
+        and (params.operation_type is None or o["operation_type"] == params.operation_type)
+    ]
+    scoped_record_ids = {str(o["operation_id"]) for o in scoped_ops}
+
+    verdicts = await storage.db.fetch("SELECT * FROM governance_verdicts")
+    scoped_verdicts = [
+        dict(v)
+        for v in verdicts
+        if v["org_id"] == org_id and str(v["record_id"]) in scoped_record_ids
+    ]
+    now = int(time.time() * 1000)
+    export_id = generate_uuid7()
+    extension = "pdf" if params.format == "pdf" else "json"
+    key = f"{org_id}/exports/{export_id}.{extension}"
+    query = _export_query(params)
+    payload = {
+        "export_id": export_id,
+        "org_id": org_id,
+        "query": json.loads(query),
+        "generated_at": now,
+        "operations": scoped_ops,
+        "governance_verdicts": scoped_verdicts,
+        "epochs": [e.model_dump(mode="json") for e in await _computed_epochs(storage, org_id)],
+    }
+    if params.format == "pdf":
+        verdict_keys = [
+            None if v.get("r2_verdict_key") is None else str(v["r2_verdict_key"])
+            for v in scoped_verdicts
+        ]
+        verdict_bodies = [
+            body
+            for body in [await _load_json(storage, key) for key in verdict_keys]
+            if body is not None
+        ]
+        verdict_ids = {str(v["verdict_id"]) for v in scoped_verdicts}
+        intervention_log = await storage.db.fetch("SELECT * FROM intervention_log")
+        pdf_payload = {
+            **payload,
+            "verdict_bodies": verdict_bodies,
+            "intervention_log": [
+                dict(r) for r in intervention_log if str(r.get("verdict_id")) in verdict_ids
+            ],
+        }
+        await storage.objects.put(key, render_compliance_pdf(pdf_payload), "application/pdf")
+    else:
+        await storage.objects.put(
+            key,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            "application/json",
+        )
+    await storage.db.execute(
+        "INSERT INTO exports (export_id, org_id, status, query_params, r2_export_key, "
+        "created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        export_id,
+        org_id,
+        "done",
+        query,
+        key,
+        now,
+        now,
+    )
+    export = ExportModel(
+        export_id=export_id,
+        org_id=org_id,
+        status="done",
+        query_params=query,
+        r2_export_key=key,
+        created_at=now,
+        completed_at=now,
+    )
+    return GetExportResponseModel(export=export, download_url=f"/v1/exports/{export_id}/download")
+
+
+async def get_export(storage: Storage, org_id: str, export_id: str) -> GetExportResponseModel:
+    row = await storage.db.fetchrow(
+        "SELECT * FROM exports WHERE export_id = $1 AND org_id = $2", export_id, org_id
+    )
+    if row is None:
+        raise AppError(404, "NOT_FOUND", "Export not found.")
+    export = ExportModel.model_validate(row)
+    return GetExportResponseModel(export=export, download_url=f"/v1/exports/{export_id}/download")
+
+
+async def download_export(storage: Storage, org_id: str, export_id: str) -> dict[str, Any]:
+    export = (await get_export(storage, org_id, export_id)).export
+    if export.status != "done" or not export.r2_export_key:
+        raise AppError(400, "VALIDATION_ERROR", "Export not yet complete.")
+    raw = await storage.objects.get(export.r2_export_key)
+    if raw is None:
+        raise AppError(404, "NOT_FOUND", "Export artifact not found.")
+    if export.r2_export_key.endswith(".pdf"):
+        return {
+            "export_id": export.export_id,
+            "content_type": "application/pdf",
+            "filename": f"{export.export_id}.pdf",
+            "body_base64": base64.b64encode(raw).decode("ascii"),
+        }
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {"export": parsed}
 
 
 async def _load_json(storage: Storage, key: str | None) -> dict[str, Any] | None:

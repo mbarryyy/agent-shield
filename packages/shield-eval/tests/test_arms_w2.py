@@ -27,13 +27,13 @@ def test_decide_mode_override() -> None:
     assert a2.decide_mode == "http"
 
 
-def test_shield_build_skips_without_wiring() -> None:
-    """Post sdk-w2 merge the canonical Shield API resolves; with no
-    ``ShieldClient`` wiring (offline unit test — no --decide-url/--shield-agent
-    -key) ``Arm.build`` still SKIPs (never fakes) via ``ArmUnavailable``.
-    SKIP-not-fake is intact; only the guard that fires changed (canonical
-    import now succeeds → falls through to the wiring-not-configured guard)."""
-    a2 = resolve_arms(["A2"])[0]
+def test_live_http_shield_build_skips_without_wiring() -> None:
+    """Live HTTP shield mode needs explicit server/key wiring.
+
+    The default local eval A2 path now builds with an in-process mock decide
+    provider so real-LLM slices can run without standing up shield-server.
+    """
+    a2 = resolve_arms(["A2"], decide_mode="http")[0]
     with pytest.raises(ArmUnavailable) as ei:
         a2.build(MockedLLM(name="mocked-x"), mock=True)
     msg = str(ei.value)

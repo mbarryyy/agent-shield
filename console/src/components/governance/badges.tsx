@@ -1,6 +1,7 @@
 'use client';
 
 import type { Decision } from '@elydora/shared';
+import type { EvidenceLabel } from '@/types/governance';
 import { riskBand } from '@/types/governance';
 
 // Decision -> badge classes. Bands/colours are presentational only; the
@@ -50,6 +51,38 @@ export function RiskBadge({ score }: { score: number | null | undefined }) {
     <span className={`font-mono text-[12px] ${cls}`}>
       {(score ?? 0).toFixed(2)}
       <span className="text-ink-dim"> · {band}</span>
+    </span>
+  );
+}
+
+const EVIDENCE_STYLE: Record<EvidenceLabel, string> = {
+  MOCKED: 'text-amber-800 border-amber-300 bg-amber-50',
+  MEASURED: 'text-emerald-800 border-emerald-300 bg-emerald-50',
+  ESTIMATED: 'text-sky-800 border-sky-300 bg-sky-50',
+  SKIPPED: 'text-ink-dim border-border border-dashed',
+  PROVIDER_BACKED: 'text-indigo-800 border-indigo-300 bg-indigo-50',
+};
+
+export function EvidenceBadge({
+  label,
+  missingLabel = 'Evidence label required',
+}: {
+  label?: EvidenceLabel | null;
+  missingLabel?: string;
+}) {
+  if (!label) {
+    return (
+      <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-red-300 border-dashed text-red-700">
+        {missingLabel}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`font-mono text-[10px] uppercase tracking-wider px-2 py-1 border ${EVIDENCE_STYLE[label]}`}
+    >
+      {label}
     </span>
   );
 }

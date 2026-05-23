@@ -2,6 +2,7 @@
 
 import { useTranslation } from 'react-i18next';
 import type { Incident, VerdictDetail } from '@/types/governance';
+import { evidenceLabelFrom } from '@/types/governance';
 import { DecisionBadge, RiskBadge } from './badges';
 import VerdictPanel from './VerdictPanel';
 
@@ -24,6 +25,10 @@ export default function IncidentPanel({
 }) {
   const { t } = useTranslation();
   const pending = incident.status === 'pending';
+  const verdict =
+    detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
+      ? { ...detail.verdict, evidence_label: detail.evidence_label }
+      : detail?.verdict;
 
   return (
     <div className="border border-border">
@@ -49,11 +54,11 @@ export default function IncidentPanel({
       </div>
 
       <div className="p-4">
-        {detail?.verdict ? (
+        {verdict ? (
           <VerdictPanel
-            verdict={detail.verdict}
-            preExec={detail.pre_exec}
-            postExec={detail.post_exec}
+            verdict={verdict}
+            preExec={detail?.pre_exec ?? null}
+            postExec={detail?.post_exec ?? null}
           />
         ) : (
           <div className="border border-border px-4 py-8 text-center font-mono text-[12px] text-ink-dim">

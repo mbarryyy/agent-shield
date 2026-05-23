@@ -33,6 +33,12 @@ import type {
   ShieldVerdictEvent,
   DashboardKpi,
 } from '@/types/governance';
+import type {
+  ApiKeysListResponse,
+  IssueApiKeyRequest,
+  IssueApiKeyResponse,
+  OkResponse,
+} from '@/types/auth';
 import { getCsrfToken } from '@/lib/auth-client';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
@@ -250,6 +256,26 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ttl_seconds: ttlSeconds }),
       });
+    },
+
+    apiKeys: {
+      issue(body: IssueApiKeyRequest): Promise<IssueApiKeyResponse> {
+        return request<IssueApiKeyResponse>('/v1/auth/api-keys', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      },
+
+      list(): Promise<ApiKeysListResponse> {
+        return request<ApiKeysListResponse>('/v1/auth/api-keys');
+      },
+
+      revoke(apiKeyId: string): Promise<OkResponse> {
+        return request<OkResponse>(
+          `/v1/auth/api-keys/${encodeURIComponent(apiKeyId)}`,
+          { method: 'DELETE' },
+        );
+      },
     },
   },
 

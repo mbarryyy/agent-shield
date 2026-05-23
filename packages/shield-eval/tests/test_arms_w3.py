@@ -42,10 +42,10 @@ def test_a3_is_resolvable_and_builds() -> None:
     assert pipe.name.endswith("-a3")
 
 
-def test_shield_arm_without_wiring_still_skips_not_fakes() -> None:
-    # No local provider AND no real base_url/key ⇒ ArmUnavailable (SKIP), the
-    # honest behaviour for an unconfigured real path.
-    a2 = resolve_arms(["A2"])[0]
+def test_shield_arm_live_http_without_wiring_still_skips_not_fakes() -> None:
+    # Live HTTP mode still needs explicit base_url/key. The default A2 path is
+    # intentionally in-process mock decide so the real-LLM slice can run locally.
+    a2 = resolve_arms(["A2"], decide_mode="http")[0]
     with pytest.raises(ArmUnavailable) as ei:
         a2.build(MockedLLM(name="m"), mock=True, shield_wiring=ShieldWiring())
     assert "A2" in str(ei.value) and "never faked" in str(ei.value)
