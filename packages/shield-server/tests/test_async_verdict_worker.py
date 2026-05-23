@@ -7,6 +7,8 @@ import json
 import pytest
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
 from shield_governance.auditor import Auditor
 from shield_governance.channel2 import InMemoryChannel2Transport, StreamEntry, stream_key
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
@@ -137,21 +139,40 @@ async def test_post_exec_record_stream_produces_late_signed_verdict(
     assert json.loads(fields["verdict"])["signature_by_shield"]
 
 
-class _FakeRouterClient:
-    """Mirror of ``test_router_guardians._FakeRouterClient``: shape-only stub."""
+class _ToolableFakeChatModel(FakeMessagesListChatModel):
+    """``FakeMessagesListChatModel`` + no-op ``bind_tools`` so the Phase B
+    Evaluator agent (which calls ``langchain.agents.create_agent`` →
+    ``model.bind_tools(...)``) accepts it. Supervisor / Auditor scaffold also
+    consume the same model via ``RouterTextClient.invoke``/``ainvoke``.
+    """
 
-    def __init__(self, role: str, calls: list[tuple[str, str]]) -> None:
-        self._role = role
-        self._calls = calls
+    def bind_tools(self, tools, **kwargs):  # type: ignore[override,no-untyped-def]  # noqa: ARG002
+        return self
 
-    def complete(self, prompt: str, **kwargs: object) -> dict[str, object]:
-        self._calls.append((self._role, prompt))
-        return {
-            "text": "GROUNDED ok",
-            "prompt_tokens": 1,
-            "completion_tokens": 1,
-            "cost_usd": 0.0,
-        }
+
+def _evaluator_responses() -> list[AIMessage]:
+    """Two-turn evaluator: tool_call → final GROUNDED decision.
+
+    The tool result is discarded; we just need the agent loop to terminate.
+    """
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "eval_invariant_policies", "args": {}, "id": "tc-eval-1"}],
+            usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        ),
+        AIMessage(
+            content="DECISION: GROUNDED\nREASON: ok",
+            usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        ),
+    ]
+
+
+def _single_message(text: str = "PASS") -> AIMessage:
+    return AIMessage(
+        content=text,
+        usage_metadata={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    )
 
 
 class _SpyRouter(ShieldModelRouter):
@@ -172,12 +193,12 @@ class _SpyRouter(ShieldModelRouter):
 
 
 def _spy_router() -> _SpyRouter:
-    """Build a spy router with shape-only fake clients for every guardian role."""
+    """Build a spy router with per-role toolable fake BaseChatModels."""
 
-    calls: list[tuple[str, str]] = []
-
-    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:
-        return _FakeRouterClient(resolved.role, calls)
+    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
+        if resolved.role == "evaluator":
+            return _ToolableFakeChatModel(responses=_evaluator_responses())
+        return _ToolableFakeChatModel(responses=[_single_message("PASS")])
 
     guardians = {
         role: {"provider": "local", "model": f"{role}-model", "served_via": "local"}
