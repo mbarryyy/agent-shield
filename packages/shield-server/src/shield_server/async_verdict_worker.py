@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from shield_governance.auditor import Auditor
@@ -21,6 +21,8 @@ from shield_governance.channel2 import (
 )
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.graph import make_async_channel2_handler
+from shield_governance.model_router import ShieldModelRouter
+from shield_governance.router_guardians import make_router_backed_async_channel2_handler
 from shield_governance.supervisor import Supervisor
 from shield_governance.verdicts import AsyncVerdictHandoff
 from shield_sdk.schema import ShieldActionRecord
@@ -72,7 +74,17 @@ class CacheChannel2Transport:
 
 
 class AsyncVerdictWorker:
-    """Consume Channel-2 action records and publish signed late verdicts."""
+    """Consume Channel-2 action records and publish signed late verdicts.
+
+    Default production wiring (no ``evaluator``/``auditor``/``supervisor``
+    overrides) drives a router-backed handler — Evaluator hallucination check,
+    Supervisor conflict arbitration and Auditor narrative all go through
+    :class:`shield_governance.model_router.ShieldModelRouter`. Tests can still
+    pin explicit deterministic components for back-compat; in that path the
+    handler stays on the legacy ``make_async_channel2_handler`` seam (with the
+    G-7 ``key_resolver`` fix). Either path injects the kid→public-key resolver
+    via the server's ``agent_keys`` registry so chain verification works.
+    """
 
     def __init__(
         self,
@@ -83,6 +95,7 @@ class AsyncVerdictWorker:
         evaluator: Evaluator | None = None,
         auditor: Auditor | None = None,
         supervisor: Supervisor | None = None,
+        router: ShieldModelRouter | None = None,
         group: str = DEFAULT_GROUP,
         consumer: str = DEFAULT_CONSUMER,
         logger: logging.Logger | None = None,
@@ -104,13 +117,53 @@ class AsyncVerdictWorker:
                 self._settings,
             )
 
-        self._handler = make_async_channel2_handler(
-            evaluator=evaluator
-            or Evaluator(EvaluatorConfig(run_invariant=False, run_hallucination=False)),
-            auditor=auditor or Auditor(),
-            supervisor=supervisor or Supervisor(),
-            on_verdict=on_verdict,
-        )
+        key_resolver = self._build_key_resolver()
+
+        if evaluator is not None or auditor is not None or supervisor is not None:
+            # Legacy explicit-component path (tests + back-compat).
+            self._handler = make_async_channel2_handler(
+                evaluator=evaluator or Evaluator(EvaluatorConfig()),
+                auditor=auditor or Auditor(),
+                supervisor=supervisor or Supervisor(),
+                on_verdict=on_verdict,
+                key_resolver=key_resolver,
+            )
+        else:
+            # Default production: router-backed guardians + run_invariant/
+            # run_hallucination defaulting to True (EvaluatorConfig defaults).
+            self._router = router or ShieldModelRouter.from_profile(settings.router_profile)
+            self._handler = make_router_backed_async_channel2_handler(
+                router=self._router,
+                evaluator_config=EvaluatorConfig(),
+                on_verdict=on_verdict,
+                key_resolver=key_resolver,
+            )
+
+    def _build_key_resolver(self) -> Callable[[str], Awaitable[str | None]]:
+        """Build a kid→public-key resolver backed by the ``agent_keys`` table.
+
+        Mirrors the precedent used by the sync ingest path in
+        ``shield_server.governance.record``: look up ``(kid)`` in
+        ``agent_keys`` and return the stored base64url public key for
+        non-revoked, non-retired keys. Returning ``None`` lets Auditor
+        skip signature verification rather than fall back to the historical
+        kid-as-key bug.
+        """
+        storage = self._storage
+
+        async def _resolve(kid: str) -> str | None:
+            row = await storage.db.fetchrow(
+                "SELECT public_key, status FROM agent_keys WHERE kid = $1",
+                kid,
+            )
+            if row is None:
+                return None
+            status = row["status"]
+            if status in ("revoked", "retired"):
+                return None
+            return str(row["public_key"])
+
+        return _resolve
 
     async def run_once(
         self,

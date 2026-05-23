@@ -17,6 +17,7 @@ from shield_sdk.schema import (
 from shield_governance.auditor import Auditor, AuditResult
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.evidence import GuardianEvidenceRecorder
+from shield_governance.graph import _resolve_pubkey
 from shield_governance.model_router import ShieldModelRouter
 from shield_governance.router_runtime import RouterCallMeasurement, RouterTextClient
 from shield_governance.supervisor import (
@@ -197,7 +198,18 @@ def make_router_backed_async_channel2_handler(
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
     on_verdict: Callable[[AsyncVerdictHandoff], Awaitable[None]] | None = None,
+    key_resolver: Callable[[str], Awaitable[str | None] | str | None] | None = None,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
+    """Build the router-backed async Channel-2 handler.
+
+    ``key_resolver`` resolves ``record.agent_pubkey_kid`` to the base64url
+    Ed25519 public key required by Auditor chain verification. Production
+    callers MUST inject a resolver wired to the server's ``agent_keys``
+    registry (see ``shield_server.governance`` for the sync ingest precedent
+    that already uses ``agent_keys`` lookup). When no resolver is provided the
+    audit step skips signature verification rather than pass the kid as a key.
+    May be sync or async.
+    """
     guardians = build_router_backed_guardians(
         router,
         evidence_recorder=evidence_recorder,
@@ -206,9 +218,8 @@ def make_router_backed_async_channel2_handler(
 
     async def handle(record: ShieldActionRecord) -> None:
         eval_result = await guardians.evaluator.evaluate(record)
-        audit_result = guardians.auditor.audit(
-            [record], agent_pubkey_b64url=record.agent_pubkey_kid
-        )
+        public_key = await _resolve_pubkey(key_resolver, record)
+        audit_result = guardians.auditor.audit([record], agent_pubkey_b64url=public_key)
         _record_auditor_if_absent(guardians.evidence_recorder, record, audit_result)
         signals = GuardianSignals(
             defender_decision=Decision.PASS,

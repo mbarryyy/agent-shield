@@ -127,6 +127,16 @@ class MemoryDatabase:
         if s.startswith("SELECT * FROM agent_keys WHERE kid"):
             row = self.agent_keys.get(str(args[0]))
             return None if row is None else (dict(row) if row["agent_id"] == args[1] else None)
+        if s.startswith("SELECT public_key, status FROM agent_keys WHERE kid"):
+            row = self.agent_keys.get(str(args[0]))
+            return (
+                None
+                if row is None
+                else {
+                    "public_key": row["public_key"],
+                    "status": row["status"],
+                }
+            )
         if s.startswith("SELECT chain_hash, seq_no FROM operations WHERE agent_id"):
             owned = [o for o in self.operations.values() if o["agent_id"] == args[0]]
             if not owned:

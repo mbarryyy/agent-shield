@@ -134,6 +134,12 @@ async def test_router_backed_async_handler_attaches_guardian_evidence_to_handoff
         evidence_recorder=recorder,
         evaluator_config=EvaluatorConfig(run_invariant=False, run_hallucination=True),
         on_verdict=sink,
+        # _record() sets ``agent_pubkey_kid = PUB`` (i.e. the kid string IS the
+        # base64url public key in this fixture) — give the audit step the
+        # matching public key via an identity resolver so chain verification
+        # succeeds. Production wiring resolves the kid via the server's
+        # ``agent_keys`` registry instead (see AsyncVerdictWorker).
+        key_resolver=lambda kid: kid,
     )
     await handler(_record(run_id="async-router-run"))
 
