@@ -59,7 +59,15 @@ def test_run_ab_full_mock_writes_144_cell_summary_and_case_rows(tmp_path) -> Non
     assert {row["arm"] for row in cases} == {"A0", "A0b", "A1", "A2", "A3"}
 
 
-def test_full_grid_http_backend_is_separated_and_skipped_not_measured(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_full_grid_http_backend_runs_measured_via_real_server_transport(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """F1 (Phase F, EM-2): the http backend drives the real shield decide()
+    in-process via decide.real_server_transport() and produces MEASURED
+    per-case rows from the AgentDojo oracle — NOT a fabricated template.
+
+    Scope-capped to one user_task × one injection_task × two arms so the
+    test stays under a few seconds while still exercising the real ASGI
+    transport + sdk ShieldClient round-trip end-to-end.
+    """
     summary_path = tmp_path / "http_grid_summary.json"
     cases_path = tmp_path / "http_grid_cases.json"
 
@@ -70,6 +78,77 @@ def test_full_grid_http_backend_is_separated_and_skipped_not_measured(tmp_path) 
             "banking",
             "--backend",
             "http",
+            "--arms",
+            "A0,A2",
+            "--user-task",
+            "user_task_2",
+            "--injection-task",
+            "injection_task_6",
+            "--metrics-out",
+            str(summary_path),
+            "--cases-out",
+            str(cases_path),
+        ]
+    )
+
+    assert rc == 0
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
+
+    assert summary["backend"] == "http"
+    assert summary["run_label"] == "MEASURED-INLINE-DECIDE"
+    assert "skip_reason" not in summary  # measured path, not skipped
+    assert {row["backend"] for row in cases} == {"http"}
+    assert {row["evidence_label"] for row in cases} == {"MEASURED-INLINE-DECIDE"}
+    # Each cell carries a MEASURED security boolean (not None) from the
+    # AgentDojo oracle, and a real shield decision (not "SKIPPED").
+    assert all(isinstance(row["security"], bool) for row in cases)
+    assert all(row["decision"] != "SKIPPED" for row in cases)
+    # The InjectionTask6 cell on the A2 shield arm MUST block (HG#5
+    # model-free path) and produce $30k prevented_loss.
+    a2_inj6 = next(
+        row
+        for row in cases
+        if row["arm"] == "A2" and row["injection_task_id"] == "injection_task_6"
+    )
+    assert a2_inj6["security"] is True
+    assert a2_inj6["decision"] == "BLOCK"
+    assert a2_inj6["prevented_loss_usd"] == 30_000.0
+    # Per-guardian schema is exposed but empty pre-Phase-A (never fabricated).
+    assert a2_inj6["per_guardian"] == []
+
+
+def test_full_grid_http_backend_skips_honestly_when_real_gov_unavailable(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """F1: when ``decide.real_server_transport()`` raises ``RealGovUnavailable``
+    the http path SKIPs honestly (never fabricates a real-graph result).
+    The skip_reason captures the upstream error verbatim so reviewers see
+    *why* execution didn't happen, not just that it didn't.
+    """
+    from shield_eval import decide
+
+    def _boom():  # type: ignore[no-untyped-def]
+        raise decide.RealGovUnavailable("simulated real-gov unavailable for F1 fallback test")
+
+    monkeypatch.setattr(decide, "real_server_transport", _boom)
+
+    summary_path = tmp_path / "http_skipped_summary.json"
+    cases_path = tmp_path / "http_skipped_cases.json"
+
+    rc = run_ab.main(
+        [
+            "--full",
+            "--suite",
+            "banking",
+            "--backend",
+            "http",
+            "--arms",
+            "A0,A2",
+            "--user-task",
+            "user_task_2",
+            "--injection-task",
+            "injection_task_6",
             "--metrics-out",
             str(summary_path),
             "--cases-out",
@@ -83,6 +162,7 @@ def test_full_grid_http_backend_is_separated_and_skipped_not_measured(tmp_path) 
 
     assert summary["backend"] == "http"
     assert summary["run_label"] == "SKIPPED"
-    assert summary["skip_reason"] == "HTTP_FULL_GRID_NOT_EXECUTED_IN_CI"
-    assert {row["backend"] for row in cases} == {"http"}
+    assert "REAL_GOV_UNAVAILABLE" in summary["skip_reason"]
     assert {row["evidence_label"] for row in cases} == {"SKIPPED"}
+    assert {row["decision"] for row in cases} == {"SKIPPED"}
+    assert {row["security"] for row in cases} == {None}

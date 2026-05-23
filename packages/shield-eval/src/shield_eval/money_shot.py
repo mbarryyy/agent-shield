@@ -97,13 +97,62 @@ def _pct(sorted_vals: list[float], p: int) -> float:
 class _DecisionSink:
     decisions: dict[str, str] = field(default_factory=dict)
     latencies_ms: list[float] = field(default_factory=list)
+    # F3 (Phase F, EM-6): forward-compat per-guardian passthrough. Pre-Phase-A
+    # the inline /decide verdict has no ``guardian_evidence`` attribute and
+    # this list stays empty — schema READY, NEVER fabricated. Post-Phase-A
+    # the same passthrough auto-populates from the gov-surfaced
+    # ``verdict.guardian_evidence`` tuple (see
+    # shield_governance.verdicts.AsyncVerdictHandoff).
+    per_guardian: list[dict[str, Any]] = field(default_factory=list)
+    _seen_guardian_rows: set[tuple[str, str]] = field(default_factory=set)
+
+
+def _serialize_guardian_evidence(row: Any) -> dict[str, Any]:
+    """Snapshot a ``GuardianEvidence``-like row into a JSON-safe dict.
+
+    Forward-compat across the gov contract: tolerates either dataclass
+    attribute access (the canonical ``shield_governance.evidence.GuardianEvidence``)
+    or dict access (fixture / test shimming). The serialised shape mirrors
+    the gov dataclass fields verbatim — pure passthrough, never recomputed.
+    """
+
+    def _attr(obj: Any, name: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
+    def _enum_value(obj: Any) -> str:
+        if obj is None:
+            return ""
+        v = getattr(obj, "value", None)
+        return str(v) if v is not None else str(obj)
+
+    reasons = _attr(row, "reasons", ()) or ()
+    if not isinstance(reasons, list | tuple):
+        reasons = [reasons]
+    return {
+        "guardian": _enum_value(_attr(row, "guardian")),
+        "decision": _enum_value(_attr(row, "decision")),
+        "reasons": [str(r) for r in reasons],
+        "model_id": _attr(row, "model_id"),
+        "served_via": _enum_value(_attr(row, "served_via")) or None,
+        "prompt_tokens": int(_attr(row, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(_attr(row, "completion_tokens", 0) or 0),
+        "latency_ms": float(_attr(row, "latency_ms", 0.0) or 0.0),
+        "cost_usd": float(_attr(row, "cost_usd", 0.0) or 0.0),
+    }
 
 
 class _DecisionTap(BasePipelineElement):  # type: ignore[misc]  # agentdojo base untyped
     """Eval-owned, read-only tail element: snapshots the sdk-owned
     ``extra_args["shield"]["decisions"][key].verdict.decision`` (canonical W2
     contract) so the artifact's ``decision_mix`` is the *real* verdict trail,
-    not asserted. Touches no sdk element; pure pass-through."""
+    not asserted. Touches no sdk element; pure pass-through.
+
+    F3 (EM-6): also passes-through any ``verdict.guardian_evidence`` that gov
+    surfaces post-Phase-A — schema ready, never fabricated, dedup keyed on
+    (record_id, guardian) so a multi-tool turn does not double-count.
+    """
 
     def __init__(self, sink: _DecisionSink) -> None:
         self.name = "eval-decision-tap"
@@ -126,6 +175,19 @@ class _DecisionTap(BasePipelineElement):  # type: ignore[misc]  # agentdojo base
                 lat = getattr(verdict, "latency_ms", None)
                 if isinstance(lat, int | float):
                     self._sink.latencies_ms.append(float(lat))
+            # F3 passthrough — empty pre-Phase-A, auto-populates post-Phase-A.
+            evidence = getattr(verdict, "guardian_evidence", None) or ()
+            for row in evidence:
+                rec_id = str(getattr(row, "record_id", "") or "")
+                guardian_obj = getattr(row, "guardian", None)
+                guardian_name = getattr(guardian_obj, "value", None) or (
+                    str(guardian_obj) if guardian_obj else "unknown"
+                )
+                seen_key = (rec_id, str(guardian_name))
+                if seen_key in self._sink._seen_guardian_rows:
+                    continue
+                self._sink._seen_guardian_rows.add(seen_key)
+                self._sink.per_guardian.append(_serialize_guardian_evidence(row))
         return query, runtime, env, messages, extra_args
 
 
@@ -143,6 +205,10 @@ class ArmOutcome:
     latency_p50_ms: float
     latency_p95_ms: float
     served_via: str
+    # F3 (EM-6): per-guardian evidence rows passed through from the gov
+    # ``verdict.guardian_evidence`` tuple. Empty pre-Phase-A; auto-populates
+    # post-Phase-A. Never fabricated by eval.
+    per_guardian: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _score_arm(
@@ -168,7 +234,18 @@ def _score_arm(
         pipeline = arm.build(llm, mock=True, shield_wiring=shield_wiring)
     except ArmUnavailable as e:
         return ArmOutcome(
-            arm.key, defense_label, False, str(e), None, "SKIPPED", 0.0, {}, 0, 0.0, 0.0, "n/a"
+            arm=arm.key,
+            defense_label=defense_label,
+            available=False,
+            skip_reason=str(e),
+            attack_succeeded=None,
+            oracle_verdict="SKIPPED",
+            prevented_loss_total=0.0,
+            decision_mix={},
+            governance_tokens=0,
+            latency_p50_ms=0.0,
+            latency_p95_ms=0.0,
+            served_via="n/a",
         )
 
     sink = _DecisionSink()
@@ -210,13 +287,71 @@ def _score_arm(
         latency_p50_ms=_pct(lat, 50),
         latency_p95_ms=_pct(lat, 95),
         served_via="local",
+        # F3 (EM-6): passthrough — empty pre-Phase-A, populated post-Phase-A.
+        per_guardian=list(sink.per_guardian),
     )
+
+
+def _aggregate_per_guardian(outcomes: list[ArmOutcome]) -> dict[str, Any]:
+    """Aggregate the passed-through per-guardian rows across all shield arms.
+
+    F3 (EM-6): produces ``{by_guardian: [...], totals: {...},
+    evidence_label: MEASURED|PENDING_PHASE_A}`` as a sibling of the locked
+    seam-4 ``cost_rollup``. We do NOT extend ``cost_rollup`` itself: the
+    W3 LOCKED SEAM-4 byte-for-byte mirror with server hook#5 must stay
+    unchanged (extending it requires a server-side mirror update routed
+    through team-lead). Pre-Phase-A every row count is 0 and the
+    evidence_label is ``PENDING_PHASE_A`` — honest, never fabricated.
+    """
+    rows: list[dict[str, Any]] = []
+    for o in outcomes:
+        if not o.available:
+            continue
+        rows.extend(o.per_guardian)
+    by_guardian: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        g = str(row.get("guardian") or "unknown")
+        slot = by_guardian.setdefault(
+            g,
+            {
+                "guardian": g,
+                "row_count": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "latency_ms": 0.0,
+                "cost_usd": 0.0,
+            },
+        )
+        slot["row_count"] += 1
+        slot["prompt_tokens"] += int(row.get("prompt_tokens", 0) or 0)
+        slot["completion_tokens"] += int(row.get("completion_tokens", 0) or 0)
+        slot["latency_ms"] += float(row.get("latency_ms", 0.0) or 0.0)
+        slot["cost_usd"] += float(row.get("cost_usd", 0.0) or 0.0)
+    totals = {
+        "row_count": sum(int(s["row_count"]) for s in by_guardian.values()),
+        "prompt_tokens": sum(int(s["prompt_tokens"]) for s in by_guardian.values()),
+        "completion_tokens": sum(int(s["completion_tokens"]) for s in by_guardian.values()),
+        "latency_ms": sum(float(s["latency_ms"]) for s in by_guardian.values()),
+        "cost_usd": sum(float(s["cost_usd"]) for s in by_guardian.values()),
+    }
+    return {
+        "by_guardian": sorted(by_guardian.values(), key=lambda s: str(s["guardian"])),
+        "totals": totals,
+        "evidence_label": "MEASURED" if rows else "PENDING_PHASE_A",
+        "tag": (
+            "MEASURED — passthrough of gov verdict.guardian_evidence (W4+ "
+            "router-backed channel-2 handler). Empty pre-Phase-A: schema "
+            "ready, never fabricated; auto-populates when gov surfaces "
+            "guardian_evidence on the inline /decide verdict."
+        ),
+    }
 
 
 def build_artifact(outcomes: list[ArmOutcome], *, real: bool) -> dict[str, Any]:
     a0b = next((o for o in outcomes if o.arm not in ("A1", "A2", "A3")), None)
     shield = next((o for o in outcomes if o.arm in ("A2", "A3") and o.available), None)
     prevented = shield.prevented_loss_total if shield else 0.0
+    per_guardian_rollup = _aggregate_per_guardian(outcomes)
     return {
         "schema_version": "w3-locked-seam.v1",
         "schema_status": (
@@ -262,6 +397,8 @@ def build_artifact(outcomes: list[ArmOutcome], *, real: bool) -> dict[str, Any]:
                     "deterministic path, real values under --real)"
                 ),
                 "served_via": o.served_via,
+                # F3 (EM-6): per-arm passthrough; empty pre-Phase-A.
+                "per_guardian": list(o.per_guardian),
             }
             for o in outcomes
         ],
@@ -290,6 +427,12 @@ def build_artifact(outcomes: list[ArmOutcome], *, real: bool) -> dict[str, Any]:
             "cloud_cost_per_1k": "ESTIMATED (parametric) — commercial cost model, not hook#5",
             "enterprise_framing": "FRAMING — $4.2M/Amazon (Round-1 narrative only)",
         },
+        # F3 (EM-6): sibling-of-cost_rollup per-guardian rollup. Lives OUTSIDE
+        # the W3 LOCKED SEAM-4 cost_rollup so server hook#5's byte-for-byte
+        # mirror obligation is unchanged; gov surfacing of per-guardian
+        # evidence is additive. Pre-Phase-A: empty by_guardian + zero totals
+        # + evidence_label=PENDING_PHASE_A — honest, never fabricated.
+        "per_guardian_rollup": per_guardian_rollup,
         "headline": {
             "strawman_arm": a0b.arm if a0b else None,
             "strawman_oracle": a0b.oracle_verdict if a0b else None,
