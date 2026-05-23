@@ -1,4 +1,7 @@
-"""LangGraph 1.2.0 governance graph — W3 real 4-guardian.
+"""LangGraph 1.2.0 governance graph — deterministic 2-node sync gate + async
+router-backed Channel-2 handler. Evaluator = real ``create_agent`` LLM agent
+per M2 Phase B; Supervisor/Auditor still single-prompt scaffold pending
+future agentic upgrade.
 
 * **Sync /decide hot path** (``build_decide_app`` → ``decide``): model-free
   ``DefenderEngine`` (UN-FLAGGED, ``enabled=True``) → deterministic

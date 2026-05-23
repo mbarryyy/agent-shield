@@ -5,9 +5,11 @@ Division of ownership (master §1.2 step 3 / §2.3 / §3.2):
     shield-server key, via ``shield_sdk.canonical.finalize_verdict``),
     ``intervention_log`` write, Channel-2 XADD, latency/served_at — and the
     chained record identity.
-  * GOVERNANCE owns: the verdict DECISION — the real LangGraph 4-guardian
-    aggregate. It returns an **UNSIGNED** ``GovernanceVerdict``; the server
-    signs it (server holds the key, W2 HG#1 carry-forward).
+  * GOVERNANCE owns: the verdict DECISION — the gov ``decide()`` aggregate
+    (deterministic Defender + ``create_agent`` Evaluator agent per M2
+    Phase B + single-prompt Supervisor/Auditor scaffold). It returns an
+    **UNSIGNED** ``GovernanceVerdict``; the server signs it (server holds
+    the key, W2 HG#1 carry-forward).
 
 Pre-warmed ONCE at server startup into ``app.state.governance`` (master §1.2
 step 3 / §2.3 "pre-warmed LangGraph app, no cold start in the 500 ms budget").
@@ -54,7 +56,7 @@ class NullGovernanceApp:
 
     This is NOT a real governance verdict and is labelled as such in
     ``reasons[]`` — it keeps the server independently green until the real
-    LangGraph 4-guardian app is wired (gov Task #21), exactly the W2
+    gov ``decide()`` app is wired (gov Task #21), exactly the W2
     stub→PASS discipline carried into the W3 seam.
     """
 
@@ -71,7 +73,7 @@ class NullGovernanceApp:
                     label="STUB_PASS",
                     detail=(
                         "server decide-seam default (NullGovernanceApp) — real "
-                        "LangGraph 4-guardian verdict pending gov Task #21."
+                        "gov decide() verdict pending gov Task #21."
                     ),
                     score=0.0,
                 )

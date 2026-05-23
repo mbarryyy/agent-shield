@@ -5,10 +5,13 @@ one YAML swap turns the cloud demo into the zero-egress air-gapped SKU (moat #7)
 
 W1: ShieldModelRouter + model-free deterministic Defender + InjectionTask6
 thesis. W2: live spine wired to Channel-2, flag-gated DefenderEngine,
-token-counter hook#1. W3/W4: real 4-guardian — un-flagged Defender +
-Supervisor + Evaluator + Auditor; ``build_decide_app``/``decide`` (server
-PR-S1, UNSIGNED canonical-stable), ``resume`` (HITL, PR-S5), async verdict
-handoff to the server signing/publish boundary.
+token-counter hook#1. W3/W4: un-flagged deterministic Defender (sync
+``build_decide_app``/``decide`` — server PR-S1, UNSIGNED canonical-stable)
++ ``resume`` (HITL, PR-S5) + async verdict handoff to the server signing/
+publish boundary. M2 Phase B: Evaluator upgraded to a real
+``langchain.agents.create_agent`` LLM agent with two bound tools and
+self-correction; Supervisor and Auditor remain single-prompt router-backed
+scaffold and their agentic upgrade is future work.
 """
 
 from __future__ import annotations
