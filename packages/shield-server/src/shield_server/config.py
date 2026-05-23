@@ -66,6 +66,11 @@ DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 3600  # sliding 7 days
 AuthMode = Literal["open", "enterprise", "api_token_only"]
 EmailBackend = Literal["console", "file", "smtp"]
 
+# Governance LLM-router profile (cloud vs local/air-gapped) — selects which
+# ``packages/shield-governance/src/shield_governance/config/models.<profile>.yaml``
+# the async verdict worker loads to back the router-driven guardians.
+RouterProfile = Literal["cloud", "local"]
+
 
 def _parse_kid_list(raw: str | None) -> tuple[tuple[str, str], ...]:
     """Parse a ``kid:secret,kid:secret`` env list into an ordered tuple.
@@ -196,6 +201,11 @@ class Settings:
     ratelimit_redis_url: str | None = None
     public_base_url: str = "http://localhost:3000"
 
+    # M2 / Phase A — governance router profile (cloud or local/air-gapped).
+    # Selects which ``models.<profile>.yaml`` the async verdict worker hands to
+    # the router-backed guardians. ``cloud`` matches the existing W3 demo path.
+    router_profile: RouterProfile = "cloud"
+
     @property
     def is_enterprise(self) -> bool:
         return self.auth_mode == "enterprise"
@@ -236,6 +246,13 @@ class Settings:
                 f"SHIELD_EMAIL_BACKEND must be one of console|file|smtp; got {email_backend_raw!r}"
             )
         email_backend: EmailBackend = email_backend_raw  # type: ignore[assignment]
+
+        router_profile_raw = os.environ.get("SHIELD_ROUTER_PROFILE", "cloud").lower()
+        if router_profile_raw not in ("cloud", "local"):
+            raise RuntimeError(
+                f"SHIELD_ROUTER_PROFILE must be one of cloud|local; got {router_profile_raw!r}"
+            )
+        router_profile: RouterProfile = router_profile_raw  # type: ignore[assignment]
 
         # Cookie Secure attribute defaults True in enterprise mode (HTTPS-only
         # cookies); local-dev override via SHIELD_ALLOW_INSECURE_COOKIES=1.
@@ -288,6 +305,7 @@ class Settings:
             session_ttl_seconds=_env_int("SHIELD_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS),
             ratelimit_redis_url=os.environ.get("SHIELD_RATELIMIT_REDIS_URL") or None,
             public_base_url=os.environ.get("SHIELD_PUBLIC_BASE_URL", "http://localhost:3000"),
+            router_profile=router_profile,
         )
 
     def with_allow_open_auth(self, allow: bool) -> Settings:

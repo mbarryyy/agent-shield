@@ -358,14 +358,43 @@ def build_full_grid_metrics_report(
     )
 
     metric_label = evidence_label
+    # F1 (Phase F, EM-2): ``MEASURED-INLINE-DECIDE`` — values from REAL
+    # benchmark_suite_with_injections via decide.real_server_transport()
+    # with the MockedLLM worker (keyless, CI-runnable).
+    # F2 (Phase F, EM-3): ``MEASURED-REAL-MODEL`` — same plumbing as F1
+    # but with the REAL provider model as the worker LLM (M3 execution —
+    # gated on ``--execute-real-run`` + ``ANTHROPIC_API_KEY``; NEVER
+    # entered in CI without an explicit M3 flip).
+    # Both labels are "MEASURED" against the AgentDojo oracle; what differs
+    # is whether the worker is MockedLLM (F1) or a real provider (F2/M3).
+    # NEVER fabricated; pre-Phase-A vs post-Phase-A nuance handled by the
+    # source strings below.
+    measured_inline = metric_label == "MEASURED-INLINE-DECIDE"
+    measured_real = metric_label == "MEASURED-REAL-MODEL"
+    measured = measured_inline or measured_real
+    populated = metric_label == "MOCKED" or measured
+    if metric_label == "MOCKED":
+        asr_source = "Full 16x9 banking grid under CI mock path"
+    elif measured_inline:
+        asr_source = (
+            "MEASURED — AgentDojo security() oracle across the full grid via "
+            "the real shield decide() (decide.real_server_transport()) with "
+            "the deterministic MockedLLM worker (F1)"
+        )
+    elif measured_real:
+        asr_source = (
+            "MEASURED — AgentDojo security() oracle across the full grid via "
+            "the real shield decide() with a REAL provider model as worker "
+            "(F2 wiring; M3 execution via --execute-real-run + protected key)"
+        )
+    else:
+        asr_source = "Full-grid backend path was not executed"
     values = {
         "asr": _metric(
             _ratio(attack_successes, attack_total),
             label=metric_label,
             unit="rate",
-            source="Full 16x9 banking grid under CI mock path"
-            if metric_label == "MOCKED"
-            else "Full-grid backend path was not executed",
+            source=asr_source,
         ),
         "utility_retention": _metric(
             _ratio(utility_ok, utility_total),
@@ -392,28 +421,56 @@ def build_full_grid_metrics_report(
             source="Per-case full-grid latency rows",
         ),
         "token_overhead_total": _metric(
-            token_overhead if metric_label == "MOCKED" else None,
+            token_overhead if populated else None,
             label=metric_label,
             unit="tokens",
-            source="Mock grid uses deterministic zero-token governance",
+            source=(
+                "Mock grid uses deterministic zero-token governance"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — inline /decide path is keyless + model-free "
+                    "pre-Phase-A; tokens auto-populate when router-backed "
+                    "guardians surface evidence post-Phase-A"
+                )
+                if measured
+                else "Token counter not populated outside the mock / measured paths"
+            ),
         ),
         "prevented_loss_usd": _metric(
-            prevented_loss if metric_label == "MOCKED" else None,
+            prevented_loss if populated else None,
             label=metric_label,
             unit="USD",
-            source="Mock InjectionTask6-at-risk amount only; not measured provider loss",
+            source=(
+                "Mock InjectionTask6-at-risk amount only; not measured provider loss"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — AgentDojo InjectionTask6 env-diff oracle "
+                    "($30,000 per BLOCKED cell; never recomputed)"
+                )
+                if measured
+                else "Not populated outside the mock / measured paths"
+            ),
         ),
         "estimated_cost_usd": _metric(
-            0.0 if metric_label == "MOCKED" else None,
+            0.0 if populated else None,
             label=metric_label,
             unit="USD",
-            source="Default mock grid performs no provider calls",
+            source=(
+                "Default mock grid performs no provider calls"
+                if metric_label == "MOCKED"
+                else (
+                    "MEASURED — inline /decide path is keyless; per-guardian "
+                    "cost flows in via the F3 passthrough post-Phase-A"
+                )
+                if measured
+                else "Not populated outside the mock / measured paths"
+            ),
         ),
         "benefit_cost_usd": _metric(
-            prevented_loss if metric_label == "MOCKED" else None,
+            prevented_loss if populated else None,
             label=metric_label,
             unit="USD",
-            source="prevented_loss_usd - estimated_cost_usd for the mock grid",
+            source="prevented_loss_usd - estimated_cost_usd",
         ),
         "benefit_cost_ratio": _metric(
             None,
@@ -440,10 +497,32 @@ def build_full_grid_metrics_report(
             "malicious_trials": attack_total,
             "false_positives": 0,
         },
-        "notes": [
-            "Default full-grid evidence is MOCKED and CI-friendly.",
-            "Provider-backed execution requires an explicit later run.",
-        ],
+        "notes": (
+            [
+                "MEASURED-INLINE-DECIDE (F1): per-cell oracle scoring via "
+                "decide.real_server_transport() — real shield_server.create_app "
+                "+ load_governance_app() in-process. Inline /decide measures the "
+                "deployed gov surface (2-node pre-Phase-A; router-backed "
+                "post-Phase-A — no code change here). Worker = MockedLLM (keyless).",
+                "Provider-backed real-model ASR remains a future step (M3 = AndyHu).",
+            ]
+            if measured_inline
+            else (
+                [
+                    "MEASURED-REAL-MODEL (F2 wiring; M3 execution): per-cell "
+                    "oracle scoring via decide.real_server_transport() with a "
+                    "REAL provider model as worker LLM. Gated on "
+                    "--execute-real-run + ANTHROPIC_API_KEY + budget OK; default "
+                    "OFF, CI never enters this branch. Quotable only after an "
+                    "explicit M3 run in a protected environment.",
+                ]
+                if measured_real
+                else [
+                    "Default full-grid evidence is MOCKED and CI-friendly.",
+                    "Provider-backed execution requires an explicit later run.",
+                ]
+            )
+        ),
     }
     if skip_reason:
         report["skip_reason"] = skip_reason

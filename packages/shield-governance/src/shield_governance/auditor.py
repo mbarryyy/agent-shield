@@ -100,14 +100,16 @@ class Auditor:
         self._latest_merkle: MerkleVerification | None = None
         self._dag = ProvenanceGraph()
 
-    def audit(self, records: list[ShieldActionRecord], *, agent_pubkey_b64url: str) -> AuditResult:
+    def audit(
+        self, records: list[ShieldActionRecord], *, agent_pubkey_b64url: str | None
+    ) -> AuditResult:
         if not records:
             return AuditResult(1.0, False, [], False)
 
         valid = 0
         for rec in records:
             self._dag.add_record(rec)
-            if rec.signature and verify_record(rec, agent_pubkey_b64url):
+            if rec.signature and agent_pubkey_b64url and verify_record(rec, agent_pubkey_b64url):
                 valid += 1
         integrity = valid / len(records)
         chain_broken = valid != len(records)

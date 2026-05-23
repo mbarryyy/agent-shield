@@ -1,7 +1,7 @@
 [project]
 name = "shield-governance"
 version = "0.1.0"
-description = "Agent Shield Layer-2: LangGraph 4-guardian graph + ShieldModelRouter (zero-egress local-serving moat)"
+description = "Agent Shield Layer-2: deterministic Defender sync gate + async router-backed Channel-2 handler (Evaluator create_agent LLM agent per M2 Phase B; Supervisor/Auditor single-prompt scaffold) + ShieldModelRouter (zero-egress local-serving moat)"
 requires-python = ">=3.11"
 dependencies = [
     "shield-sdk",
@@ -10,6 +10,12 @@ dependencies = [
     # W2 ACTIVATED — §5b-verified first-hand against Related_Work clones
     # 2026-05-19 (cited inline in the modules that use them):
     "langgraph>=1.2",      # langgraph/libs/langgraph/pyproject.toml version=1.2.0; MIT LICENSE:1
+    # M2 / ADR-0009 — model_factory returns BaseChatModel so create_agent
+    # accepts it directly. ChatAnthropic for the cloud SKU, ChatOpenAI for
+    # the OpenAI-compatible local SKU (vLLM via base_url; moat #7 intact).
+    "langchain>=0.3",
+    "langchain-anthropic>=0.2",
+    "langchain-openai>=0.2",
     "invariant-ai==0.3.5", # invariant/pyproject.toml name="invariant-ai" version=0.3.5; Apache LICENSE:1 — LocalPolicy ONLY
     "redis>=5.0",          # Channel-2 Redis Streams consumer (XREADGROUP/XACK)
     # W3 (deferred): langgraph-checkpoint-postgres (HITL interrupt + time-travel

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shield_sdk.schema import (
     Decision,
@@ -17,6 +18,7 @@ from shield_sdk.schema import (
 from shield_governance.auditor import Auditor, AuditResult
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.evidence import GuardianEvidenceRecorder
+from shield_governance.graph import _resolve_pubkey
 from shield_governance.model_router import ShieldModelRouter
 from shield_governance.router_runtime import RouterCallMeasurement, RouterTextClient
 from shield_governance.supervisor import (
@@ -25,6 +27,10 @@ from shield_governance.supervisor import (
     Supervisor,
 )
 from shield_governance.verdicts import AsyncVerdictHandoff
+
+if TYPE_CHECKING:
+    from shield_governance.defender.scanners import LocalPolicyStructuringAnalyzer
+    from shield_governance.evaluator_agent import EvaluatorAgentMemory
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,56 +42,131 @@ class RouterBackedGuardians:
 
 
 class RouterHallucinationChecker:
-    """Evaluator hallucination/value-sanity seam backed by the model router."""
+    """Evaluator hallucination / value-sanity seam.
 
-    def __init__(self, router: ShieldModelRouter, evidence_recorder: GuardianEvidenceRecorder):
-        self._caller = RouterTextClient(router, "evaluator")
+    Phase B upgrades the internal implementation from a single prompt → single
+    completion (``RouterTextClient.acomplete``) to a real
+    :func:`langchain.agents.create_agent` LLM agent that plans, calls bound
+    tools, and can self-correct before producing a verdict. **The class
+    signature is unchanged** — :class:`Evaluator` still injects a
+    :class:`HallucinationChecker` and awaits ``check(record, trace)``; only
+    the inside changes. See :mod:`shield_governance.evaluator_agent` for the
+    agent, its bound tools, and the honest downgrade note re. G-4 / Chroma.
+    """
+
+    def __init__(
+        self,
+        router: ShieldModelRouter,
+        evidence_recorder: GuardianEvidenceRecorder,
+        *,
+        memory: EvaluatorAgentMemory | None = None,
+        analyzer: LocalPolicyStructuringAnalyzer | None = None,
+    ) -> None:
+        # Lazy imports so the module's existing import graph isn't perturbed
+        # for callers that never construct a Phase-B Evaluator agent.
+        from shield_governance.defender.scanners import LocalPolicyStructuringAnalyzer
+        from shield_governance.evaluator_agent import EvaluatorAgentMemory
+
+        self._router = router
         self._evidence = evidence_recorder
+        self._memory = memory or EvaluatorAgentMemory()
+        self._analyzer = analyzer or LocalPolicyStructuringAnalyzer()
+        # Spy hook for the discriminative tests; production leaves it None.
+        self.last_tool_calls: list[str] = []
 
     async def check(
         self, record: ShieldActionRecord, trace: list[dict[str, object]]
     ) -> VerdictReason | None:
-        prompt = (
-            "Does this tool call's claimed effect match its arguments? "
-            f"tool={record.payload.tool_name} args={dict(record.payload.tool_args)}. "
-            "Answer GROUNDED or HALLUCINATED with a one-line reason."
+        import time
+
+        from shield_governance.evaluator_agent import (
+            _summarize,
+            make_evaluator_agent,
+            parse_evaluator_decision,
         )
-        measurement = await self._caller.acomplete(prompt)
-        text = measurement.result.text.strip()
-        hallucinated = text.upper().startswith("HALLUCINATED")
+
+        started = time.perf_counter()
+        tool_call_log: list[str] = []
+        agent = make_evaluator_agent(
+            self._router,
+            record=record,
+            trace=trace,
+            analyzer=self._analyzer,
+            memory=self._memory,
+            tool_call_log=tool_call_log,
+        )
+
+        user_prompt = (
+            "Tool-call record under review:\n"
+            f"  tool={record.payload.tool_name}\n"
+            f"  args={dict(record.payload.tool_args)}\n"
+            f"  run_id={record.run_id}\n"
+            f"  step_index={record.step_index}\n"
+            "Use the tools and then answer in the DECISION/REASON format."
+        )
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_prompt}]})
+
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        self.last_tool_calls = list(tool_call_log)
+
+        # Find the final AIMessage (no tool_calls) — the model's decision.
+        final_text = ""
+        prompt_tokens = 0
+        completion_tokens = 0
+        model_id: str | None = None
+        served_via = None
+        for msg in messages:
+            usage = getattr(msg, "usage_metadata", None)
+            if isinstance(usage, dict):
+                prompt_tokens += int(usage.get("input_tokens", 0) or 0)
+                completion_tokens += int(usage.get("output_tokens", 0) or 0)
+            content = getattr(msg, "content", None)
+            tool_calls = getattr(msg, "tool_calls", None)
+            if (
+                content is not None
+                and not (isinstance(content, str) and not content.strip())
+                and not tool_calls
+            ):
+                final_text = (
+                    content
+                    if isinstance(content, str)
+                    else getattr(content[0], "text", str(content))
+                )
+
+        resolved = self._router.for_role("evaluator")
+        model_id = resolved.model
+        served_via = resolved.served_via
+
+        # Remember this record for future ``recall_similar_local_incidents``
+        # queries — done after the agent runs so the current call cannot
+        # recall itself.
+        self._memory.remember(_summarize(record))
+
+        hallucinated, reason_text = parse_evaluator_decision(final_text)
         decision = Decision.BLOCK if hallucinated else Decision.PASS
         label = "evaluator.hallucination" if hallucinated else "evaluator.grounded"
-        self._record_measurement(record, measurement, decision=decision, reasons=(label,))
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        self._evidence.record_for_record(
+            record,
+            guardian=Guardian.EVALUATOR,
+            decision=decision,
+            reasons=(label,),
+            model_id=model_id,
+            served_via=served_via,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+            cost_usd=0.0,
+        )
         if not hallucinated:
             return None
         return VerdictReason(
             agent=Guardian.EVALUATOR,
             label=label,
-            detail=text[:240],
+            detail=reason_text[:240],
             score=0.7,
-            model_id=measurement.model_id,
-            served_via=measurement.served_via,
-        )
-
-    def _record_measurement(
-        self,
-        record: ShieldActionRecord,
-        measurement: RouterCallMeasurement,
-        *,
-        decision: Decision,
-        reasons: tuple[str, ...],
-    ) -> None:
-        self._evidence.record_for_record(
-            record,
-            guardian=Guardian.EVALUATOR,
-            decision=decision,
-            reasons=reasons,
-            model_id=measurement.model_id,
-            served_via=measurement.served_via,
-            prompt_tokens=measurement.result.prompt_tokens,
-            completion_tokens=measurement.result.completion_tokens,
-            latency_ms=measurement.latency_ms,
-            cost_usd=measurement.result.cost_usd,
+            model_id=model_id,
+            served_via=served_via,
         )
 
 
@@ -197,7 +278,18 @@ def make_router_backed_async_channel2_handler(
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
     on_verdict: Callable[[AsyncVerdictHandoff], Awaitable[None]] | None = None,
+    key_resolver: Callable[[str], Awaitable[str | None] | str | None] | None = None,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
+    """Build the router-backed async Channel-2 handler.
+
+    ``key_resolver`` resolves ``record.agent_pubkey_kid`` to the base64url
+    Ed25519 public key required by Auditor chain verification. Production
+    callers MUST inject a resolver wired to the server's ``agent_keys``
+    registry (see ``shield_server.governance`` for the sync ingest precedent
+    that already uses ``agent_keys`` lookup). When no resolver is provided the
+    audit step skips signature verification rather than pass the kid as a key.
+    May be sync or async.
+    """
     guardians = build_router_backed_guardians(
         router,
         evidence_recorder=evidence_recorder,
@@ -206,9 +298,8 @@ def make_router_backed_async_channel2_handler(
 
     async def handle(record: ShieldActionRecord) -> None:
         eval_result = await guardians.evaluator.evaluate(record)
-        audit_result = guardians.auditor.audit(
-            [record], agent_pubkey_b64url=record.agent_pubkey_kid
-        )
+        public_key = await _resolve_pubkey(key_resolver, record)
+        audit_result = guardians.auditor.audit([record], agent_pubkey_b64url=public_key)
         _record_auditor_if_absent(guardians.evidence_recorder, record, audit_result)
         signals = GuardianSignals(
             defender_decision=Decision.PASS,

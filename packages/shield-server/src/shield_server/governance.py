@@ -3,8 +3,9 @@
 * ``decide``  → ``POST /v1/governance/decide`` : ingests a
   ``ShieldActionRecord{phase:pre_exec}`` AND returns a signed
   ``GovernanceVerdict`` in ONE round-trip (SDK §4.3 / ADR-0004). W2 = STUB →
-  always ``PASS`` (the real LangGraph 4-guardian graph lands W3); unblocks
-  eval + console day 1 (the W2 critical-path dependency).
+  always ``PASS`` (the real gov ``decide()`` pipeline — deterministic
+  Defender + Phase-B Evaluator agent + Supervisor/Auditor scaffold — lands
+  W3+); unblocks eval + console day 1 (the W2 critical-path dependency).
 * ``record`` → ``POST /v1/governance/record`` : ingests a
   ``ShieldActionRecord{phase:post_exec}`` — async (NO verdict), chain-linked,
   fanned to Channel-2 so the Evaluator/Auditor consume the outcome. This is

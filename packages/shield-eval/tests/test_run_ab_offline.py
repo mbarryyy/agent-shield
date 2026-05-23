@@ -185,7 +185,7 @@ def test_report_is_written_and_labelled(tmp_path) -> None:  # type: ignore[no-un
     assert "never 'vs SOTA'" in text
 
 
-def test_real_report_names_provider_backend_without_mock_label(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_real_report_is_labelled_measured_backend(tmp_path) -> None:  # type: ignore[no-untyped-def]
     out_file = tmp_path / "real-report.md"
     run_ab._write_report(
         str(out_file),
