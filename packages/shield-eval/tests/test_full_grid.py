@@ -150,14 +150,14 @@ def test_full_mock_guardian_rows_follow_haiku_profile(tmp_path) -> None:  # type
     assert {row["model_id"] for row in model_backed} == {"claude-haiku-4-5-20251001"}
 
 
-def test_full_grid_http_backend_runs_measured_via_real_server_transport(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_full_grid_http_backend_runs_measured_via_real_server_harness(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """F1 (Phase F, EM-2): the http backend drives the real shield decide()
-    in-process via decide.real_server_transport() and produces MEASURED
+    over local HTTP via decide.real_server_harness() and produces MEASURED
     per-case rows from the AgentDojo oracle — NOT a fabricated template.
 
     Scope-capped to one user_task × one injection_task × two arms so the
-    test stays under a few seconds while still exercising the real ASGI
-    transport + sdk ShieldClient round-trip end-to-end.
+    test stays under a few seconds while still exercising the real server +
+    sdk ShieldClient HTTP round-trip end-to-end.
     """
     summary_path = tmp_path / "http_grid_summary.json"
     cases_path = tmp_path / "http_grid_cases.json"
@@ -212,7 +212,7 @@ def test_full_grid_http_backend_runs_measured_via_real_server_transport(tmp_path
 def test_full_grid_http_backend_skips_honestly_when_real_gov_unavailable(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """F1: when ``decide.real_server_transport()`` raises ``RealGovUnavailable``
+    """F1: when ``decide.real_server_harness()`` raises ``RealGovUnavailable``
     the http path SKIPs honestly (never fabricates a real-graph result).
     The skip_reason captures the upstream error verbatim so reviewers see
     *why* execution didn't happen, not just that it didn't.
@@ -222,7 +222,7 @@ def test_full_grid_http_backend_skips_honestly_when_real_gov_unavailable(
     def _boom():  # type: ignore[no-untyped-def]
         raise decide.RealGovUnavailable("simulated real-gov unavailable for F1 fallback test")
 
-    monkeypatch.setattr(decide, "real_server_transport", _boom)
+    monkeypatch.setattr(decide, "real_server_harness", _boom)
 
     summary_path = tmp_path / "http_skipped_summary.json"
     cases_path = tmp_path / "http_skipped_cases.json"

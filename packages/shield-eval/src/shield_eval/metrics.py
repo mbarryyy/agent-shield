@@ -467,7 +467,7 @@ def build_full_grid_metrics_report(
 
     metric_label = evidence_label
     # F1 (Phase F, EM-2): ``MEASURED-INLINE-DECIDE`` — values from REAL
-    # benchmark_suite_with_injections via decide.real_server_transport()
+    # benchmark_suite_with_injections via decide.real_server_harness()
     # with the MockedLLM worker (keyless, CI-runnable).
     # F2 (Phase F, EM-3): ``MEASURED-REAL-MODEL`` — same plumbing as F1
     # but with the REAL provider model as the worker LLM (M3 execution —
@@ -486,7 +486,7 @@ def build_full_grid_metrics_report(
     elif measured_inline:
         asr_source = (
             "MEASURED — AgentDojo security() oracle across the full grid via "
-            "the real shield decide() (decide.real_server_transport()) with "
+            "the real shield decide() (decide.real_server_harness()) with "
             "the deterministic MockedLLM worker (F1)"
         )
     elif measured_real:
@@ -608,8 +608,8 @@ def build_full_grid_metrics_report(
         "notes": (
             [
                 "MEASURED-INLINE-DECIDE (F1): per-cell oracle scoring via "
-                "decide.real_server_transport() — real shield_server.create_app "
-                "+ load_governance_app() in-process. Inline /decide measures the "
+                "decide.real_server_harness() — real shield_server.create_app "
+                "+ load_governance_app() over local HTTP. Inline /decide measures the "
                 "deployed gov surface (2-node pre-Phase-A; router-backed "
                 "post-Phase-A — no code change here). Worker = MockedLLM (keyless).",
                 "Provider-backed real-model ASR remains a future step (M3 = AndyHu).",
@@ -618,7 +618,7 @@ def build_full_grid_metrics_report(
             else (
                 [
                     "MEASURED-REAL-MODEL (F2 wiring; M3 execution): per-cell "
-                    "oracle scoring via decide.real_server_transport() with a "
+                    "oracle scoring via decide.real_server_harness() with a "
                     "REAL provider model as worker LLM. Gated on "
                     "--execute-real-run + ANTHROPIC_API_KEY + budget OK; default "
                     "OFF, CI never enters this branch. Quotable only after an "

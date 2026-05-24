@@ -24,6 +24,8 @@ AgentDojo built-in baselines + the Axis-C moat", never "beat SOTA".
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -273,6 +275,35 @@ class RealGovUnavailable(RuntimeError):
     on this tree — caller SKIPs the real-graph run (never fakes it)."""
 
 
+@dataclass(slots=True)
+class RealServerHarness:
+    """A real HTTP server harness for the in-process shield-server app.
+
+    The sync SDK client uses ``httpx.Client`` and therefore cannot consume
+    ``httpx.ASGITransport`` directly. This harness starts the real FastAPI app
+    behind uvicorn on ``127.0.0.1:0`` so eval paths exercise the normal HTTP
+    wire while still keeping storage in-process and inspectable by tests.
+    """
+
+    base_url: str
+    storage: Any
+    settings: Any
+    app: Any
+    agent_private_key_b64url: str
+    _server: Any
+    _thread: threading.Thread
+
+    def __enter__(self) -> RealServerHarness:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._server.should_exit = True
+        self._thread.join(timeout=5.0)
+
+
 # Frozen golden test keypair (W0 vectors) — real Ed25519, used so the REAL
 # server ingest's FROZEN canonical.verify_record passes against the agent
 # pubkey we enrol via the server's own public register API.
@@ -284,8 +315,137 @@ _GOLDEN_VECTORS = (
 )
 
 
+def real_server_harness() -> RealServerHarness:
+    """Start the real shield-server app on a local ephemeral HTTP port.
+
+    Chosen over the older ASGITransport shortcut because the canonical
+    ``ShieldClient`` is synchronous. Running uvicorn in a background thread is
+    closer to the production wire path and makes transport failures visible
+    instead of being swallowed by SDK fail-closed degradation.
+    """
+    import asyncio
+    import json as _json
+
+    import uvicorn
+
+    try:
+        from shield_server.agents import register_agent
+        from shield_server.app import create_app
+        from shield_server.config import Settings
+        from shield_server.govseam import load_governance_app
+        from shield_server.models import RegisterAgentRequest
+        from shield_server.storage import build_memory_storage
+    except ImportError as e:  # pragma: no cover - pre server/gov-W3 trees only
+        raise RealGovUnavailable(
+            f"real shield-server/gov surface not importable ({e}) "
+            "— real-server-graph run SKIPPED (never faked)"
+        ) from e
+
+    kp = _json.loads(_GOLDEN_VECTORS.read_text(encoding="utf-8"))["keypair"]
+
+    async def _setup() -> tuple[Any, Any, Any]:
+        storage = build_memory_storage()
+        await register_agent(
+            storage,
+            RegisterAgentRequest(
+                agent_id="agentdojo-banking-v1",
+                keys=[
+                    {"kid": "agentdojo-banking-v1-key-v1", "public_key": kp["public_key_b64url"]}
+                ],
+            ),
+            "demo-org",
+        )
+        settings = Settings.from_env()
+        app = create_app(
+            storage=storage,
+            settings=settings,
+            governance=load_governance_app(),
+        )
+        return storage, settings, app
+
+    try:
+        storage, settings, app = asyncio.run(_setup())
+    except Exception as e:  # pragma: no cover - server infra/setup blockers
+        raise RealGovUnavailable(
+            f"real shield-server in-process setup blocked ({e!r}) "
+            "— real-server-graph run SKIPPED + flagged (never faked)"
+        ) from e
+
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=0,
+        lifespan="off",
+        log_level="warning",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, name="shield-eval-server", daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        servers = getattr(server, "servers", None) or []
+        if server.started and servers and servers[0].sockets:
+            port = int(servers[0].sockets[0].getsockname()[1])
+            return RealServerHarness(
+                base_url=f"http://127.0.0.1:{port}",
+                storage=storage,
+                settings=settings,
+                app=app,
+                agent_private_key_b64url=kp["private_key_b64url"],
+                _server=server,
+                _thread=thread,
+            )
+        if not thread.is_alive():
+            break
+        time.sleep(0.01)
+
+    server.should_exit = True
+    thread.join(timeout=1.0)
+    raise RealGovUnavailable("real shield-server HTTP harness failed to start")
+
+
 def real_server_transport() -> Any:
-    """The team-lead-APPROVED REAL-graph method: an ``httpx.ASGITransport``
+    """Backward-compatible transport wrapper for older eval callers.
+
+    New code should prefer :func:`real_server_harness` and pass
+    ``ShieldWiring(base_url=harness.base_url)``. This wrapper still uses a real
+    uvicorn HTTP server; it only rewrites the legacy ``shield.local`` requests
+    onto that server for call sites that can pass a transport but not a base
+    URL.
+    """
+    import httpx
+
+    harness = real_server_harness()
+
+    class _HarnessTransport(httpx.BaseTransport):
+        def __init__(self, h: RealServerHarness) -> None:
+            self._harness = h
+            self._transport = httpx.HTTPTransport()
+
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            target = httpx.URL(self._harness.base_url).join(request.url.raw_path.decode())
+            rewritten = httpx.Request(
+                request.method,
+                target,
+                headers=request.headers,
+                content=request.read(),
+                extensions=request.extensions,
+            )
+            return self._transport.handle_request(rewritten)
+
+        def close(self) -> None:
+            self._transport.close()
+            self._harness.close()
+
+    return _HarnessTransport(harness)
+
+
+def _legacy_real_server_transport() -> Any:
+    """Deprecated ASGI transport path retained only as historical reference.
+
+    The team-lead-APPROVED REAL-graph method used to be an ``httpx.ASGITransport``
     over the **real** ``shield_server.create_app`` (in-memory storage, real
     ShieldSdkCrypto) pre-warmed with the server governance adapter
     (``load_governance_app()`` → the merged gov adapter). This exercises the

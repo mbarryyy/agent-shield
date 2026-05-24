@@ -766,7 +766,7 @@ def _score_real_cell(
     via :func:`_real_llm_for_worker` (returns an ``AnthropicLLM`` when
     ``ANTHROPIC_API_KEY`` is in the env; raises :class:`ArmUnavailable`
     otherwise). Same shield-wiring path (the F1
-    ``decide.real_server_transport()`` ASGI transport drives the
+    ``decide.real_server_harness()`` local HTTP server drives the
     router-backed agentic ``/decide``), same ``_DecisionTap`` (F3
     per-guardian passthrough), same ``HttpCellOutcome`` shape.
 
@@ -891,8 +891,8 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         # F2 (Phase F, EM-3): when ``--execute-real-run`` is set AND the
         # budget estimator returned non-SKIPPED (= ``ANTHROPIC_API_KEY`` is
         # present + the planned cost fits the cap), drive the REAL
-        # provider model through the same ``decide.real_server_transport()``
-        # path F1 uses. Default (no flag) — every CI path including the
+        # provider model through the same ``decide.real_server_harness()``
+        # real HTTP path F1 uses. Default (no flag) — every CI path including the
         # existing ``eval.yml`` step stays on the keyless budget-only
         # branch below; no provider call happens.
         #
@@ -908,17 +908,17 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         # ``_real_llm_for_worker`` to validate the call chain without
         # any provider call.
         if args.execute_real_run and artifact["status_label"] != "SKIPPED":
-            from .decide import RealGovUnavailable, real_server_transport
+            from .decide import RealGovUnavailable, real_server_harness
             from .metrics import build_full_grid_metrics_report
 
-            f2_transport: Any | None
+            f2_server: Any | None
             f2_transport_skip_reason: str | None
             try:
-                f2_transport = real_server_transport()
+                f2_server = real_server_harness()
                 f2_transport_skip_reason = None
                 evidence_label = "MEASURED-REAL-MODEL"
             except RealGovUnavailable as e:
-                f2_transport = None
+                f2_server = None
                 f2_transport_skip_reason = f"REAL_GOV_UNAVAILABLE: {e}"
                 evidence_label = "SKIPPED"
 
@@ -926,12 +926,12 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             attack_variant = args.attack or "important_instructions"
             worker = args.model
 
-            if f2_transport is not None:
+            if f2_server is not None:
                 tmpdir = tempfile.TemporaryDirectory(prefix="shield_eval_real_grid_")
                 try:
                     for arm_key in arm_tokens:
                         try:
-                            arm = resolve_arms([arm_key])[0]
+                            arm = resolve_arms([arm_key], decide_mode="http")[0]
                         except (ValueError, ArmUnavailable):
                             for uid in user_tasks:
                                 for iid in injection_tasks:
@@ -950,7 +950,12 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                     )
                             continue
                         wiring = (
-                            ShieldWiring(transport=f2_transport) if arm.kind == "shield" else None
+                            ShieldWiring(
+                                base_url=f2_server.base_url,
+                                agent_private_key_b64url=f2_server.agent_private_key_b64url,
+                            )
+                            if arm.kind == "shield"
+                            else None
                         )
                         for iid in injection_tasks:
                             cell = _score_real_cell(
@@ -981,6 +986,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                 )
                 finally:
                     tmpdir.cleanup()
+                    f2_server.close()
             else:
                 for arm_key in arm_tokens:
                     for uid in user_tasks:
@@ -1007,7 +1013,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                 backend="real",
                 evidence_label=evidence_label,
                 cases=f2_cases,
-                skip_reason=f2_transport_skip_reason if f2_transport is None else None,
+                skip_reason=f2_transport_skip_reason if f2_server is None else None,
             )
             if args.budget_out:
                 write_json(args.budget_out, artifact)
@@ -1052,8 +1058,8 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
 
     if args.backend == "http":
         # F1 (Phase F, EM-2): the http backend drives the REAL shield decide()
-        # in-process via the team-lead-APPROVED ``decide.real_server_transport()``
-        # (httpx.ASGITransport over the real ``shield_server.create_app`` +
+        # through the team-lead-APPROVED ``decide.real_server_harness()``
+        # (real uvicorn HTTP over the real ``shield_server.create_app`` +
         # ``load_governance_app()``). Worker is the deterministic ``MockedLLM``
         # (so it stays keyless and CI-runnable); the shield arms drive a REAL
         # /decide round-trip. Per-cell ``security``/``utility``/``decision`` are
@@ -1063,18 +1069,18 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         # Phase A dependency is SOFT: pre-Phase-A the inline /decide is still
         # the 2-node deterministic graph (HG#5 model-free InjectionTask6
         # BLOCK), so cells produce real measured numbers for THAT surface.
-        # Post-Phase-A: zero code change here — the same ASGITransport will
+        # Post-Phase-A: zero code change here — the same server harness will
         # surface the router-backed 4-guardian path automatically.
-        from .decide import RealGovUnavailable, real_server_transport
+        from .decide import RealGovUnavailable, real_server_harness
         from .metrics import HTTP_FULL_GRID_SKIP_REASON, build_full_grid_metrics_report
 
         try:
-            transport: Any | None = real_server_transport()
+            server: Any | None = real_server_harness()
             transport_skip_reason: str | None = None
             evidence_label = "MEASURED-INLINE-DECIDE"
         except RealGovUnavailable as e:
             # NEVER fake a real-graph result. Skip honestly + carry the reason.
-            transport = None
+            server = None
             transport_skip_reason = f"REAL_GOV_UNAVAILABLE: {e}"
             evidence_label = "SKIPPED"
 
@@ -1082,12 +1088,12 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         attack_variant = args.attack or "important_instructions"
         worker = args.model
 
-        if transport is not None:
+        if server is not None:
             tmpdir = tempfile.TemporaryDirectory(prefix="shield_eval_http_grid_")
             try:
                 for arm_key in arm_tokens:
                     try:
-                        arm = resolve_arms([arm_key])[0]
+                        arm = resolve_arms([arm_key], decide_mode="http")[0]
                     except (ValueError, ArmUnavailable):
                         for uid in user_tasks:
                             for iid in injection_tasks:
@@ -1104,7 +1110,14 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                     )
                                 )
                         continue
-                    wiring = ShieldWiring(transport=transport) if arm.kind == "shield" else None
+                    wiring = (
+                        ShieldWiring(
+                            base_url=server.base_url,
+                            agent_private_key_b64url=server.agent_private_key_b64url,
+                        )
+                        if arm.kind == "shield"
+                        else None
+                    )
                     for iid in injection_tasks:
                         cell = _score_http_cell(
                             arm=arm,
@@ -1131,8 +1144,9 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                             )
             finally:
                 tmpdir.cleanup()
+                server.close()
         else:
-            # Honest SKIP rows: real_server_transport() unavailable.
+            # Honest SKIP rows: real_server_harness() unavailable.
             for arm_key in arm_tokens:
                 for uid in user_tasks:
                     for iid in injection_tasks:
@@ -1157,7 +1171,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             backend="http",
             evidence_label=evidence_label,
             cases=cases,
-            skip_reason=transport_skip_reason if transport is None else None,
+            skip_reason=transport_skip_reason if server is None else None,
         )
         if args.metrics_out:
             write_json(args.metrics_out, report)

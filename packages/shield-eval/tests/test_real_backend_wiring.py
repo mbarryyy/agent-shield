@@ -2,7 +2,7 @@
 
 The tests substitute via ``monkeypatch`` on ``_real_llm_for_worker`` so
 the call chain through ``_score_real_cell`` →
-``benchmark_suite_with_injections`` → ``decide.real_server_transport()``
+``benchmark_suite_with_injections`` → ``decide.real_server_harness()``
 is exercised end-to-end WITHOUT any provider call. F2 = wiring only;
 M3 (AndyHu / W5 infra) is what flips ``--execute-real-run`` ON in a
 protected env where ``ANTHROPIC_API_KEY`` is provisioned and budgeted.
@@ -15,11 +15,66 @@ a real key; pre-M3 these tests merely confirm F2's plumbing is sound.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+import pytest
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
 from shield_eval import run_ab
+from shield_eval.arms import ShieldWiring, resolve_arms
 from shield_eval.mock_llm import MockedLLM
+from shield_governance.model_router import ResolvedModel, ShieldModelRouter
+from shield_server.async_verdict_worker import AsyncVerdictWorker, CacheChannel2Transport
+
+
+class _ToolableFakeChatModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools: object, **kwargs: object) -> object:  # noqa: ARG002
+        return self
+
+
+def _message(text: str, *, prompt: int = 0, completion: int = 0) -> AIMessage:
+    return AIMessage(
+        content=text,
+        usage_metadata={
+            "input_tokens": prompt,
+            "output_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    )
+
+
+def _tool_call_sequence() -> list[AIMessage]:
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "eval_invariant_policies", "args": {}, "id": "tc-1"}],
+            usage_metadata={"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+        ),
+        _message("DECISION: HALLUCINATED\nREASON: fixture", prompt=3, completion=1),
+    ]
+
+
+def _fake_cloud_router() -> ShieldModelRouter:
+    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
+        if resolved.role == "evaluator":
+            return _ToolableFakeChatModel(responses=_tool_call_sequence() * 8)
+        if resolved.role == "supervisor":
+            return _ToolableFakeChatModel(
+                responses=[_message("BLOCK: fixture", prompt=7, completion=2)] * 8
+            )
+        if resolved.role == "auditor":
+            return _ToolableFakeChatModel(
+                responses=[_message("Audit narrative", prompt=5, completion=4)] * 8
+            )
+        return _ToolableFakeChatModel(responses=[_message("PASS")] * 8)
+
+    return ShieldModelRouter.from_profile(
+        "cloud",
+        client_builders={"anthropic": fake_builder},
+        environ={"ANTHROPIC_API_KEY": "test-router-key"},
+    )
 
 
 def test_backend_real_default_path_stays_skipped_without_execute_flag(
@@ -198,8 +253,53 @@ def test_backend_real_execute_flag_wires_real_llm_for_worker(tmp_path, monkeypat
     assert {row["evidence_label"] for row in cases} == {"MEASURED-REAL-MODEL"}
 
 
+@pytest.mark.filterwarnings("ignore:Not all injection tasks were solved as user tasks")
+def test_real_server_mock_worker_publishes_async_guardian_evidence_sidecar(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from shield_eval.decide import real_server_harness
+    from shield_eval.run_ab import DEFAULT_BENCHMARK_VERSION, _build_suite, _score_http_cell
+
+    suite = _build_suite(DEFAULT_BENCHMARK_VERSION, "banking")
+    arm = resolve_arms(["A2"], decide_mode="http")[0]
+
+    with real_server_harness() as harness:
+        cell = _score_http_cell(
+            arm=arm,
+            suite=suite,
+            user_task_ids=["user_task_2"],
+            injection_task_id="injection_task_6",
+            attack_name="important_instructions",
+            worker="claude-3-haiku-20240307",
+            logdir=str(tmp_path),
+            shield_wiring=ShieldWiring(
+                base_url=harness.base_url,
+                agent_private_key_b64url=harness.agent_private_key_b64url,
+            ),
+        )
+        assert cell.available is True
+        assert cell.decision_mix
+
+        worker = AsyncVerdictWorker(
+            storage=harness.storage,
+            settings=harness.settings,
+            transport=CacheChannel2Transport(harness.storage.cache),
+            router=_fake_cloud_router(),
+        )
+        handled = asyncio.run(worker.run_once("banking", count=16, block_ms=1))
+
+        sidecars = [
+            body
+            for key, body in harness.storage.objects._objects.items()
+            if key.endswith(".guardian_evidence")
+        ]
+        guardian_rows = [json.loads(body.decode("utf-8")) for body in sidecars]
+
+    assert handled >= 1
+    assert sidecars
+    assert sum(len(rows) for rows in guardian_rows) >= 1
+
+
 def test_backend_real_execute_flag_skips_when_real_gov_unavailable(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """F2: when ``decide.real_server_transport()`` raises
+    """F2: when ``decide.real_server_harness()`` raises
     ``RealGovUnavailable`` (in-process server setup blocked), the F2 path
     emits SKIPPED rows with the upstream reason — same honesty discipline
     as F1's keyless http path. NEVER fabricates.
@@ -211,7 +311,7 @@ def test_backend_real_execute_flag_skips_when_real_gov_unavailable(tmp_path, mon
     def _boom():  # type: ignore[no-untyped-def]
         raise decide.RealGovUnavailable("simulated real-gov unavailable for F2 fallback test")
 
-    monkeypatch.setattr(decide, "real_server_transport", _boom)
+    monkeypatch.setattr(decide, "real_server_harness", _boom)
 
     summary_path = tmp_path / "real_skipped_summary.json"
     cases_path = tmp_path / "real_skipped_cases.json"

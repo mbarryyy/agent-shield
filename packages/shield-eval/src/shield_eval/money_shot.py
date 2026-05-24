@@ -59,7 +59,7 @@ from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
 from agentdojo.types import ChatMessage
 
 from .arms import Arm, ArmUnavailable, ShieldWiring, resolve_arms
-from .decide import MockDecide, RealGovUnavailable, real_server_transport
+from .decide import MockDecide, RealGovUnavailable, real_server_harness
 from .mock_llm import MockedLLM
 
 SCENARIO = "InjectionTask6 — $30,000 structured into 3×$10,000 (demo Act-3 money-shot)"
@@ -447,6 +447,7 @@ def run_money_shot(*, carrier: str, real: bool, decide_url: str | None) -> dict[
 
     suite = get_suite(DEFAULT_BENCHMARK_VERSION, "banking")
     tmp = tempfile.TemporaryDirectory(prefix="shield_eval_moneyshot_")
+    real_harness: Any | None = None
     try:
         outcomes: list[ArmOutcome] = []
         # A0b strawman — a real in-repo baseline, model-free (runs offline).
@@ -464,24 +465,27 @@ def run_money_shot(*, carrier: str, real: bool, decide_url: str | None) -> dict[
         )
         # Shield-arm wiring strategy:
         #   real + --decide-url   → external live server over real HTTP
-        #   real + no url         → server-backed governance decide() in-process
-        #                           (decide.real_server_transport(), keyless,
+        #   real + no url         → server-backed governance decide() over local HTTP
+        #                           (decide.real_server_harness(), keyless,
         #                           model-free InjectionTask6 BLOCK — HG#5)
         #   not real              → deterministic MockDecide (demo-safety)
-        real_transport: Any | None = None
         if real and not decide_url:
-            # Team-lead-APPROVED server-backed method: ASGITransport over the
+            # Team-lead-APPROVED server-backed method: real local HTTP over the
             # real shield_server.create_app + governance decide() path
             # (keyless; HG#5 model-free). Built once; reused A2+A3. Raises
             # RealGovUnavailable if server in-process is blocked → caller
             # SKIPs + flags honestly (never fakes).
-            real_transport = real_server_transport()
+            real_harness = real_server_harness()
 
         def _wiring() -> ShieldWiring:
             if real and decide_url:
                 return ShieldWiring(base_url=decide_url)
             if real:
-                return ShieldWiring(transport=real_transport)
+                assert real_harness is not None
+                return ShieldWiring(
+                    base_url=real_harness.base_url,
+                    agent_private_key_b64url=real_harness.agent_private_key_b64url,
+                )
             return ShieldWiring(local_provider=MockDecide())
 
         # A2 + A3 — Shield. A3 = the explicit zero-governance-token ablation;
@@ -491,7 +495,7 @@ def run_money_shot(*, carrier: str, real: bool, decide_url: str | None) -> dict[
             ("A2", "Agent Shield (Paid) — cross-call cumulative governance"),
             ("A3", "Agent Shield (deterministic-only ablation, 0 AI tokens)"),
         ):
-            arm = resolve_arms([key])[0]
+            arm = resolve_arms([key], decide_mode="http" if real else None)[0]
             wiring = _wiring()
             outcomes.append(
                 _score_arm(
@@ -506,6 +510,8 @@ def run_money_shot(*, carrier: str, real: bool, decide_url: str | None) -> dict[
             )
         return build_artifact(outcomes, real=real)
     finally:
+        if real_harness is not None:
+            real_harness.close()
         tmp.cleanup()
 
 
