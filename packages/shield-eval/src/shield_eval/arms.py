@@ -46,6 +46,7 @@ from typing import Any
 
 from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+from agentdojo.functions_runtime import EmptyEnv
 
 from .decide import DecideProvider, build_decider, mock_transport
 
@@ -101,6 +102,55 @@ class ArmUnavailable(RuntimeError):
     """Raised when a requested arm cannot run in this phase/backend (SKIP, not FAIL)."""
 
 
+class FreshAgentPipeline(AgentPipeline):  # type: ignore[misc]
+    """AgentDojo pipeline with explicit message and Shield state containers.
+
+    AgentDojo's upstream ``AgentPipeline.query`` has mutable defaults for
+    ``messages`` and ``extra_args``. Shield stores chain state in ``extra_args``,
+    so eval-owned repeated runs must scope those containers to the current
+    server-backed run instead of leaking through class-level defaults.
+    """
+
+    def __init__(
+        self, elements: Any, *, shared_extra_args: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(elements)
+        self._runtime: Any | None = None
+        self._messages: Any = []
+        self._extra_args: dict[str, Any] = (
+            shared_extra_args if shared_extra_args is not None else {}
+        )
+
+    def query(
+        self,
+        query: str,
+        runtime: Any,
+        env: Any | None = None,
+        messages: Any | None = None,
+        extra_args: dict[str, Any] | None = None,
+    ) -> tuple[str, Any, Any, Any, dict[str, Any]]:
+        if runtime is not self._runtime:
+            self._runtime = runtime
+            self._messages = []
+        use_messages = self._messages if messages is None else messages
+        use_extra_args = self._extra_args if extra_args is None else extra_args
+        result = super().query(
+            query,
+            runtime,
+            EmptyEnv() if env is None else env,
+            use_messages,
+            use_extra_args,
+        )
+        _, _, _, self._messages, self._extra_args = result
+        return result
+
+
+def _fresh_pipeline(pipeline: AgentPipeline) -> FreshAgentPipeline:
+    fresh = FreshAgentPipeline(pipeline.elements)
+    fresh.name = pipeline.name
+    return fresh
+
+
 @dataclass(frozen=True)
 class ShieldWiring:
     """Where the sdk ``ShieldClient`` points + the agent signing key.
@@ -118,6 +168,7 @@ class ShieldWiring:
     # is driven in-process via httpx.MockTransport over this eval-owned
     # provider (no live server). None ⇒ real HTTP path (needs base_url+key).
     local_provider: DecideProvider | None = None
+    shared_extra_args: dict[str, Any] | None = None
     # Pre-built httpx transport (eval-owned). Highest precedence: used as-is on
     # the unchanged sdk ShieldClient. This is retained for deterministic mock
     # and compatibility transports. The real server-backed path now prefers
@@ -152,7 +203,7 @@ class Arm:
             system_message=None,
         )
         try:
-            return AgentPipeline.from_config(config)
+            return _fresh_pipeline(AgentPipeline.from_config(config))
         except ValueError as e:  # e.g. tool_filter on a non-OpenAI llm
             raise ArmUnavailable(f"{self.key} ({self.defense}): {e}") from e
 
@@ -258,7 +309,10 @@ class Arm:
             base = self._build_native(llm, mock=isinstance(llm, BasePipelineElement))
             sysmsg, initq, worker = base.elements[0], base.elements[1], base.elements[2]
             loop = ToolsExecutionLoop(shield_loop_elements(cfg, worker))
-            pipeline = AgentPipeline([sysmsg, initq, worker, loop])
+            pipeline = FreshAgentPipeline(
+                [sysmsg, initq, worker, loop],
+                shared_extra_args=w.shared_extra_args,
+            )
             pipeline.name = f"{getattr(worker, 'name', 'shield')}-{self.key.lower()}"
             return pipeline
         except (TypeError, AttributeError) as e:  # pragma: no cover - contract drift

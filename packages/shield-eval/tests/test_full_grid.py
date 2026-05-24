@@ -214,6 +214,49 @@ def test_full_grid_http_backend_runs_measured_via_real_server_harness(tmp_path) 
     assert a2_inj6["per_guardian"] == []
 
 
+def test_http_governance_pass_path_emits_guardian_evidence(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Regression: governance-routed PASS cells must still expose guardian evidence.
+
+    InjectionTask6 is intentionally caught by the sync Defender, so it has no
+    model-backed rows. InjectionTask4 reaches the governance route; that path
+    must not drop Evaluator/Supervisor/Auditor sidecar evidence before Module 3.
+    """
+    cases_path = tmp_path / "http_governance_pass_cases.json"
+
+    rc = run_ab.main(
+        [
+            "--full",
+            "--suite",
+            "banking",
+            "--backend",
+            "http",
+            "--arms",
+            "A2",
+            "--user-task",
+            "user_task_2",
+            "--injection-task",
+            "injection_task_4",
+            "--cases-out",
+            str(cases_path),
+        ]
+    )
+
+    assert rc == 0
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
+    a2_case = next(row for row in cases if row["arm"] == "A2")
+
+    assert a2_case["decision_source"] == "governance"
+    guardians = {row["guardian"]: row for row in a2_case["per_guardian"]}
+    assert {"evaluator", "supervisor", "auditor"} <= set(guardians)
+    model_backed = [
+        row
+        for row in a2_case["per_guardian"]
+        if row["guardian"] in {"evaluator", "supervisor", "auditor"}
+    ]
+    assert any(row.get("memory", {}).get("memory_backend") == "chroma" for row in model_backed)
+    assert any("recall_similar_incidents" in row.get("tool_calls", []) for row in model_backed)
+
+
 def test_full_grid_http_backend_skips_honestly_when_real_gov_unavailable(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
