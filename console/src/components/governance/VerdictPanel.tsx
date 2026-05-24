@@ -7,7 +7,7 @@ import type {
   ShieldActionRecord,
   VerdictReason,
 } from '@elydora/shared';
-import type { GuardianEvidenceRow } from '@/types/governance';
+import type { GuardianEvidenceRow, GuardianMemoryHit } from '@/types/governance';
 import { evidenceLabelFrom } from '@/types/governance';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
@@ -30,6 +30,33 @@ function formatGuardianCost(value: number): string {
     currency: 'USD',
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatEvidenceNumber(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 4,
+  }).format(value);
+}
+
+function formatMemorySummary(row: GuardianEvidenceRow): string | null {
+  if (!row.memory) return null;
+  const memory = row.memory;
+  const parts = [`memory ${memory.memory_backend ?? 'unknown'}`];
+  if (memory.collection) parts.push(memory.collection);
+  if (memory.hit_count != null) {
+    parts.push(`${memory.hit_count} ${memory.hit_count === 1 ? 'hit' : 'hits'}`);
+  }
+  if (memory.latency_ms != null) {
+    parts.push(`${formatEvidenceNumber(memory.latency_ms)} ms`);
+  }
+  return parts.join(' · ');
+}
+
+function formatMemoryHit(hit: GuardianMemoryHit): string {
+  const parts = [hit.id];
+  if (hit.score != null) parts.push(`score ${formatEvidenceNumber(hit.score)}`);
+  if (hit.distance != null) parts.push(`distance ${formatEvidenceNumber(hit.distance)}`);
+  return parts.join(' · ');
 }
 
 function GuardianLane({
@@ -95,6 +122,38 @@ function GuardianLane({
                 <div className="text-ink-dim normal-case mt-0.5 break-words">
                   model {row.model_id}
                 </div>
+              )}
+              {row.tool_calls && row.tool_calls.length > 0 && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  tools {row.tool_calls.join(', ')}
+                </div>
+              )}
+              {row.memory && (
+                <>
+                  {formatMemorySummary(row) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      {formatMemorySummary(row)}
+                    </div>
+                  )}
+                  {row.memory.query_id && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      query {row.memory.query_id}
+                    </div>
+                  )}
+                  {row.memory.missing_reason && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      missing {row.memory.missing_reason}
+                    </div>
+                  )}
+                  {row.memory.top_hits?.slice(0, 3).map((hit) => (
+                    <div
+                      key={`${row.record_id}-${hit.id}`}
+                      className="text-ink-dim normal-case mt-0.5 break-words"
+                    >
+                      {formatMemoryHit(hit)}
+                    </div>
+                  ))}
+                </>
               )}
             </li>
           ))}

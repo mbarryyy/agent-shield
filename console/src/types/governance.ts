@@ -80,6 +80,24 @@ export interface GuardianEvidenceRow {
   completion_tokens: number;
   latency_ms: number;
   cost_usd: number;
+  tool_calls?: string[];
+  memory?: GuardianMemoryEvidence | null;
+}
+
+export interface GuardianMemoryHit {
+  id: string;
+  score?: number | null;
+  distance?: number | null;
+}
+
+export interface GuardianMemoryEvidence {
+  memory_backend?: string | null;
+  collection?: string | null;
+  query_id?: string | null;
+  hit_count?: number | null;
+  latency_ms?: number | null;
+  missing_reason?: string | null;
+  top_hits?: GuardianMemoryHit[];
 }
 
 // --- GET /v1/governance/verdicts/{correlation_id} ------------------------
