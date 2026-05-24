@@ -101,6 +101,11 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "output": 15.00,
         "pricing_basis": "Claude Sonnet 4.5",
     },
+    "claude-sonnet-4-6": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.6",
+    },
     "claude-opus-4": {
         "input": 15.00,
         "output": 75.00,
@@ -120,6 +125,11 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "input": 15.00,
         "output": 75.00,
         "pricing_basis": "Claude Opus 4.1",
+    },
+    "claude-opus-4-7": {
+        "input": 5.00,
+        "output": 25.00,
+        "pricing_basis": "Claude Opus 4.7",
     },
 }
 

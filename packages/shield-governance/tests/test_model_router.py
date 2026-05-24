@@ -8,6 +8,12 @@ import pytest
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_sdk.schema import ServedVia
 
+EXPECTED_CLOUD_GUARDIAN_MODELS = {
+    "evaluator": "claude-sonnet-4-6",
+    "supervisor": "claude-opus-4-7",
+    "auditor": "claude-haiku-4-5-20251001",
+}
+
 
 def test_cloud_profile_resolves_per_role() -> None:
     r = ShieldModelRouter.from_profile("cloud")
@@ -15,26 +21,35 @@ def test_cloud_profile_resolves_per_role() -> None:
     assert r.for_role("defender").provider == "local"  # hot path never cloud
     assert r.for_role("defender").served_via is ServedVia.LOCAL
     ev = r.for_role("evaluator")
-    assert ev.provider == "anthropic" and ev.model == "claude-sonnet-4-20250514"
+    assert ev.provider == "anthropic"
+    assert ev.model == EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"]
     assert ev.served_via is ServedVia.CLOUD
-    assert r.for_role("supervisor").model == "claude-opus-4-20250514"
-    assert r.for_role("auditor").model == "claude-haiku-4-5-20251001"
+    assert r.for_role("supervisor").model == EXPECTED_CLOUD_GUARDIAN_MODELS["supervisor"]
+    assert r.for_role("auditor").model == EXPECTED_CLOUD_GUARDIAN_MODELS["auditor"]
 
 
-def test_cloud_guardian_anthropic_models_are_dated_api_ids() -> None:
-    """Cloud guardian model IDs must be real dated Anthropic API IDs.
+def test_cloud_guardian_anthropic_models_are_official_pinned_api_ids() -> None:
+    """Cloud guardian model IDs must be official Anthropic pinned API IDs.
 
     Do not commit placeholder aliases like ``claude-sonnet-4`` or
     ``claude-opus-4`` into the cloud profile; they can pass config parsing but
-    fail only at live provider time.
+    fail only at live provider time. Newer Claude 4.6+ IDs are dateless pinned
+    snapshots, so a date suffix is not required for those official IDs.
     """
 
     r = ShieldModelRouter.from_profile("cloud")
     model_re = re.compile(r"^claude-[a-z]+-\d+(-\d+)?(-\d{8})?$")
+    forbidden_aliases = {"claude-sonnet-4", "claude-opus-4", "claude-haiku-4-5"}
     for role in ("evaluator", "supervisor", "auditor"):
         model = r.for_role(role).model
         assert model_re.fullmatch(model)
-        assert re.search(r"-\d{8}$", model), f"{role} uses placeholder model {model!r}"
+        assert model not in forbidden_aliases, f"{role} uses placeholder model {model!r}"
+
+
+def test_cloud_profile_uses_latest_official_anthropic_model_ids() -> None:
+    r = ShieldModelRouter.from_profile("cloud")
+    for role, expected_model in EXPECTED_CLOUD_GUARDIAN_MODELS.items():
+        assert r.for_role(role).model == expected_model
 
 
 def test_local_profile_is_zero_egress_in_vpc() -> None:
@@ -80,7 +95,7 @@ def test_alignmentcheck_disabled_in_cloud_routed_in_local() -> None:
 def test_cost_hooks_served_via_and_model_id() -> None:
     cloud = ShieldModelRouter.from_profile("cloud")
     assert cloud.served_via("evaluator") is ServedVia.CLOUD
-    assert cloud.model_id("evaluator") == "claude-sonnet-4-20250514"
+    assert cloud.model_id("evaluator") == EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"]
     local = ShieldModelRouter.from_profile("local")
     assert local.served_via("evaluator") is ServedVia.LOCAL
     assert local.model_id("supervisor") == "Llama-3.3-70B-Instruct"
@@ -103,14 +118,16 @@ def test_model_factory_is_the_create_react_agent_seam() -> None:
     # (state, runtime) -> BaseChatModel — the verified create_react_agent shape.
     assert factory({}, object()) == {
         "provider": "anthropic",
-        "model": "claude-sonnet-4-20250514",
+        "model": EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"],
     }
     # Lazy construction is cached per role.
     assert factory({}, object()) == {
         "provider": "anthropic",
-        "model": "claude-sonnet-4-20250514",
+        "model": EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"],
     }
-    assert built == [("anthropic", "claude-sonnet-4-20250514", "test-key")]
+    assert built == [
+        ("anthropic", EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"], "test-key")
+    ]
 
 
 def test_anthropic_uses_anthropic_api_key_by_default() -> None:

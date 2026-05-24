@@ -304,10 +304,11 @@ def test_cloud_profile_budget_uses_guardian_model_prices(monkeypatch) -> None:  
     cloud_guardians = {
         row["guardian"]: row for row in cloud["per_guardian_cost_estimates"]
     }
-    assert cloud_guardians["evaluator"]["model_id"] == "claude-sonnet-4-20250514"
+    assert cloud_guardians["evaluator"]["model_id"] == "claude-sonnet-4-6"
     assert cloud_guardians["evaluator"]["input_usd_per_mtok"] == 3.0
-    assert cloud_guardians["supervisor"]["model_id"] == "claude-opus-4-20250514"
-    assert cloud_guardians["supervisor"]["output_usd_per_mtok"] == 75.0
+    assert cloud_guardians["supervisor"]["model_id"] == "claude-opus-4-7"
+    assert cloud_guardians["supervisor"]["input_usd_per_mtok"] == 5.0
+    assert cloud_guardians["supervisor"]["output_usd_per_mtok"] == 25.0
     assert cloud_guardians["auditor"]["model_id"] == "claude-haiku-4-5-20251001"
 
 

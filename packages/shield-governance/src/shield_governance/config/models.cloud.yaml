@@ -24,14 +24,16 @@ guardians:
     served_via: local
   evaluator:
     provider: anthropic
-    # Use dated Anthropic API IDs here. Do not commit placeholder aliases like
-    # claude-sonnet-4; they can parse locally and fail only during live runs.
-    model: claude-sonnet-4-20250514
+    # Use official Anthropic pinned API IDs here. Claude 4.6+ pinned IDs are
+    # dateless snapshots; do not commit placeholder aliases like claude-sonnet-4.
+    # Deprecated fallback reference: claude-sonnet-4-20250514.
+    model: claude-sonnet-4-6
     served_via: cloud
     temperature: 0.0
   supervisor:
     provider: anthropic
-    model: claude-opus-4-20250514
+    # Deprecated fallback reference: claude-opus-4-20250514.
+    model: claude-opus-4-7
     served_via: cloud
     temperature: 0.0
   auditor:

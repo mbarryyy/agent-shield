@@ -526,4 +526,4 @@ def test_backend_real_records_async_guardian_errors_in_summary(tmp_path, monkeyp
     error = summary["errors"][0]
     assert error["error_class"] == "NotFoundError"
     assert error["guardian_name"] == "evaluator"
-    assert error["model_id"] == "claude-sonnet-4-20250514"
+    assert error["model_id"] == "claude-sonnet-4-6"
