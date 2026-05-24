@@ -447,3 +447,93 @@ def test_measured_case_row_rolls_up_provider_usage_from_worker() -> None:
     assert row["prompt_tokens"] == 500
     assert row["completion_tokens"] == 200
     assert row["cost_usd"] > 0
+
+
+def test_measured_case_row_marks_non_invoked_supervisor_as_skipped() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "supervisor",
+                "decision": "PASS",
+                "model_id": None,
+                "served_via": None,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "latency_ms": 0.0,
+                "cost_usd": 0.0,
+                "reasons": ["supervisor.aggregate"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    supervisor = row["per_guardian"][0]
+    assert supervisor["decision"] == "SKIPPED"
+    assert supervisor["invocation_status"] == "SKIPPED"
+    assert supervisor["reasons"] == ["supervisor.skipped_no_conflict"]
+
+
+def test_measured_case_row_preserves_invoked_supervisor_usage() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "BLOCK"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"BLOCK": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "supervisor",
+                "decision": "BLOCK",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 600,
+                "completion_tokens": 100,
+                "latency_ms": 40.0,
+                "cost_usd": 0.0,
+                "reasons": ["supervisor.arbitrated"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    supervisor = row["per_guardian"][0]
+    assert supervisor["decision"] == "BLOCK"
+    assert supervisor["invocation_status"] == "EXECUTED"
+    assert supervisor["prompt_tokens"] == 600
+    assert supervisor["completion_tokens"] == 100
+    assert supervisor["cost_usd"] > 0

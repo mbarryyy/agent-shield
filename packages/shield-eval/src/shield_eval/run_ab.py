@@ -922,6 +922,17 @@ def _guardian_row_with_cost(row: dict[str, Any]) -> dict[str, Any]:
     completion_tokens = _safe_int(normalized.get("completion_tokens"))
     normalized["prompt_tokens"] = prompt_tokens
     normalized["completion_tokens"] = completion_tokens
+    guardian = str(normalized.get("guardian") or "")
+    reasons = [str(reason) for reason in (normalized.get("reasons") or [])]
+    model_id = normalized.get("model_id")
+    invoked = bool(model_id) or prompt_tokens > 0 or completion_tokens > 0
+    if guardian == "supervisor" and not invoked:
+        normalized["decision"] = "SKIPPED"
+        normalized["invocation_status"] = "SKIPPED"
+        if reasons == ["supervisor.aggregate"]:
+            normalized["reasons"] = ["supervisor.skipped_no_conflict"]
+    elif guardian == "supervisor":
+        normalized["invocation_status"] = "EXECUTED"
     cost_usd = _safe_float(normalized.get("cost_usd"))
     if cost_usd == 0.0 and str(normalized.get("served_via", "")).lower() == "cloud":
         cost_usd = _usage_cost_usd(
