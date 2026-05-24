@@ -16,6 +16,22 @@ import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 // even with no signal, so a BLOCK reads as "the team caught it".
 const GUARDIANS: Guardian[] = ['defender', 'evaluator', 'supervisor', 'auditor'];
 
+function formatGuardianCost(value: number): string {
+  if (value > 0 && value < 0.01) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4,
+    }).format(value);
+  }
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function GuardianLane({
   guardian,
   reasons,
@@ -73,6 +89,7 @@ function GuardianLane({
                 {row.prompt_tokens} prompt / {row.completion_tokens} completion
                 <span> · {row.latency_ms} ms</span>
                 {row.served_via && <span> · {row.served_via}</span>}
+                <span> · cost {formatGuardianCost(row.cost_usd)}</span>
               </div>
               {row.model_id && (
                 <div className="text-ink-dim normal-case mt-0.5 break-words">

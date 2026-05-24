@@ -112,8 +112,9 @@ def test_real_eval_model_builds_anthropic_llm_without_modelsenum(monkeypatch) ->
     assert llm._MAX_TOKENS == 64
 
 
-def test_real_eval_model_requires_anthropic_key(monkeypatch) -> None:
+def test_real_eval_model_requires_anthropic_key(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ArmUnavailable, match="ANTHROPIC_API_KEY"):
         run_ab._real_llm_for_worker("claude-haiku-4-5-20251001")

@@ -100,7 +100,7 @@ describe('VerdictPanel', () => {
             prompt_tokens: 3,
             completion_tokens: 2,
             latency_ms: 4.5,
-            cost_usd: 0,
+            cost_usd: 0.0012,
           },
         ]}
       />,
@@ -111,6 +111,7 @@ describe('VerdictPanel', () => {
     expect(screen.getByText(/fixture-auditor-v1/i)).toBeInTheDocument();
     expect(screen.getByText(/3 prompt \/ 2 completion/i)).toBeInTheDocument();
     expect(screen.getByText(/4.5 ms/i)).toBeInTheDocument();
+    expect(screen.getByText(/cost \$0.0012/i)).toBeInTheDocument();
   });
 });
 

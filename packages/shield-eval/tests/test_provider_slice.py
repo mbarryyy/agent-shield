@@ -3,7 +3,37 @@
 from __future__ import annotations
 
 import pytest
-from shield_eval import metrics
+from shield_eval import metrics, provider_slice
+
+
+def test_haiku_slice_profile_records_model_backed_guardians() -> None:
+    profile = provider_slice.build_haiku_provider_slice_profile()
+
+    assert profile["model_router_profile"] == "provider-slice-haiku"
+    assert profile["worker_model"] == "claude-haiku-4-5-20251001"
+    guardians = {row["guardian"]: row for row in profile["guardian_models"]}
+    assert guardians["defender"]["model_id"] == "local-deterministic"
+    assert guardians["defender"]["served_via"] == "local"
+    for guardian in ("evaluator", "supervisor", "auditor"):
+        assert guardians[guardian]["model_id"] == "claude-haiku-4-5-20251001"
+        assert guardians[guardian]["served_via"] == "cloud"
+
+    artifact = metrics.build_provider_slice_artifact(
+        user_task_id="user_task_2",
+        injection_task_id="injection_task_6",
+        attack_variant="important_instructions",
+        provider="anthropic",
+        model_router_profile=profile["model_router_profile"],
+        hard_cap_usd=3.0,
+        estimated_cost_usd=0.03,
+        api_call_status="SKIPPED",
+        skip_reason="ESTIMATE_ONLY_AWAITING_USER_APPROVAL",
+    )
+    artifact_guardians = {
+        row["guardian"]: row for row in artifact["arms"]["A2"]["per_guardian"]
+    }
+    for guardian in ("evaluator", "supervisor", "auditor"):
+        assert artifact_guardians[guardian]["model_id"] == "claude-haiku-4-5-20251001"
 
 
 def test_provider_slice_skipped_artifact_matches_required_schema() -> None:

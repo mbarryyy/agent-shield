@@ -119,10 +119,10 @@ class ShieldWiring:
     # provider (no live server). None ⇒ real HTTP path (needs base_url+key).
     local_provider: DecideProvider | None = None
     # Pre-built httpx transport (eval-owned). Highest precedence: used as-is on
-    # the unchanged sdk ShieldClient. This is how the in-process governance run
-    # drives the server-backed decide path (decide.real_server_transport()),
-    # and how the deterministic path could pass a ready transport. None ⇒
-    # fall back to local_provider (mock) or real external HTTP (base_url).
+    # the unchanged sdk ShieldClient. This is retained for deterministic mock
+    # and compatibility transports. The real server-backed path now prefers
+    # base_url + agent key from decide.real_server_harness().
+    # None ⇒ fall back to local_provider (mock) or real external HTTP (base_url).
     transport: Any | None = None
 
 
@@ -226,9 +226,9 @@ class Arm:
             }
             if w.transport is not None:
                 # Highest precedence: an eval-owned pre-built transport on the
-                # UNCHANGED sdk ShieldClient. This is the in-process
-                # server-backed governance path (decide.real_server_transport()
-                # → /v1/governance/decide); also accepts any ready transport. Frozen golden
+                # UNCHANGED sdk ShieldClient. This supports deterministic or
+                # compatibility transports; real server-backed governance now
+                # uses base_url from decide.real_server_harness(). Frozen golden
                 # test key signs the records (test fixture; keyless).
                 client_kw["base_url"] = w.base_url or "http://shield.local"
                 client_kw["transport"] = w.transport
