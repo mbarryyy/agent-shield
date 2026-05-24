@@ -95,7 +95,18 @@ def _guardian_evidence_payload(
             "cost_usd": row.cost_usd,
         }
         if row.memory is not None:
-            item["memory"] = dict(row.memory)
+            memory = dict(row.memory)
+            item["memory"] = memory
+            for key in ("memory_backend", "collection", "query_id", "hit_count", "missing_reason"):
+                if key in memory:
+                    item[key] = memory[key]
+            if memory.get("latency_ms") is not None:
+                item["memory_latency_ms"] = memory["latency_ms"]
+            top_hits = memory.get("top_hits")
+            if isinstance(top_hits, list) and top_hits and isinstance(top_hits[0], dict):
+                item["top_hit_id"] = top_hits[0].get("id")
+                item["score"] = top_hits[0].get("score")
+                item["distance"] = top_hits[0].get("distance")
         if row.tool_calls:
             item["tool_calls"] = list(row.tool_calls)
         payload.append(item)

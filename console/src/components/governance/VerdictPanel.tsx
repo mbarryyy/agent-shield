@@ -39,15 +39,18 @@ function formatEvidenceNumber(value: number): string {
 }
 
 function formatMemorySummary(row: GuardianEvidenceRow): string | null {
-  if (!row.memory) return null;
-  const memory = row.memory;
-  const parts = [`memory ${memory.memory_backend ?? 'unknown'}`];
-  if (memory.collection) parts.push(memory.collection);
-  if (memory.hit_count != null) {
-    parts.push(`${memory.hit_count} ${memory.hit_count === 1 ? 'hit' : 'hits'}`);
+  const memoryBackend = row.memory_backend ?? row.memory?.memory_backend;
+  if (!memoryBackend) return null;
+  const collection = row.collection ?? row.memory?.collection;
+  const hitCount = row.hit_count ?? row.memory?.hit_count;
+  const latencyMs = row.memory_latency_ms ?? row.memory?.latency_ms;
+  const parts = [`memory ${memoryBackend}`];
+  if (collection) parts.push(collection);
+  if (hitCount != null) {
+    parts.push(`${hitCount} ${hitCount === 1 ? 'hit' : 'hits'}`);
   }
-  if (memory.latency_ms != null) {
-    parts.push(`${formatEvidenceNumber(memory.latency_ms)} ms`);
+  if (latencyMs != null) {
+    parts.push(`${formatEvidenceNumber(latencyMs)} ms`);
   }
   return parts.join(' · ');
 }
@@ -57,6 +60,13 @@ function formatMemoryHit(hit: GuardianMemoryHit): string {
   if (hit.score != null) parts.push(`score ${formatEvidenceNumber(hit.score)}`);
   if (hit.distance != null) parts.push(`distance ${formatEvidenceNumber(hit.distance)}`);
   return parts.join(' · ');
+}
+
+function memoryHits(row: GuardianEvidenceRow): GuardianMemoryHit[] {
+  if (row.top_hit_id) {
+    return [{ id: row.top_hit_id, score: row.score, distance: row.distance }];
+  }
+  return row.memory?.top_hits ?? [];
 }
 
 function GuardianLane({
@@ -128,24 +138,24 @@ function GuardianLane({
                   tools {row.tool_calls.join(', ')}
                 </div>
               )}
-              {row.memory && (
+              {(formatMemorySummary(row) || row.query_id || row.missing_reason || memoryHits(row).length > 0) && (
                 <>
                   {formatMemorySummary(row) && (
                     <div className="text-ink-dim normal-case mt-0.5 break-words">
                       {formatMemorySummary(row)}
                     </div>
                   )}
-                  {row.memory.query_id && (
+                  {(row.query_id ?? row.memory?.query_id) && (
                     <div className="text-ink-dim normal-case mt-0.5 break-words">
-                      query {row.memory.query_id}
+                      query {row.query_id ?? row.memory?.query_id}
                     </div>
                   )}
-                  {row.memory.missing_reason && (
+                  {(row.missing_reason ?? row.memory?.missing_reason) && (
                     <div className="text-ink-dim normal-case mt-0.5 break-words">
-                      missing {row.memory.missing_reason}
+                      missing {row.missing_reason ?? row.memory?.missing_reason}
                     </div>
                   )}
-                  {row.memory.top_hits?.slice(0, 3).map((hit) => (
+                  {memoryHits(row).slice(0, 3).map((hit) => (
                     <div
                       key={`${row.record_id}-${hit.id}`}
                       className="text-ink-dim normal-case mt-0.5 break-words"

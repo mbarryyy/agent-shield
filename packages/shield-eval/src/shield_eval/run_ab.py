@@ -916,8 +916,30 @@ def _worker_usage_from_llm(llm: Any, model_id: str | None) -> tuple[int, int, fl
     return prompt_tokens, completion_tokens, cost_usd
 
 
+def _flatten_memory_fields(normalized: dict[str, Any]) -> None:
+    memory = normalized.get("memory")
+    if not isinstance(memory, dict):
+        return
+    for key in ("memory_backend", "collection", "query_id", "hit_count", "missing_reason"):
+        if key in memory and normalized.get(key) is None:
+            normalized[key] = memory.get(key)
+    if normalized.get("memory_latency_ms") is None and memory.get("latency_ms") is not None:
+        normalized["memory_latency_ms"] = memory.get("latency_ms")
+    top_hits = memory.get("top_hits")
+    if isinstance(top_hits, list) and top_hits:
+        top_hit = top_hits[0]
+        if isinstance(top_hit, dict):
+            if normalized.get("top_hit_id") is None:
+                normalized["top_hit_id"] = top_hit.get("id")
+            if normalized.get("score") is None:
+                normalized["score"] = top_hit.get("score")
+            if normalized.get("distance") is None:
+                normalized["distance"] = top_hit.get("distance")
+
+
 def _guardian_row_with_cost(row: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(row)
+    _flatten_memory_fields(normalized)
     prompt_tokens = _safe_int(normalized.get("prompt_tokens"))
     completion_tokens = _safe_int(normalized.get("completion_tokens"))
     normalized["prompt_tokens"] = prompt_tokens

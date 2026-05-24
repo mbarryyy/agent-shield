@@ -81,6 +81,15 @@ export interface GuardianEvidenceRow {
   latency_ms: number;
   cost_usd: number;
   tool_calls?: string[];
+  memory_backend?: string | null;
+  collection?: string | null;
+  query_id?: string | null;
+  hit_count?: number | null;
+  memory_latency_ms?: number | null;
+  missing_reason?: string | null;
+  top_hit_id?: string | null;
+  score?: number | null;
+  distance?: number | null;
   memory?: GuardianMemoryEvidence | null;
 }
 

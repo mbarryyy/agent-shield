@@ -537,3 +537,60 @@ def test_measured_case_row_preserves_invoked_supervisor_usage() -> None:
     assert supervisor["prompt_tokens"] == 600
     assert supervisor["completion_tokens"] == 100
     assert supervisor["cost_usd"] > 0
+
+
+def test_measured_case_row_flattens_memory_evidence_fields() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "auditor",
+                "decision": "PASS",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "latency_ms": 40.0,
+                "cost_usd": 0.0,
+                "reasons": ["auditor.tool_loop"],
+                "memory": {
+                    "memory_backend": "chroma",
+                    "collection": "agent_shield_eval_guardian_memory",
+                    "query_id": "query-1",
+                    "hit_count": 1,
+                    "latency_ms": 6.5,
+                    "top_hits": [{"id": "hit-1", "score": 0.91, "distance": 0.09}],
+                },
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    auditor = row["per_guardian"][0]
+    assert auditor["memory_backend"] == "chroma"
+    assert auditor["collection"] == "agent_shield_eval_guardian_memory"
+    assert auditor["query_id"] == "query-1"
+    assert auditor["hit_count"] == 1
+    assert auditor["memory_latency_ms"] == 6.5
+    assert auditor["top_hit_id"] == "hit-1"
+    assert auditor["score"] == 0.91
+    assert auditor["distance"] == 0.09
