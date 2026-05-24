@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
+from langchain.agents import create_agent
+from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import tool
 from shield_sdk.schema import (
     Decision,
     GovernanceVerdict,
@@ -19,8 +22,13 @@ from shield_governance.auditor import Auditor, AuditResult
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.evidence import GuardianEvidenceRecorder
 from shield_governance.graph import _resolve_pubkey
+from shield_governance.memory.tools import build_recall_similar_incidents_tool
 from shield_governance.model_router import ShieldModelRouter
-from shield_governance.router_runtime import RouterCallMeasurement, RouterTextClient
+from shield_governance.router_runtime import (
+    RouterCallMeasurement,
+    RouterCallResult,
+    RouterTextClient,
+)
 from shield_governance.supervisor import (
     ArbitrationResult,
     GuardianSignals,
@@ -178,22 +186,83 @@ class RouterHallucinationChecker:
 
 
 class RouterSupervisorArbiter:
-    """Conflict-only Supervisor arbiter backed by the model router."""
+    """Conflict-only Supervisor arbiter backed by a bounded tool loop."""
 
-    def __init__(self, router: ShieldModelRouter, evidence_recorder: GuardianEvidenceRecorder):
-        self._caller = RouterTextClient(router, "supervisor")
+    def __init__(
+        self,
+        router: ShieldModelRouter,
+        evidence_recorder: GuardianEvidenceRecorder,
+        *,
+        memory: object | None = None,
+        max_iterations: int = 6,
+    ):
+        self._router = router
         self._evidence = evidence_recorder
         self._last_measurement: RouterCallMeasurement | None = None
+        self._last_tool_calls: tuple[str, ...] = ()
+        self._last_memory: dict[str, object] | None = None
+        self._memory = memory
+        self._max_iterations = max(2, max_iterations)
 
     def __call__(self, signals: GuardianSignals) -> ArbitrationResult:
+        return self.decide(signals, record=None)
+
+    def decide(
+        self,
+        signals: GuardianSignals,
+        *,
+        record: ShieldActionRecord | None,
+    ) -> ArbitrationResult:
+        import time
+
+        started = time.perf_counter()
+        resolved = self._router.for_role("supervisor")
+        tool_call_log: list[str] = []
+        memory_evidence_log: list[dict[str, object]] = []
+        tools = self._build_tools(
+            signals,
+            record=record,
+            tool_call_log=tool_call_log,
+            memory_evidence_log=memory_evidence_log,
+        )
+        agent = create_agent(
+            model=cast(BaseChatModel, self._router.model_factory("supervisor")({}, object())),
+            tools=tools,
+            system_prompt=(
+                "You are the Agent Shield Supervisor. Use tools before resolving "
+                "guardian conflicts. Reply with one of PASS, ALERT, ESCALATE, "
+                "BLOCK, or ROLLBACK followed by a short reason."
+            ),
+        )
         prompt = (
             "Resolve this Defender/Evaluator conflict. "
             f"defender={signals.defender_decision.value} "
             f"evaluator_anomaly={signals.evaluator_anomaly:.3f}. "
-            "Answer PASS, ALERT, ESCALATE, BLOCK, or ROLLBACK with a short reason."
+            "Use tools, then answer PASS, ALERT, ESCALATE, BLOCK, or ROLLBACK."
         )
-        measurement = self._caller.complete(prompt)
+        try:
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": prompt}]},
+                config={"recursion_limit": self._max_iterations + 2},
+            )
+            parsed = _extract_agent_text_and_usage(result)
+        except Exception as exc:
+            parsed = _AgentRunSummary(
+                text=f"ESCALATE: supervisor tool loop failed ({exc.__class__.__name__})",
+                prompt_tokens=0,
+                completion_tokens=0,
+            )
+            tool_call_log.append("supervisor_tool_loop_error")
+        measurement = RouterCallMeasurement(
+            role="supervisor",
+            model_id=resolved.model,
+            served_via=resolved.served_via,
+            result=parsed.to_router_result(),
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
         self._last_measurement = measurement
+        self._last_tool_calls = tuple(tool_call_log)
+        self._last_memory = memory_evidence_log[-1] if memory_evidence_log else None
         decision = _decision_from_text(measurement.result.text, default=Decision.ESCALATE)
         reason = VerdictReason(
             agent=Guardian.SUPERVISOR,
@@ -204,6 +273,43 @@ class RouterSupervisorArbiter:
             served_via=measurement.served_via,
         )
         return ArbitrationResult(decision=decision, reason=reason)
+
+    def _build_tools(
+        self,
+        signals: GuardianSignals,
+        *,
+        record: ShieldActionRecord | None,
+        tool_call_log: list[str],
+        memory_evidence_log: list[dict[str, object]],
+    ) -> list[Any]:
+        @tool
+        def inspect_guardian_signals(_hint: str = "") -> dict[str, object]:
+            """Inspect Defender, Evaluator, and Auditor signals for this conflict."""
+            tool_call_log.append("inspect_guardian_signals")
+            return {
+                "defender_decision": signals.defender_decision.value,
+                "evaluator_anomaly": signals.evaluator_anomaly,
+                "evaluator_ran": signals.evaluator_ran,
+                "auditor_integrity": signals.auditor_integrity,
+                "structuring_or_exfil": signals.structuring_or_exfil,
+                "chain_broken": signals.chain_broken,
+                "post_exec": signals.post_exec,
+                "defender_reasons": [reason.label for reason in signals.defender_reasons],
+                "evaluator_reasons": [reason.label for reason in signals.evaluator_reasons],
+                "auditor_reasons": [reason.label for reason in signals.auditor_reasons],
+            }
+
+        tools: list[Any] = [inspect_guardian_signals]
+        if self._memory is not None and record is not None:
+            tools.append(
+                build_recall_similar_incidents_tool(
+                    record=record,
+                    memory=self._memory,
+                    tool_call_log=tool_call_log,
+                    memory_evidence_log=memory_evidence_log,
+                )
+            )
+        return tools
 
     def record_evidence(
         self, record: ShieldActionRecord, decision: Decision, reason: VerdictReason
@@ -222,16 +328,140 @@ class RouterSupervisorArbiter:
             completion_tokens=measurement.result.completion_tokens,
             latency_ms=measurement.latency_ms,
             cost_usd=measurement.result.cost_usd,
+            memory=self._last_memory,
+            tool_calls=self._last_tool_calls,
         )
 
 
 class RouterBackedAuditor(Auditor):
-    """Auditor with router-backed narrative/reporting path."""
+    """Auditor with router-backed bounded tool loop plus report narrative."""
 
-    def __init__(self, router: ShieldModelRouter, evidence_recorder: GuardianEvidenceRecorder):
+    def __init__(
+        self,
+        router: ShieldModelRouter,
+        evidence_recorder: GuardianEvidenceRecorder,
+        *,
+        memory: object | None = None,
+        max_iterations: int = 6,
+    ):
         super().__init__()
+        self._router = router
         self._caller = RouterTextClient(router, "auditor")
         self._evidence = evidence_recorder
+        self._memory = memory
+        self._max_iterations = max(2, max_iterations)
+
+    def audit(
+        self, records: list[ShieldActionRecord], *, agent_pubkey_b64url: str | None
+    ) -> AuditResult:
+        result = super().audit(records, agent_pubkey_b64url=agent_pubkey_b64url)
+        if records:
+            self._record_tool_loop_evidence(records, result)
+        return result
+
+    def _record_tool_loop_evidence(
+        self,
+        records: list[ShieldActionRecord],
+        audit_result: AuditResult,
+    ) -> None:
+        import time
+
+        record = records[0]
+        started = time.perf_counter()
+        resolved = self._router.for_role("auditor")
+        tool_call_log: list[str] = []
+        memory_evidence_log: list[dict[str, object]] = []
+        tools = self._build_tools(
+            records,
+            audit_result,
+            tool_call_log=tool_call_log,
+            memory_evidence_log=memory_evidence_log,
+        )
+        agent = create_agent(
+            model=cast(BaseChatModel, self._router.model_factory("auditor")({}, object())),
+            tools=tools,
+            system_prompt=(
+                "You are the Agent Shield Auditor. Use tools to inspect chain, "
+                "provenance, and memory evidence before emitting a concise audit finding."
+            ),
+        )
+        try:
+            run = agent.invoke(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Audit this Channel-2 record batch with tools.",
+                        }
+                    ]
+                },
+                config={"recursion_limit": self._max_iterations + 2},
+            )
+            parsed = _extract_agent_text_and_usage(run)
+        except Exception as exc:
+            parsed = _AgentRunSummary(
+                text=f"AUDIT: tool loop failed ({exc.__class__.__name__})",
+                prompt_tokens=0,
+                completion_tokens=0,
+            )
+            tool_call_log.append("auditor_tool_loop_error")
+        self._evidence.record_for_record(
+            record,
+            guardian=Guardian.AUDITOR,
+            decision=Decision.BLOCK if audit_result.chain_broken else Decision.PASS,
+            reasons=tuple(reason.label for reason in audit_result.reasons)
+            or ("auditor.tool_loop",),
+            model_id=resolved.model,
+            served_via=resolved.served_via,
+            prompt_tokens=parsed.prompt_tokens,
+            completion_tokens=parsed.completion_tokens,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+            cost_usd=0.0,
+            memory=memory_evidence_log[-1] if memory_evidence_log else None,
+            tool_calls=tuple(tool_call_log),
+        )
+
+    def _build_tools(
+        self,
+        records: list[ShieldActionRecord],
+        audit_result: AuditResult,
+        *,
+        tool_call_log: list[str],
+        memory_evidence_log: list[dict[str, object]],
+    ) -> list[Any]:
+        @tool
+        def inspect_chain_state(_hint: str = "") -> dict[str, object]:
+            """Inspect signature/chain/Merkle integrity for the audited batch."""
+            tool_call_log.append("inspect_chain_state")
+            return {
+                "record_count": len(records),
+                "integrity": audit_result.integrity,
+                "chain_broken": audit_result.chain_broken,
+                "self_report_mismatch": audit_result.self_report_mismatch,
+                "reason_labels": [reason.label for reason in audit_result.reasons],
+            }
+
+        @tool
+        def inspect_provenance_summary(_hint: str = "") -> dict[str, object]:
+            """Inspect trace-safe provenance summary for the audited batch."""
+            tool_call_log.append("inspect_provenance_summary")
+            return {
+                "record_ids": [record.record_id for record in records[:8]],
+                "correlation_ids": sorted({record.correlation_id for record in records}),
+                "phases": [record.phase.value for record in records],
+            }
+
+        tools: list[Any] = [inspect_chain_state, inspect_provenance_summary]
+        if self._memory is not None and records:
+            tools.append(
+                build_recall_similar_incidents_tool(
+                    record=records[0],
+                    memory=self._memory,
+                    tool_call_log=tool_call_log,
+                    memory_evidence_log=memory_evidence_log,
+                )
+            )
+        return tools
 
     async def generate_compliance_report(
         self, verdicts: list[GovernanceVerdict]
@@ -270,8 +500,8 @@ def build_router_backed_guardians(
         evaluator_config or EvaluatorConfig(),
         hallucination=RouterHallucinationChecker(router, evidence, memory=memory),
     )
-    supervisor = Supervisor(arbiter=RouterSupervisorArbiter(router, evidence))
-    auditor = RouterBackedAuditor(router, evidence)
+    supervisor = Supervisor(arbiter=RouterSupervisorArbiter(router, evidence, memory=memory))
+    auditor = RouterBackedAuditor(router, evidence, memory=memory)
     return RouterBackedGuardians(
         evaluator=evaluator,
         supervisor=supervisor,
@@ -375,6 +605,48 @@ def _record_stub_from_verdict(verdict: GovernanceVerdict) -> ShieldActionRecord:
         record_id=verdict.record_id or verdict.verdict_id,
         correlation_id=verdict.correlation_id,
         phase=Phase.POST_EXEC,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AgentRunSummary:
+    text: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    def to_router_result(self) -> RouterCallResult:
+        return RouterCallResult(
+            text=self.text,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            cost_usd=0.0,
+        )
+
+
+def _extract_agent_text_and_usage(result: object) -> _AgentRunSummary:
+    messages = result.get("messages", []) if isinstance(result, dict) else []
+    final_text = ""
+    prompt_tokens = 0
+    completion_tokens = 0
+    for msg in messages:
+        usage = getattr(msg, "usage_metadata", None)
+        if isinstance(usage, dict):
+            prompt_tokens += int(usage.get("input_tokens", 0) or 0)
+            completion_tokens += int(usage.get("output_tokens", 0) or 0)
+        content = getattr(msg, "content", None)
+        tool_calls = getattr(msg, "tool_calls", None)
+        if (
+            content is not None
+            and not (isinstance(content, str) and not content.strip())
+            and not tool_calls
+        ):
+            final_text = (
+                content if isinstance(content, str) else getattr(content[0], "text", str(content))
+            )
+    return _AgentRunSummary(
+        text=final_text,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
 
 
