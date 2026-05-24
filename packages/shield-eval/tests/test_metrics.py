@@ -255,9 +255,7 @@ def test_haiku_provider_slice_budget_has_per_guardian_price_breakdown(monkeypatc
     assert assumption["max_output_tokens_per_model_invocation"] == 800
     assert assumption["chroma_backend"] == "local persistent Chroma; no provider token cost"
     assert "bounded create_agent" in assumption["basis"]
-    guardians = {
-        row["guardian"]: row for row in artifact["per_guardian_cost_estimates"]
-    }
+    guardians = {row["guardian"]: row for row in artifact["per_guardian_cost_estimates"]}
     assert guardians["defender"]["cost_usd"] == 0.0
     assert guardians["evaluator"]["model_invocations_per_record"] == 3
     assert guardians["evaluator"]["chroma_queries_per_record"] == 1
@@ -301,9 +299,7 @@ def test_cloud_profile_budget_uses_guardian_model_prices(monkeypatch) -> None:  
         haiku["worker_estimate"]["cost_usd"]
     )
     assert cloud["estimated_cost_usd"] > haiku["estimated_cost_usd"]
-    cloud_guardians = {
-        row["guardian"]: row for row in cloud["per_guardian_cost_estimates"]
-    }
+    cloud_guardians = {row["guardian"]: row for row in cloud["per_guardian_cost_estimates"]}
     assert cloud_guardians["evaluator"]["model_id"] == "claude-sonnet-4-6"
     assert cloud_guardians["evaluator"]["input_usd_per_mtok"] == 3.0
     assert cloud_guardians["supervisor"]["model_id"] == "claude-opus-4-7"

@@ -33,7 +33,7 @@ import os
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,7 +75,7 @@ def _real_llm_for_worker(worker: str) -> Any:
         from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
         from anthropic import AsyncAnthropic
 
-        class UsageTrackingAnthropicLLM(AnthropicLLM):
+        class UsageTrackingAnthropicLLM(AnthropicLLM):  # type: ignore[misc]
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 super().__init__(*args, **kwargs)
                 self.prompt_tokens = 0
@@ -124,9 +124,7 @@ def _real_llm_for_worker(worker: str) -> Any:
                 completion_tokens = _safe_int(getattr(usage, "output_tokens", 0))
                 self.prompt_tokens += prompt_tokens
                 self.completion_tokens += completion_tokens
-                self.cost_usd += _usage_cost_usd(
-                    self.model, prompt_tokens, completion_tokens
-                )
+                self.cost_usd += _usage_cost_usd(self.model, prompt_tokens, completion_tokens)
 
                 output = _anthropic_llm._anthropic_to_assistant_message(completion)
                 if output["tool_calls"] is not None:
@@ -444,8 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         "--model-router-profile",
         default="cloud",
         help=(
-            "eval artifact model-router profile label; use provider-slice-haiku "
-            "for the first slice"
+            "eval artifact model-router profile label; use provider-slice-haiku for the first slice"
         ),
     )
     p.add_argument("--metrics", default=None)
@@ -672,9 +669,7 @@ class _AsyncGuardianEvidenceDrain:
         rows: list[dict[str, Any]] = []
         while time.monotonic() < deadline:
             try:
-                handled = asyncio.run(
-                    self._worker.run_once(workflow_id, count=1, block_ms=1)
-                )
+                handled = asyncio.run(self._worker.run_once(workflow_id, count=1, block_ms=1))
             except Exception as exc:  # noqa: BLE001 - one async sidecar must not kill eval discovery
                 self._errors.append(self._error_row(exc))
                 rows.extend(self._new_sidecar_rows())
@@ -764,7 +759,13 @@ def _no_provider_router_for_http(model_router_profile: str) -> Any:
     from shield_governance.model_router import ResolvedModel, ShieldModelRouter
 
     class _ToolableFakeChatModel(FakeMessagesListChatModel):
-        def bind_tools(self, tools: object, **kwargs: object) -> object:  # noqa: ARG002
+        def bind_tools(
+            self,
+            tools: Sequence[Any],
+            *,
+            tool_choice: str | None = None,
+            **kwargs: Any,
+        ) -> Any:  # noqa: ARG002
             return self
 
     def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
@@ -1411,7 +1412,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
 
             if f2_server is not None:
                 tmpdir = tempfile.TemporaryDirectory(prefix="shield_eval_real_grid_")
-                shield_extra_args: dict[str, Any] = {}
+                f2_shield_extra_args: dict[str, Any] = {}
                 memory, memory_tmp = _chroma_memory_for_eval()
                 evidence_drain = _AsyncGuardianEvidenceDrain(
                     f2_server,
@@ -1443,7 +1444,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                             ShieldWiring(
                                 base_url=f2_server.base_url,
                                 agent_private_key_b64url=f2_server.agent_private_key_b64url,
-                                shared_extra_args=shield_extra_args,
+                                shared_extra_args=f2_shield_extra_args,
                             )
                             if arm.kind == "shield"
                             else None
@@ -1538,8 +1539,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             hard_cap_usd=artifact["hard_cap_usd"],
             estimated_cost_usd=artifact["estimated_cost_usd"],
             api_call_status="SKIPPED",
-            skip_reason=artifact.get("skip_reason")
-            or "ESTIMATE_ONLY_AWAITING_USER_APPROVAL",
+            skip_reason=artifact.get("skip_reason") or "ESTIMATE_ONLY_AWAITING_USER_APPROVAL",
         )
         if args.budget_out:
             write_json(args.budget_out, artifact)

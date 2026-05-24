@@ -125,9 +125,7 @@ def test_model_factory_is_the_create_react_agent_seam() -> None:
         "provider": "anthropic",
         "model": EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"],
     }
-    assert built == [
-        ("anthropic", EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"], "test-key")
-    ]
+    assert built == [("anthropic", EXPECTED_CLOUD_GUARDIAN_MODELS["evaluator"], "test-key")]
 
 
 def test_anthropic_uses_anthropic_api_key_by_default() -> None:

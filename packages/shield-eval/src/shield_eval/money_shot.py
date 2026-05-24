@@ -141,8 +141,7 @@ def _decision_source_from_verdict(verdict: Any) -> str:
             return "governance"
 
     if any(
-        _enum_value(_attr(reason, "agent", None) or _attr(reason, "guardian", None))
-        == "defender"
+        _enum_value(_attr(reason, "agent", None) or _attr(reason, "guardian", None)) == "defender"
         for reason in reasons
     ):
         return "sync_defender_local"

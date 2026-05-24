@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, cast
 
 _EVIDENCE_LABELS = {
     "FIXTURE",
@@ -89,8 +89,8 @@ def _normalize_row(row: Mapping[str, Any] | object) -> dict[str, Any]:
 def _as_mapping(row: Mapping[str, Any] | object) -> Mapping[str, Any]:
     if isinstance(row, Mapping):
         return row
-    if is_dataclass(row):
-        return asdict(row)
+    if is_dataclass(row) and not isinstance(row, type):
+        return cast(Mapping[str, Any], asdict(row))
     return {
         key: getattr(row, key)
         for key in dir(row)
@@ -107,13 +107,15 @@ def _string_or_none(value: object) -> str | None:
 
 def _int(value: object) -> int:
     try:
-        return max(0, int(value or 0))
+        parsed = int(cast(Any, value if value is not None else 0))
+        return max(0, parsed)
     except (TypeError, ValueError):
         return 0
 
 
 def _float(value: object) -> float:
     try:
-        return max(0.0, float(value or 0.0))
+        parsed = float(cast(Any, value if value is not None else 0.0))
+        return max(0.0, parsed)
     except (TypeError, ValueError):
         return 0.0

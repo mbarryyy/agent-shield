@@ -718,9 +718,7 @@ def _estimate_model_cost(
     price = _model_price(model_id)
     input_price = float(price["input"])
     output_price = float(price["output"])
-    cost = (input_tokens / 1_000_000 * input_price) + (
-        output_tokens / 1_000_000 * output_price
-    )
+    cost = (input_tokens / 1_000_000 * input_price) + (output_tokens / 1_000_000 * output_price)
     return cost, price
 
 
@@ -1134,6 +1132,7 @@ def build_provider_slice_artifact(
     if not executed:
         artifact["skip_reason"] = skip_reason or "REAL_EVAL_SKIPPED"
     return artifact
+
 
 def write_json(path: str | Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
     Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

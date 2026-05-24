@@ -277,9 +277,7 @@ def test_router_supervisor_tool_loop_limit_defaults_to_escalate() -> None:
     tool_turns = [
         AIMessage(
             content="",
-            tool_calls=[
-                {"name": "inspect_guardian_signals", "args": {}, "id": f"tc-loop-{idx}"}
-            ],
+            tool_calls=[{"name": "inspect_guardian_signals", "args": {}, "id": f"tc-loop-{idx}"}],
         )
         for idx in range(8)
     ]

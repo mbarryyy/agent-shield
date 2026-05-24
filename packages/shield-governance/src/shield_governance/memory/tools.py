@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.tools import tool
 from shield_sdk.schema import ShieldActionRecord
@@ -59,11 +59,14 @@ def _query_memory(
 ) -> MemoryQueryResult:
     query_record = getattr(memory, "query_record", None)
     if callable(query_record):
-        return query_record(
-            record,
-            top_k=5,
-            tool_name=tool_name,
-            recipient=recipient,
+        return cast(
+            MemoryQueryResult,
+            query_record(
+                record,
+                top_k=5,
+                tool_name=tool_name,
+                recipient=recipient,
+            ),
         )
 
     started = time.perf_counter()
@@ -71,9 +74,7 @@ def _query_memory(
     if callable(recall):
         wanted_tool = tool_name or record.payload.tool_name or ""
         wanted_recipient = recipient or (
-            str(record.payload.tool_args.get("recipient", ""))
-            if record.payload.tool_args
-            else ""
+            str(record.payload.tool_args.get("recipient", "")) if record.payload.tool_args else ""
         )
         matches_raw = recall(
             tool_name=wanted_tool or None,

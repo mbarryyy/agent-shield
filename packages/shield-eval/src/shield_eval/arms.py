@@ -42,7 +42,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
@@ -111,9 +111,7 @@ class FreshAgentPipeline(AgentPipeline):  # type: ignore[misc]
     server-backed run instead of leaking through class-level defaults.
     """
 
-    def __init__(
-        self, elements: Any, *, shared_extra_args: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, elements: Any, *, shared_extra_args: dict[str, Any] | None = None) -> None:
         super().__init__(elements)
         self._runtime: Any | None = None
         self._messages: Any = []
@@ -142,7 +140,7 @@ class FreshAgentPipeline(AgentPipeline):  # type: ignore[misc]
             use_extra_args,
         )
         _, _, _, self._messages, self._extra_args = result
-        return result
+        return cast(tuple[str, Any, Any, Any, dict[str, Any]], result)
 
 
 def _fresh_pipeline(pipeline: AgentPipeline) -> FreshAgentPipeline:

@@ -57,8 +57,7 @@ class GuardianModelInvocationError(RuntimeError):
         self.error_class = cause.__class__.__name__
         self.error_message = str(cause)
         super().__init__(
-            f"{guardian_name} model {model_id} failed: "
-            f"{self.error_class}: {self.error_message}"
+            f"{guardian_name} model {model_id} failed: {self.error_class}: {self.error_message}"
         )
 
 

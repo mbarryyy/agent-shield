@@ -206,9 +206,7 @@ def test_full_grid_http_backend_runs_measured_via_real_server_harness(tmp_path) 
     assert a2_inj6["security"] is True
     assert a2_inj6["decision"] == "BLOCK"
     assert a2_inj6["decision_source"] in {"sync_defender_local", "sdk_fail_closed"}
-    expected_prevented = (
-        30_000.0 if a2_inj6["decision_source"] == "sync_defender_local" else 0.0
-    )
+    expected_prevented = 30_000.0 if a2_inj6["decision_source"] == "sync_defender_local" else 0.0
     assert a2_inj6["prevented_loss_usd"] == expected_prevented
     # Per-guardian schema is exposed but empty pre-Phase-A (never fabricated).
     assert a2_inj6["per_guardian"] == []

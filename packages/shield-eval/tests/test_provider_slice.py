@@ -29,9 +29,7 @@ def test_haiku_slice_profile_records_model_backed_guardians() -> None:
         api_call_status="SKIPPED",
         skip_reason="ESTIMATE_ONLY_AWAITING_USER_APPROVAL",
     )
-    artifact_guardians = {
-        row["guardian"]: row for row in artifact["arms"]["A2"]["per_guardian"]
-    }
+    artifact_guardians = {row["guardian"]: row for row in artifact["arms"]["A2"]["per_guardian"]}
     for guardian in ("evaluator", "supervisor", "auditor"):
         assert artifact_guardians[guardian]["model_id"] == "claude-haiku-4-5-20251001"
 

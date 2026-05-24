@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from shield_sdk.schema import Decision, ShieldActionRecord
 
@@ -138,7 +138,7 @@ class ChromaIncidentMemory:
         document = trace_safe_record_text(record)
         self._collection.upsert(
             ids=[record.record_id],
-            embeddings=[self._embedder.embed(document)],
+            embeddings=cast(Any, [self._embedder.embed(document)]),
             documents=[document],
             metadatas=[_metadata(record, decision=decision, reasons=tuple(reasons))],
         )
@@ -154,9 +154,9 @@ class ChromaIncidentMemory:
         started = time.perf_counter()
         document = trace_safe_record_text(record, tool_name=tool_name, recipient=recipient)
         result = self._collection.query(
-            query_embeddings=[self._embedder.embed(document)],
+            query_embeddings=cast(Any, [self._embedder.embed(document)]),
             n_results=max(1, int(top_k)),
-            include=["distances", "metadatas"],
+            include=cast(Any, ["distances", "metadatas"]),
         )
         ids = _first_nested(result.get("ids"))
         distances = [float(value) for value in _first_nested(result.get("distances"))]
@@ -262,8 +262,7 @@ def _metadata(
 
 def _tokens(text: str) -> list[str]:
     return [
-        "".join(ch for ch in token.lower() if ch.isalnum() or ch in "_:-")
-        for token in text.split()
+        "".join(ch for ch in token.lower() if ch.isalnum() or ch in "_:-") for token in text.split()
     ]
 
 
@@ -277,7 +276,7 @@ def _query_id(text: str) -> str:
 
 def _amount_bucket(value: object) -> str:
     try:
-        amount = abs(float(value))
+        amount = abs(float(cast(Any, value)))
     except (TypeError, ValueError):
         return "unknown"
     if amount < 100:
