@@ -9,6 +9,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from shield_governance.evaluator import EvaluatorConfig
 from shield_governance.evidence import GuardianEvidenceRecorder
+from shield_governance.memory import ChromaIncidentMemory, ChromaMemoryConfig
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_governance.router_guardians import (
     build_router_backed_guardians,
@@ -237,3 +238,48 @@ async def test_router_backed_async_handler_attaches_guardian_evidence_to_handoff
     # record verifies cleanly) and carries zero LLM tokens by design.
     assert by_guardian[Guardian.AUDITOR].decision is Decision.PASS
     assert by_guardian[Guardian.AUDITOR].prompt_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_router_backed_async_handler_emits_chroma_memory_evidence(tmp_path) -> None:
+    recorder = GuardianEvidenceRecorder()
+    seen: list[AsyncVerdictHandoff] = []
+    memory = ChromaIncidentMemory(
+        ChromaMemoryConfig(
+            persist_directory=tmp_path,
+            collection_name="agent_shield_async_handler_memory_test",
+        )
+    )
+    memory.remember_record(
+        _record(run_id="prior-memory-run", recipient="repeat-iban"),
+        decision=Decision.ALERT,
+        reasons=("evaluator.behavior_drift",),
+    )
+
+    async def sink(handoff: AsyncVerdictHandoff) -> None:
+        seen.append(handoff)
+
+    handler = make_router_backed_async_channel2_handler(
+        router=_router_with_fakes(
+            evaluator_responses=_evaluator_tool_call_sequence(
+                "GROUNDED",
+                tool_name="recall_similar_incidents",
+                final_reason="memory evidence reviewed",
+            ),
+        ),
+        evidence_recorder=recorder,
+        evaluator_config=EvaluatorConfig(run_invariant=False, run_hallucination=True),
+        memory=memory,
+        on_verdict=sink,
+        key_resolver=lambda kid: kid,
+    )
+    await handler(_record(run_id="async-memory-run", recipient="repeat-iban"))
+
+    assert len(seen) == 1
+    by_guardian = {row.guardian: row for row in seen[0].guardian_evidence}
+    evaluator_row = by_guardian[Guardian.EVALUATOR]
+    assert evaluator_row.memory is not None
+    assert evaluator_row.memory["memory_backend"] == "chroma"
+    assert evaluator_row.memory["collection"] == "agent_shield_async_handler_memory_test"
+    assert evaluator_row.memory["hit_count"] >= 1
+    assert evaluator_row.tool_calls == ("recall_similar_incidents",)

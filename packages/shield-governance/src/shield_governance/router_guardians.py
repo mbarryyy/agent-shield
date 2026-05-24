@@ -30,7 +30,6 @@ from shield_governance.verdicts import AsyncVerdictHandoff
 
 if TYPE_CHECKING:
     from shield_governance.defender.scanners import LocalPolicyStructuringAnalyzer
-    from shield_governance.evaluator_agent import EvaluatorAgentMemory
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +58,7 @@ class RouterHallucinationChecker:
         router: ShieldModelRouter,
         evidence_recorder: GuardianEvidenceRecorder,
         *,
-        memory: EvaluatorAgentMemory | None = None,
+        memory: object | None = None,
         analyzer: LocalPolicyStructuringAnalyzer | None = None,
     ) -> None:
         # Lazy imports so the module's existing import graph isn't perturbed
@@ -87,6 +86,7 @@ class RouterHallucinationChecker:
 
         started = time.perf_counter()
         tool_call_log: list[str] = []
+        memory_evidence_log: list[dict[str, object]] = []
         agent = make_evaluator_agent(
             self._router,
             record=record,
@@ -94,6 +94,7 @@ class RouterHallucinationChecker:
             analyzer=self._analyzer,
             memory=self._memory,
             tool_call_log=tool_call_log,
+            memory_evidence_log=memory_evidence_log,
         )
 
         user_prompt = (
@@ -137,14 +138,18 @@ class RouterHallucinationChecker:
         model_id = resolved.model
         served_via = resolved.served_via
 
-        # Remember this record for future ``recall_similar_local_incidents``
-        # queries — done after the agent runs so the current call cannot
-        # recall itself.
-        self._memory.remember(_summarize(record))
-
         hallucinated, reason_text = parse_evaluator_decision(final_text)
         decision = Decision.BLOCK if hallucinated else Decision.PASS
         label = "evaluator.hallucination" if hallucinated else "evaluator.grounded"
+        # Remember this record for future recall queries — done after the
+        # agent runs so the current call cannot recall itself.
+        remember_record = getattr(self._memory, "remember_record", None)
+        if callable(remember_record):
+            remember_record(record, decision=decision, reasons=(label,))
+        else:
+            remember = getattr(self._memory, "remember", None)
+            if callable(remember):
+                remember(_summarize(record))
         latency_ms = (time.perf_counter() - started) * 1000.0
         self._evidence.record_for_record(
             record,
@@ -157,6 +162,8 @@ class RouterHallucinationChecker:
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
             cost_usd=0.0,
+            memory=memory_evidence_log[-1] if memory_evidence_log else None,
+            tool_calls=tuple(tool_call_log),
         )
         if not hallucinated:
             return None
@@ -256,11 +263,12 @@ def build_router_backed_guardians(
     *,
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
+    memory: object | None = None,
 ) -> RouterBackedGuardians:
     evidence = evidence_recorder or GuardianEvidenceRecorder()
     evaluator = Evaluator(
         evaluator_config or EvaluatorConfig(),
-        hallucination=RouterHallucinationChecker(router, evidence),
+        hallucination=RouterHallucinationChecker(router, evidence, memory=memory),
     )
     supervisor = Supervisor(arbiter=RouterSupervisorArbiter(router, evidence))
     auditor = RouterBackedAuditor(router, evidence)
@@ -277,6 +285,7 @@ def make_router_backed_async_channel2_handler(
     router: ShieldModelRouter,
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
+    memory: object | None = None,
     on_verdict: Callable[[AsyncVerdictHandoff], Awaitable[None]] | None = None,
     key_resolver: Callable[[str], Awaitable[str | None] | str | None] | None = None,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
@@ -294,6 +303,7 @@ def make_router_backed_async_channel2_handler(
         router,
         evidence_recorder=evidence_recorder,
         evaluator_config=evaluator_config,
+        memory=memory,
     )
 
     async def handle(record: ShieldActionRecord) -> None:

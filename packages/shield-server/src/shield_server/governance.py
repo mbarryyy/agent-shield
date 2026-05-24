@@ -79,8 +79,9 @@ def guardian_evidence_key(verdict_key: str) -> str:
 def _guardian_evidence_payload(
     rec: ShieldActionRecord, rows: Sequence[GuardianEvidence]
 ) -> list[dict[str, object]]:
-    return [
-        {
+    payload: list[dict[str, object]] = []
+    for row in rows:
+        item: dict[str, object] = {
             "record_id": rec.record_id,
             "correlation_id": rec.correlation_id,
             "guardian": row.guardian.value,
@@ -93,8 +94,12 @@ def _guardian_evidence_payload(
             "latency_ms": row.latency_ms,
             "cost_usd": row.cost_usd,
         }
-        for row in rows
-    ]
+        if row.memory is not None:
+            item["memory"] = dict(row.memory)
+        if row.tool_calls:
+            item["tool_calls"] = list(row.tool_calls)
+        payload.append(item)
+    return payload
 
 
 def _validate(rec: ShieldActionRecord, received_at: int, expected_phase: Phase) -> None:

@@ -14,6 +14,7 @@ from shield_governance.auditor import Auditor
 from shield_governance.channel2 import InMemoryChannel2Transport, StreamEntry, stream_key
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
 from shield_governance.evidence import GuardianEvidence
+from shield_governance.memory import ChromaIncidentMemory, ChromaMemoryConfig
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_governance.supervisor import Supervisor
 from shield_governance.verdicts import AsyncVerdictHandoff
@@ -162,7 +163,7 @@ class _ToolableFakeChatModel(FakeMessagesListChatModel):
         return self
 
 
-def _evaluator_responses() -> list[AIMessage]:
+def _evaluator_responses(tool_name: str = "eval_invariant_policies") -> list[AIMessage]:
     """Two-turn evaluator: tool_call → final GROUNDED decision.
 
     The tool result is discarded; we just need the agent loop to terminate.
@@ -170,7 +171,7 @@ def _evaluator_responses() -> list[AIMessage]:
     return [
         AIMessage(
             content="",
-            tool_calls=[{"name": "eval_invariant_policies", "args": {}, "id": "tc-eval-1"}],
+            tool_calls=[{"name": tool_name, "args": {}, "id": "tc-eval-1"}],
             usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         ),
         AIMessage(
@@ -204,12 +205,12 @@ class _SpyRouter(ShieldModelRouter):
         return super().model_factory(role)
 
 
-def _spy_router() -> _SpyRouter:
+def _spy_router(*, evaluator_tool_name: str = "eval_invariant_policies") -> _SpyRouter:
     """Build a spy router with per-role toolable fake BaseChatModels."""
 
     def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
         if resolved.role == "evaluator":
-            return _ToolableFakeChatModel(responses=_evaluator_responses())
+            return _ToolableFakeChatModel(responses=_evaluator_responses(evaluator_tool_name))
         return _ToolableFakeChatModel(responses=[_single_message("PASS")])
 
     guardians = {
@@ -378,6 +379,49 @@ async def test_worker_persists_guardian_evidence_from_handoff(
             "cost_usd": 0.0,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_chroma_memory_evidence_sidecar(
+    storage: Storage, settings: Settings, tmp_path
+) -> None:
+    await _register(storage)
+    memory = ChromaIncidentMemory(
+        ChromaMemoryConfig(
+            persist_directory=tmp_path,
+            collection_name="agent_shield_worker_memory_test",
+        )
+    )
+    memory.remember_record(
+        _signed_record(run_id="prior-memory-run", nonce="asyncWorkerNoncePrior1"),
+        decision=Decision.ALERT,
+        reasons=("evaluator.behavior_drift",),
+    )
+    rec = _signed_record(run_id="worker-memory-run", nonce="asyncWorkerNonceMemory")
+    transport = InMemoryChannel2Transport()
+    transport.publish(stream_key(rec.workflow_id), rec)
+
+    worker = AsyncVerdictWorker(
+        storage=storage,
+        settings=settings,
+        transport=transport,
+        router=_spy_router(evaluator_tool_name="recall_similar_incidents"),
+        memory=memory,
+    )
+
+    handled = await worker.run_once(rec.workflow_id, block_ms=0)
+
+    assert handled == 1
+    view = await reads_svc.verdict_by_correlation(storage, ORG, rec.correlation_id)
+    evaluator_rows = [
+        row for row in view.guardian_evidence if row["guardian"] == Guardian.EVALUATOR.value
+    ]
+    assert evaluator_rows
+    memory_evidence = evaluator_rows[0]["memory"]
+    assert memory_evidence["memory_backend"] == "chroma"
+    assert memory_evidence["collection"] == "agent_shield_worker_memory_test"
+    assert memory_evidence["hit_count"] >= 1
+    assert evaluator_rows[0]["tool_calls"] == ["recall_similar_incidents"]
 
 
 @pytest.mark.asyncio
