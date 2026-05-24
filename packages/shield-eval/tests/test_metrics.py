@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from shield_eval import metrics, run_ab
+from shield_eval.provider_slice import HAIKU_PROVIDER_SLICE_PROFILE
 
 
 def _money_artifact() -> dict[str, object]:
@@ -108,8 +109,11 @@ def test_metrics_check_gate_passes_and_fails(tmp_path) -> None:  # type: ignore[
     assert metrics.main(["--input", str(path), "--check", "asr<0.0"]) == 1
 
 
-def test_real_runner_budget_guard_uses_haiku_45_and_skips_without_key(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_real_runner_budget_guard_uses_haiku_45_and_skips_without_key(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     artifact = metrics.build_real_runner_budget_artifact(
         arms=["A0", "A2"],
         user_tasks=["user_task_0"],
@@ -128,6 +132,56 @@ def test_real_runner_budget_guard_uses_haiku_45_and_skips_without_key(monkeypatc
     assert artifact["formula"] == (
         "(input_tokens / 1_000_000 * 1.00) + (output_tokens / 1_000_000 * 5.00)"
     )
+
+
+def test_real_runner_budget_guard_detects_dotenv_key_without_printing_value(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=test-key-from-dotenv\n", encoding="utf-8")
+
+    artifact = metrics.build_real_runner_budget_artifact(
+        arms=["A0", "A2"],
+        user_tasks=["user_task_2"],
+        injection_tasks=["injection_task_6"],
+        samples=1,
+        serialized_prompt_chars=3000,
+        max_output_tokens=1000,
+    )
+
+    assert artifact["status_label"] == "ESTIMATED"
+    assert artifact["skip_reason"] is None
+    assert "test-key-from-dotenv" not in json.dumps(artifact)
+
+
+def test_provider_slice_budget_estimate_uses_three_dollar_approval_gate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "present-but-never-used")
+    artifact = metrics.build_provider_slice_budget_artifact(
+        user_task_id="user_task_2",
+        injection_task_id="injection_task_6",
+        attack_variant="important_instructions",
+        arms=["A0", "A2"],
+        samples=1,
+        serialized_prompt_chars=3000,
+        max_output_tokens=1000,
+        model_router_profile=HAIKU_PROVIDER_SLICE_PROFILE,
+    )
+
+    assert artifact["schema_version"] == "provider-slice-budget.v1"
+    assert artifact["api_call_status"] == "SKIPPED"
+    assert artifact["api_call_reason"] == "estimate only; no Anthropic API call was made"
+    assert artifact["scenario"]["user_task_id"] == "user_task_2"
+    assert artifact["scenario"]["injection_task_id"] == "injection_task_6"
+    assert artifact["worker_model"] == "claude-haiku-4-5-20251001"
+    assert artifact["model_router_profile"] == HAIKU_PROVIDER_SLICE_PROFILE
+    assert artifact["approval_required_over_usd"] == 3.0
+    assert artifact["estimated_cost_usd"] <= 3.0
+    assert artifact["status_label"] == "ESTIMATED"
+    guardian_models = {row["guardian"]: row["model_id"] for row in artifact["guardian_models"]}
+    assert guardian_models["evaluator"] == "claude-haiku-4-5-20251001"
+    assert guardian_models["supervisor"] == "claude-haiku-4-5-20251001"
+    assert guardian_models["auditor"] == "claude-haiku-4-5-20251001"
 
 
 def test_real_runner_budget_guard_shrinks_before_hard_cap(monkeypatch) -> None:  # type: ignore[no-untyped-def]

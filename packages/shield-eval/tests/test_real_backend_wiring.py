@@ -65,6 +65,7 @@ def test_backend_real_default_path_stays_skipped_without_execute_flag(
     slice_artifact = json.loads(slice_path.read_text(encoding="utf-8"))
     assert slice_artifact["api_call_status"] == "SKIPPED"
     assert slice_artifact["evidence_label"] == "SKIPPED"
+    assert slice_artifact["skip_reason"] == "ESTIMATE_ONLY_AWAITING_USER_APPROVAL"
     budget = json.loads(budget_path.read_text(encoding="utf-8"))
     assert budget["api_call_status"] == "SKIPPED"
 
@@ -76,6 +77,7 @@ def test_backend_real_execute_flag_without_key_skips_honestly(tmp_path, monkeypa
     keyless slice artifact is emitted. NEVER fabricates a measured result.
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     budget_path = tmp_path / "budget.json"
     slice_path = tmp_path / "slice.json"
 

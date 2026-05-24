@@ -13,20 +13,27 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 from .arms import ARM_LABELS
+from .provider_slice import (
+    HAIKU_PROVIDER_SLICE_MODEL,
+    HAIKU_PROVIDER_SLICE_PROFILE,
+    PROVIDER_SLICE_APPROVAL_THRESHOLD_USD,
+    build_haiku_provider_slice_profile,
+    default_guardian_evidence_rows,
+    env_key_available,
+)
 
 REAL_EVAL_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_ENV_KEY = "ANTHROPIC_API_KEY"
 INPUT_PRICE_PER_MTOK = 1.00
 OUTPUT_PRICE_PER_MTOK = 5.00
 DEFAULT_HARD_CAP_USD = 5.00
-DEFAULT_PLANNING_THRESHOLD_USD = 4.50
+DEFAULT_PLANNING_THRESHOLD_USD = 3.00
 DEFAULT_MAX_OUTPUT_TOKENS = 2_000
 COST_FORMULA = "(input_tokens / 1_000_000 * 1.00) + (output_tokens / 1_000_000 * 5.00)"
 
@@ -546,9 +553,12 @@ def build_real_runner_budget_artifact(
     injection_tasks: list[str],
     samples: int,
     serialized_prompt_chars: int,
+    model: str = REAL_EVAL_MODEL,
+    model_router_profile: str = "cloud",
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     hard_cap_usd: float = DEFAULT_HARD_CAP_USD,
     planning_threshold_usd: float = DEFAULT_PLANNING_THRESHOLD_USD,
+    allow_plan_shrink: bool = True,
 ) -> dict[str, Any]:
     """Estimate and shrink a Haiku 4.5 real eval plan without making API calls."""
 
@@ -563,7 +573,7 @@ def build_real_runner_budget_artifact(
     requested_input = input_per_unit * requested_units
     requested_output = output_per_unit * requested_units
     requested_cost = _estimate_cost(requested_input, requested_output)
-    key_present = bool(os.environ.get(ANTHROPIC_ENV_KEY))
+    key_present = env_key_available(ANTHROPIC_ENV_KEY)
 
     effective_units = requested_units
     effective_input = requested_input
@@ -574,20 +584,31 @@ def build_real_runner_budget_artifact(
     status_label = "ESTIMATED"
 
     if requested_cost > planning_threshold_usd:
-        per_unit_cost = _estimate_cost(input_per_unit, output_per_unit)
-        effective_units = int(planning_threshold_usd // per_unit_cost) if per_unit_cost > 0 else 0
-        effective_units = min(requested_units, effective_units)
-        shrink_applied = effective_units < requested_units
-        effective_input = input_per_unit * effective_units
-        effective_output = output_per_unit * effective_units
-        effective_cost = _estimate_cost(effective_input, effective_output)
-        if effective_units <= 0 or effective_cost > hard_cap_usd:
+        if allow_plan_shrink:
+            per_unit_cost = _estimate_cost(input_per_unit, output_per_unit)
+            effective_units = (
+                int(planning_threshold_usd // per_unit_cost) if per_unit_cost > 0 else 0
+            )
+            effective_units = min(requested_units, effective_units)
+            shrink_applied = effective_units < requested_units
+            effective_input = input_per_unit * effective_units
+            effective_output = output_per_unit * effective_units
+            effective_cost = _estimate_cost(effective_input, effective_output)
+            if effective_units <= 0 or effective_cost > hard_cap_usd:
+                status_label = "SKIPPED"
+                skip_reason = "REAL_EVAL_SKIPPED_BUDGET_GUARD"
+                effective_units = 0
+                effective_input = 0
+                effective_output = 0
+                effective_cost = 0.0
+        else:
             status_label = "SKIPPED"
-            skip_reason = "REAL_EVAL_SKIPPED_BUDGET_GUARD"
+            skip_reason = "REAL_EVAL_SKIPPED_APPROVAL_THRESHOLD"
+            shrink_applied = False
             effective_units = 0
             effective_input = 0
             effective_output = 0
-            effective_cost = 0.0
+            effective_cost = requested_cost
 
     if not key_present:
         status_label = "SKIPPED"
@@ -595,7 +616,11 @@ def build_real_runner_budget_artifact(
 
     return {
         "schema_version": "real-runner-budget.v1",
-        "model": REAL_EVAL_MODEL,
+        "model": model,
+        "model_router_profile": model_router_profile,
+        "guardian_models": build_haiku_provider_slice_profile()["guardian_models"]
+        if model_router_profile == HAIKU_PROVIDER_SLICE_PROFILE
+        else [],
         "env_key_name": ANTHROPIC_ENV_KEY,
         "status_label": status_label,
         "skip_reason": skip_reason,
@@ -628,6 +653,64 @@ def build_real_runner_budget_artifact(
     }
 
 
+def build_provider_slice_budget_artifact(
+    *,
+    user_task_id: str,
+    injection_task_id: str,
+    attack_variant: str,
+    arms: list[str],
+    samples: int,
+    serialized_prompt_chars: int,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    model_router_profile: str = HAIKU_PROVIDER_SLICE_PROFILE,
+    worker_model: str = HAIKU_PROVIDER_SLICE_MODEL,
+    approval_threshold_usd: float = PROVIDER_SLICE_APPROVAL_THRESHOLD_USD,
+) -> dict[str, Any]:
+    budget = build_real_runner_budget_artifact(
+        arms=arms,
+        user_tasks=[user_task_id],
+        injection_tasks=[injection_task_id],
+        samples=samples,
+        serialized_prompt_chars=serialized_prompt_chars,
+        model=worker_model,
+        model_router_profile=model_router_profile,
+        max_output_tokens=max_output_tokens,
+        hard_cap_usd=approval_threshold_usd,
+        planning_threshold_usd=approval_threshold_usd,
+        allow_plan_shrink=False,
+    )
+    return {
+        "schema_version": "provider-slice-budget.v1",
+        "scenario": {
+            "suite": "banking",
+            "user_task_id": user_task_id,
+            "injection_task_id": injection_task_id,
+            "attack_variant": attack_variant,
+        },
+        "arms": list(arms),
+        "samples": samples,
+        "worker_model": worker_model,
+        "model_router_profile": model_router_profile,
+        "guardian_models": budget["guardian_models"],
+        "api_call_status": "SKIPPED",
+        "api_call_reason": "estimate only; no Anthropic API call was made",
+        "approval_required_over_usd": approval_threshold_usd,
+        "status_label": budget["status_label"],
+        "skip_reason": budget["skip_reason"],
+        "requested_units": budget["requested_units"],
+        "requested_input_tokens": budget["requested_input_tokens"],
+        "requested_output_tokens": budget["requested_output_tokens"],
+        "requested_cost_usd": budget["requested_cost_usd"],
+        "estimated_cost_usd": budget["requested_cost_usd"],
+        "formula": budget["formula"],
+        "prices": budget["prices"],
+        "labels": {
+            "estimated_cost_usd": "ESTIMATED",
+            "api_call_status": "SKIPPED",
+        },
+    }
+
+
 def build_provider_slice_artifact(
     *,
     user_task_id: str,
@@ -651,7 +734,11 @@ def build_provider_slice_artifact(
     executed = status == "EXECUTED"
     if executed and per_guardian is None:
         raise ValueError("PROVIDER_BACKED artifacts require explicit per_guardian rows")
-    guardians = per_guardian if per_guardian is not None else _default_slice_guardians()
+    guardians = (
+        per_guardian
+        if per_guardian is not None
+        else default_guardian_evidence_rows(model_router_profile)
+    )
     reported_a0_latency_ms = a0_latency_ms if executed else 0.0
     reported_a2_latency_ms = a2_latency_ms if executed else 0.0
     reported_actual_cost_usd = actual_cost_usd if executed else 0.0
@@ -702,56 +789,6 @@ def build_provider_slice_artifact(
     if not executed:
         artifact["skip_reason"] = skip_reason or "REAL_EVAL_SKIPPED"
     return artifact
-
-
-def _default_slice_guardians() -> list[dict[str, Any]]:
-    return [
-        {
-            "guardian": "defender",
-            "decision": "PASS",
-            "model_id": "local-deterministic",
-            "served_via": "local",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "evaluator",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "supervisor",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "auditor",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-    ]
-
 
 def write_json(path: str | Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
     Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

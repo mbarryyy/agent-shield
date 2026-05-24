@@ -35,6 +35,7 @@ from typing import Any
 
 from .arms import Arm, ArmUnavailable, ShieldWiring, arm_alias, resolve_arms
 from .mock_llm import MockedLLM
+from .provider_slice import dotenv_value, ensure_env_key_loaded
 
 # Eval-plan §5: a mid-tier worker keeps undefended ASR visibly high. The mock
 # only uses this to (a) seed the per-arm pipeline.name and (b) let the
@@ -62,7 +63,7 @@ def _real_llm_for_worker(worker: str) -> Any:
     """Build a real AgentDojo-compatible LLM for models absent from ModelsEnum."""
 
     if worker.startswith("claude-"):
-        api_key = os.environ.get(ANTHROPIC_ENV_KEY)
+        api_key = os.environ.get(ANTHROPIC_ENV_KEY) or dotenv_value(ANTHROPIC_ENV_KEY)
         if not api_key:
             raise ArmUnavailable(
                 f"{worker}: {ANTHROPIC_ENV_KEY} is required for real Anthropic eval"
@@ -369,8 +370,14 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("SHIELD_LLM_BACKEND", "mock"),
         choices=["mock", "http", "real"],
     )
+    p.add_argument("--model", default=None, help="worker model (real backend / name seed)")
     p.add_argument(
-        "--model", default=DEFAULT_WORKER, help="worker model (real backend / name seed)"
+        "--model-router-profile",
+        default="cloud",
+        help=(
+            "eval artifact model-router profile label; use provider-slice-haiku "
+            "for the first slice"
+        ),
     )
     p.add_argument("--metrics", default=None)
     p.add_argument("--metrics-out", default=None, help="write metrics JSON artifact")
@@ -384,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         help="dry-run prompt chars for real-runner budget estimation",
     )
     p.add_argument("--max-output-tokens", type=int, default=2_000)
+    p.add_argument("--planning-threshold-usd", type=float, default=3.0)
     # F2 (Phase F, EM-3): opt-in switch for the real-provider execution
     # path. DEFAULT OFF — CI's existing `--backend real` step (eval.yml)
     # therefore stays on the keyless budget-only path. AndyHu's M3 (W5
@@ -408,6 +416,10 @@ def main(argv: list[str] | None = None) -> int:
         help="AgentDojo trace/cache dir; ephemeral temp dir if omitted",
     )
     args = p.parse_args(argv)
+    if args.model is None:
+        args.model = REAL_EVAL_MODEL if args.backend == "real" else DEFAULT_WORKER
+    if args.backend == "real":
+        ensure_env_key_loaded(ANTHROPIC_ENV_KEY)
 
     suite = _build_suite(args.benchmark_version, args.suite)
 
@@ -871,7 +883,10 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             injection_tasks=injection_tasks,
             samples=args.samples,
             serialized_prompt_chars=_real_prompt_char_estimate(args),
+            model=args.model,
+            model_router_profile=args.model_router_profile,
             max_output_tokens=args.max_output_tokens,
+            planning_threshold_usd=args.planning_threshold_usd,
         )
         # F2 (Phase F, EM-3): when ``--execute-real-run`` is set AND the
         # budget estimator returned non-SKIPPED (= ``ANTHROPIC_API_KEY`` is
@@ -1016,11 +1031,12 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
             injection_task_id=injection_tasks[0],
             attack_variant=args.attack or "important_instructions",
             provider="anthropic",
-            model_router_profile="cloud",
+            model_router_profile=args.model_router_profile,
             hard_cap_usd=artifact["hard_cap_usd"],
             estimated_cost_usd=artifact["estimated_cost_usd"],
             api_call_status="SKIPPED",
-            skip_reason=artifact.get("skip_reason") or "REAL_EVAL_IMPLEMENTATION_ONLY",
+            skip_reason=artifact.get("skip_reason")
+            or "ESTIMATE_ONLY_AWAITING_USER_APPROVAL",
         )
         if args.budget_out:
             write_json(args.budget_out, artifact)
