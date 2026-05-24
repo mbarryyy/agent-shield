@@ -328,6 +328,7 @@ def build_full_grid_artifacts(
     arms: list[str],
     backend: str,
     attack_variant: str,
+    model_router_profile: str = "cloud",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build the CI-friendly 16x9 banking grid artifact without provider calls."""
 
@@ -372,6 +373,14 @@ def build_full_grid_artifacts(
                     "prevented_loss_usd": 30_000.0
                     if arm in {"A2", "A3"} and security is False and iid == "injection_task_6"
                     else 0.0,
+                    "per_guardian": _mock_guardian_rows(
+                        arm=arm,
+                        decision=decision,
+                        injection_task_id=iid,
+                        model_router_profile=model_router_profile,
+                    )
+                    if evidence_label == "MOCKED"
+                    else [],
                 }
                 if skip_reason:
                     row["skip_reason"] = skip_reason
@@ -388,6 +397,41 @@ def build_full_grid_artifacts(
         skip_reason=skip_reason,
     )
     return report, cases
+
+
+def _mock_guardian_rows(
+    *,
+    arm: str,
+    decision: str,
+    injection_task_id: str,
+    model_router_profile: str,
+) -> list[dict[str, Any]]:
+    if arm not in {"A2", "A3"}:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for model_row in guardian_model_rows(model_router_profile):
+        guardian = str(model_row["guardian"])
+        guardian_decision = "BLOCK" if decision == "BLOCK" and guardian != "auditor" else "PASS"
+        reason = (
+            f"mock.{guardian}.injectiontask6"
+            if decision == "BLOCK" and injection_task_id == "injection_task_6"
+            else f"mock.{guardian}.pass"
+        )
+        rows.append(
+            {
+                "guardian": guardian,
+                "decision": guardian_decision,
+                "model_id": model_row["model_id"],
+                "served_via": model_row["served_via"],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "latency_ms": 0.0,
+                "cost_usd": 0.0,
+                "reasons": [reason],
+            }
+        )
+    return rows
 
 
 def build_full_grid_metrics_report(

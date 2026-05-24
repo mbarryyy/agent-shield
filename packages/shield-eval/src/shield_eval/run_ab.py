@@ -1182,6 +1182,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
         arms=arm_tokens,
         backend="mock",
         attack_variant=args.attack or "important_instructions",
+        model_router_profile=args.model_router_profile,
     )
     if args.metrics_out:
         write_json(args.metrics_out, report)
