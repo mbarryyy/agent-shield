@@ -66,8 +66,6 @@ COST_FORMULA = (
 )
 # Source: Anthropic Claude API pricing, model pricing table, accessed
 # 2026-05-24: https://platform.claude.com/docs/en/about-claude/pricing
-# The repo's `claude-haiku-4` shorthand is priced as Claude Haiku 4.5 because
-# Anthropic's public pricing table lists Haiku 4.5, not a separate Haiku 4 row.
 MODEL_PRICE_SOURCE = (
     "Anthropic Claude API pricing, model pricing table, accessed 2026-05-24: "
     "https://platform.claude.com/docs/en/about-claude/pricing"
@@ -83,12 +81,12 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "output": 5.00,
         "pricing_basis": "Claude Haiku 4.5",
     },
-    "claude-haiku-4": {
-        "input": 1.00,
-        "output": 5.00,
-        "pricing_basis": "Claude Haiku 4.5",
-    },
     "claude-sonnet-4": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4",
+    },
+    "claude-sonnet-4-20250514": {
         "input": 3.00,
         "output": 15.00,
         "pricing_basis": "Claude Sonnet 4",
@@ -104,6 +102,11 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "pricing_basis": "Claude Sonnet 4.5",
     },
     "claude-opus-4": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4",
+    },
+    "claude-opus-4-20250514": {
         "input": 15.00,
         "output": 75.00,
         "pricing_basis": "Claude Opus 4",

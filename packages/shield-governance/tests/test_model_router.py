@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_sdk.schema import ServedVia
@@ -13,10 +15,26 @@ def test_cloud_profile_resolves_per_role() -> None:
     assert r.for_role("defender").provider == "local"  # hot path never cloud
     assert r.for_role("defender").served_via is ServedVia.LOCAL
     ev = r.for_role("evaluator")
-    assert ev.provider == "anthropic" and ev.model == "claude-sonnet-4"
+    assert ev.provider == "anthropic" and ev.model == "claude-sonnet-4-20250514"
     assert ev.served_via is ServedVia.CLOUD
-    assert r.for_role("supervisor").model == "claude-opus-4"
-    assert r.for_role("auditor").model == "claude-haiku-4"
+    assert r.for_role("supervisor").model == "claude-opus-4-20250514"
+    assert r.for_role("auditor").model == "claude-haiku-4-5-20251001"
+
+
+def test_cloud_guardian_anthropic_models_are_dated_api_ids() -> None:
+    """Cloud guardian model IDs must be real dated Anthropic API IDs.
+
+    Do not commit placeholder aliases like ``claude-sonnet-4`` or
+    ``claude-opus-4`` into the cloud profile; they can pass config parsing but
+    fail only at live provider time.
+    """
+
+    r = ShieldModelRouter.from_profile("cloud")
+    model_re = re.compile(r"^claude-[a-z]+-\d+(-\d+)?(-\d{8})?$")
+    for role in ("evaluator", "supervisor", "auditor"):
+        model = r.for_role(role).model
+        assert model_re.fullmatch(model)
+        assert re.search(r"-\d{8}$", model), f"{role} uses placeholder model {model!r}"
 
 
 def test_local_profile_is_zero_egress_in_vpc() -> None:
@@ -62,7 +80,7 @@ def test_alignmentcheck_disabled_in_cloud_routed_in_local() -> None:
 def test_cost_hooks_served_via_and_model_id() -> None:
     cloud = ShieldModelRouter.from_profile("cloud")
     assert cloud.served_via("evaluator") is ServedVia.CLOUD
-    assert cloud.model_id("evaluator") == "claude-sonnet-4"
+    assert cloud.model_id("evaluator") == "claude-sonnet-4-20250514"
     local = ShieldModelRouter.from_profile("local")
     assert local.served_via("evaluator") is ServedVia.LOCAL
     assert local.model_id("supervisor") == "Llama-3.3-70B-Instruct"
@@ -83,10 +101,16 @@ def test_model_factory_is_the_create_react_agent_seam() -> None:
     factory = r.model_factory("evaluator")
     assert callable(factory)
     # (state, runtime) -> BaseChatModel — the verified create_react_agent shape.
-    assert factory({}, object()) == {"provider": "anthropic", "model": "claude-sonnet-4"}
+    assert factory({}, object()) == {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+    }
     # Lazy construction is cached per role.
-    assert factory({}, object()) == {"provider": "anthropic", "model": "claude-sonnet-4"}
-    assert built == [("anthropic", "claude-sonnet-4", "test-key")]
+    assert factory({}, object()) == {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+    }
+    assert built == [("anthropic", "claude-sonnet-4-20250514", "test-key")]
 
 
 def test_anthropic_uses_anthropic_api_key_by_default() -> None:

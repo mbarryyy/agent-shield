@@ -67,19 +67,19 @@ def guardian_model_rows(model_router_profile: str) -> tuple[dict[str, Any], ...]
             {
                 "guardian": "evaluator",
                 "provider": "anthropic",
-                "model_id": "claude-sonnet-4",
+                "model_id": "claude-sonnet-4-20250514",
                 "served_via": "cloud",
             },
             {
                 "guardian": "supervisor",
                 "provider": "anthropic",
-                "model_id": "claude-opus-4",
+                "model_id": "claude-opus-4-20250514",
                 "served_via": "cloud",
             },
             {
                 "guardian": "auditor",
                 "provider": "anthropic",
-                "model_id": "claude-haiku-4",
+                "model_id": "claude-haiku-4-5-20251001",
                 "served_via": "cloud",
             },
         )

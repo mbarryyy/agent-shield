@@ -95,7 +95,7 @@ def test_full_mock_a2_cases_emit_profile_aware_guardian_rows(tmp_path) -> None: 
     assert guardians["defender"]["model_id"] == "local-deterministic"
     assert guardians["defender"]["served_via"] == "local"
     assert guardians["defender"]["decision"] == "BLOCK"
-    assert guardians["evaluator"]["model_id"] == "claude-sonnet-4"
+    assert guardians["evaluator"]["model_id"] == "claude-sonnet-4-20250514"
     assert guardians["evaluator"]["served_via"] == "cloud"
     assert guardians["evaluator"]["decision"] == "BLOCK"
     assert all(

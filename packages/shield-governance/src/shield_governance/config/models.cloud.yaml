@@ -24,17 +24,19 @@ guardians:
     served_via: local
   evaluator:
     provider: anthropic
-    model: claude-sonnet-4
+    # Use dated Anthropic API IDs here. Do not commit placeholder aliases like
+    # claude-sonnet-4; they can parse locally and fail only during live runs.
+    model: claude-sonnet-4-20250514
     served_via: cloud
     temperature: 0.0
   supervisor:
     provider: anthropic
-    model: claude-opus-4
+    model: claude-opus-4-20250514
     served_via: cloud
     temperature: 0.0
   auditor:
     provider: anthropic
-    model: claude-haiku-4
+    model: claude-haiku-4-5-20251001
     served_via: cloud
     temperature: 0.0
 
@@ -44,7 +46,7 @@ aux_roles:
   # technique, re-implemented training-free; cached per policy-hash).
   policy_codegen:
     provider: anthropic
-    model: claude-haiku-4
+    model: claude-haiku-4-5-20251001
     served_via: cloud
     temperature: 0.0
   # LlamaFirewall AlignmentCheck — the only model-using scanner. Disabled in
