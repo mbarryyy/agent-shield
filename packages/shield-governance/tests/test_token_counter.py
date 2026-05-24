@@ -36,7 +36,7 @@ def test_record_router_call_pulls_model_and_served_via() -> None:
         prompt_tokens=12,
         completion_tokens=4,
     )
-    assert s.model_id == "claude-sonnet-4"
+    assert s.model_id == "claude-sonnet-4-20250514"
     assert s.served_via is ServedVia.CLOUD
     assert tc.totals_for("rec-9") == (12, 4)
 
