@@ -14,18 +14,13 @@ inside ``shield_governance``:
   runs the Invariant LocalPolicy structuring detector on the accumulated
   trace (the same code path the deterministic Evaluator uses when
   ``run_invariant=True``).
-* :func:`recall_similar_local_incidents` looks up similar records in a
-  bounded **process-local** short-window. This is an honest downgrade vs
-  ``gap_analysis_remediation_roadmap.md`` §4.2's Chroma-backed design —
-  G-4 (Chroma) is deferred this phase. The tool's docstring (which the
-  agent reads) says so explicitly.
+* :func:`recall_similar_incidents` looks up similar records through the
+  configured incident-memory backend. The final delivery backend is local
+  persistent Chroma; the process-local short-window remains available only as
+  an explicitly labelled fallback for tests/degraded development runs.
 
-Layering note: the existing single-prompt scaffold
-(:class:`shield_governance.router_runtime.RouterTextClient`) stays — both
-:class:`shield_governance.router_guardians.RouterSupervisorArbiter` and
-:class:`shield_governance.router_guardians.RouterBackedAuditor` keep using
-it. Only the Evaluator's hallucination seam moves to the real agent;
-Supervisor / Auditor stay scaffold-level this phase.
+Layering note: the Evaluator path owns the first tool-calling agent loop.
+Supervisor/Auditor loops are added in the Module 7 pass.
 """
 
 from __future__ import annotations
@@ -40,6 +35,7 @@ from langchain_core.tools import tool
 from shield_sdk.schema import ShieldActionRecord
 
 from shield_governance.defender.scanners import LocalPolicyStructuringAnalyzer
+from shield_governance.memory.tools import build_recall_similar_incidents_tool
 from shield_governance.model_router import ShieldModelRouter
 
 
@@ -54,15 +50,11 @@ class IncidentSummary:
 
 
 class EvaluatorAgentMemory:
-    """Bounded process-local short-window for ``recall_similar_local_incidents``.
+    """Bounded process-local short-window fallback.
 
-    HONEST DOWNGRADE: ``gap_analysis_remediation_roadmap.md`` §4.2 designs
-    this as a Chroma-backed vector store keyed by SBERT embeddings (the same
-    Chroma collection used by :class:`SbertChromaDriftDetector`). G-4 (Chroma
-    not wired anywhere in the repo) is deferred this phase, so this module
-    ships a bounded ``deque`` of the most-recent N records instead. Recall
-    is exact-match on ``(tool_name, recipient)`` — coarse, but the tool's
-    docstring is honest about that and the agent reads it.
+    This is not Module 6 completion evidence. The deliverable memory backend is
+    ``ChromaIncidentMemory``; this class is retained for tests and explicitly
+    labelled degraded/development paths.
     """
 
     def __init__(self, capacity: int = 128) -> None:
@@ -119,8 +111,9 @@ def _build_evaluator_tools(
     record: ShieldActionRecord,
     trace: list[dict[str, Any]],
     analyzer: LocalPolicyStructuringAnalyzer,
-    memory: EvaluatorAgentMemory,
+    memory: Any,
     tool_call_log: list[str] | None = None,
+    memory_evidence_log: list[dict[str, object]] | None = None,
 ) -> list[Any]:
     """Return the two tools the Evaluator agent can call.
 
@@ -147,42 +140,22 @@ def _build_evaluator_tools(
         violations = [{"label": v.label, "detail": v.detail or ""} for v in violations_raw]
         return {"fired": bool(violations), "violations": violations}
 
-    @tool
-    def recall_similar_local_incidents(tool_name: str = "", recipient: str = "") -> dict[str, Any]:
-        """Recall up to 5 most-recent locally-seen incidents matching
-        ``tool_name`` and / or ``recipient``.
+    recall_tool = build_recall_similar_incidents_tool(
+        record=record,
+        memory=memory,
+        tool_call_log=tool_call_log,
+        memory_evidence_log=memory_evidence_log,
+        name="recall_similar_incidents",
+    )
+    legacy_recall_tool = build_recall_similar_incidents_tool(
+        record=record,
+        memory=memory,
+        tool_call_log=tool_call_log,
+        memory_evidence_log=memory_evidence_log,
+        name="recall_similar_local_incidents",
+    )
 
-        HONEST DOWNGRADE: this is a process-local bounded short-window, NOT
-        the Chroma-backed vector store designed in gap §4.2. G-4 (Chroma)
-        is deferred this phase. Use this tool to look for repeated patterns
-        from the same agent in this process; do not treat it as a corpus-
-        wide incident DB.
-
-        Returns ``{"matches": [{record_id, tool_name, recipient, amount}, ...]}``.
-        """
-        if tool_call_log is not None:
-            tool_call_log.append("recall_similar_local_incidents")
-        wanted_tool = tool_name or record.payload.tool_name or ""
-        wanted_recipient = recipient or (
-            str(record.payload.tool_args.get("recipient", "")) if record.payload.tool_args else ""
-        )
-        matches = memory.recall(
-            tool_name=wanted_tool or None,
-            recipient=wanted_recipient or None,
-        )
-        return {
-            "matches": [
-                {
-                    "record_id": m.record_id,
-                    "tool_name": m.tool_name,
-                    "recipient": m.recipient,
-                    "amount": m.amount,
-                }
-                for m in matches
-            ]
-        }
-
-    return [eval_invariant_policies, recall_similar_local_incidents]
+    return [eval_invariant_policies, recall_tool, legacy_recall_tool]
 
 
 EVALUATOR_SYSTEM_PROMPT = (
@@ -193,7 +166,8 @@ EVALUATOR_SYSTEM_PROMPT = (
     "(misaligned, suspicious, or evidence of injection/structuring).\n\n"
     "You MUST use the provided tools — do not decide from the prompt alone:\n"
     "  * `eval_invariant_policies` runs the cross-step structuring detector.\n"
-    "  * `recall_similar_local_incidents` looks up similar prior records.\n\n"
+    "  * `recall_similar_incidents` looks up similar prior records in Chroma "
+    "when configured.\n\n"
     "If a tool result is ambiguous or low-confidence, CALL ANOTHER TOOL "
     "(self-correction) before answering. Only after gathering tool evidence, "
     "reply on a single line in this exact format:\n\n"
@@ -208,8 +182,9 @@ def make_evaluator_agent(
     record: ShieldActionRecord,
     trace: list[dict[str, Any]],
     analyzer: LocalPolicyStructuringAnalyzer | None = None,
-    memory: EvaluatorAgentMemory | None = None,
+    memory: Any | None = None,
     tool_call_log: list[str] | None = None,
+    memory_evidence_log: list[dict[str, object]] | None = None,
     system_prompt: str | None = None,
 ) -> Any:
     """Build a per-call ``create_agent`` Evaluator agent.
@@ -228,6 +203,7 @@ def make_evaluator_agent(
         analyzer=analyzer,
         memory=memory,
         tool_call_log=tool_call_log,
+        memory_evidence_log=memory_evidence_log,
     )
     # ``model_factory`` is typed ``Callable[[object, object], object]`` for
     # back-compat with the W1 stub; after the Phase B / ADR-0009 ChatModel

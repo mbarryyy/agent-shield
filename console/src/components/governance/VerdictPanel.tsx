@@ -7,6 +7,7 @@ import type {
   ShieldActionRecord,
   VerdictReason,
 } from '@elydora/shared';
+import type { GuardianEvidenceRow, GuardianMemoryHit } from '@/types/governance';
 import { evidenceLabelFrom } from '@/types/governance';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
@@ -15,21 +16,77 @@ import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 // even with no signal, so a BLOCK reads as "the team caught it".
 const GUARDIANS: Guardian[] = ['defender', 'evaluator', 'supervisor', 'auditor'];
 
+function formatGuardianCost(value: number): string {
+  if (value > 0 && value < 0.01) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4,
+    }).format(value);
+  }
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatEvidenceNumber(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 4,
+  }).format(value);
+}
+
+function formatMemorySummary(row: GuardianEvidenceRow): string | null {
+  const memoryBackend = row.memory_backend ?? row.memory?.memory_backend;
+  if (!memoryBackend) return null;
+  const collection = row.collection ?? row.memory?.collection;
+  const hitCount = row.hit_count ?? row.memory?.hit_count;
+  const latencyMs = row.memory_latency_ms ?? row.memory?.latency_ms;
+  const parts = [`memory ${memoryBackend}`];
+  if (collection) parts.push(collection);
+  if (hitCount != null) {
+    parts.push(`${hitCount} ${hitCount === 1 ? 'hit' : 'hits'}`);
+  }
+  if (latencyMs != null) {
+    parts.push(`${formatEvidenceNumber(latencyMs)} ms`);
+  }
+  return parts.join(' · ');
+}
+
+function formatMemoryHit(hit: GuardianMemoryHit): string {
+  const parts = [hit.id];
+  if (hit.score != null) parts.push(`score ${formatEvidenceNumber(hit.score)}`);
+  if (hit.distance != null) parts.push(`distance ${formatEvidenceNumber(hit.distance)}`);
+  return parts.join(' · ');
+}
+
+function memoryHits(row: GuardianEvidenceRow): GuardianMemoryHit[] {
+  if (row.top_hit_id) {
+    return [{ id: row.top_hit_id, score: row.score, distance: row.distance }];
+  }
+  return row.memory?.top_hits ?? [];
+}
+
 function GuardianLane({
   guardian,
   reasons,
+  evidenceRows,
   noSignal,
 }: {
   guardian: Guardian;
   reasons: VerdictReason[];
+  evidenceRows: GuardianEvidenceRow[];
   noSignal: string;
 }) {
+  const hasSignal = reasons.length > 0 || evidenceRows.length > 0;
   return (
     <div className="border border-border p-3">
       <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim mb-2">
         {guardian}
       </div>
-      {reasons.length === 0 ? (
+      {!hasSignal ? (
         <div className="font-mono text-[12px] text-ink-dim italic">{noSignal}</div>
       ) : (
         <ul className="space-y-1.5">
@@ -54,6 +111,62 @@ function GuardianLane({
               )}
             </li>
           ))}
+          {evidenceRows.map((row, i) => (
+            <li
+              key={`${guardian}-evidence-${i}`}
+              className="font-mono text-[12px] text-ink"
+            >
+              <span className="uppercase tracking-wider">{row.decision}</span>
+              {row.reasons.map((reason) => (
+                <div key={reason} className="text-ink-dim normal-case mt-0.5 break-words">
+                  {reason}
+                </div>
+              ))}
+              <div className="text-ink-dim normal-case mt-0.5 break-words">
+                {row.prompt_tokens} prompt / {row.completion_tokens} completion
+                <span> · {row.latency_ms} ms</span>
+                {row.served_via && <span> · {row.served_via}</span>}
+                <span> · cost {formatGuardianCost(row.cost_usd)}</span>
+              </div>
+              {row.model_id && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  model {row.model_id}
+                </div>
+              )}
+              {row.tool_calls && row.tool_calls.length > 0 && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  tools {row.tool_calls.join(', ')}
+                </div>
+              )}
+              {(formatMemorySummary(row) || row.query_id || row.missing_reason || memoryHits(row).length > 0) && (
+                <>
+                  {formatMemorySummary(row) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      {formatMemorySummary(row)}
+                    </div>
+                  )}
+                  {(row.query_id ?? row.memory?.query_id) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      query {row.query_id ?? row.memory?.query_id}
+                    </div>
+                  )}
+                  {(row.missing_reason ?? row.memory?.missing_reason) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      missing {row.missing_reason ?? row.memory?.missing_reason}
+                    </div>
+                  )}
+                  {memoryHits(row).slice(0, 3).map((hit) => (
+                    <div
+                      key={`${row.record_id}-${hit.id}`}
+                      className="text-ink-dim normal-case mt-0.5 break-words"
+                    >
+                      {formatMemoryHit(hit)}
+                    </div>
+                  ))}
+                </>
+              )}
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -64,10 +177,12 @@ export default function VerdictPanel({
   verdict,
   preExec,
   postExec,
+  guardianEvidence = [],
 }: {
   verdict: GovernanceVerdict;
   preExec?: ShieldActionRecord | null;
   postExec?: ShieldActionRecord | null;
+  guardianEvidence?: GuardianEvidenceRow[];
 }) {
   const { t } = useTranslation();
   const reasons = verdict.reasons ?? [];
@@ -98,6 +213,7 @@ export default function VerdictPanel({
             key={g}
             guardian={g}
             reasons={reasons.filter((r) => r.agent === g)}
+            evidenceRows={guardianEvidence.filter((row) => row.guardian === g)}
             noSignal={t('governance.noSignal')}
           />
         ))}

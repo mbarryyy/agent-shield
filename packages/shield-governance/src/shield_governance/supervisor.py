@@ -178,7 +178,12 @@ class Supervisor:
             escalate = True
         elif _is_conflict(signals, p):
             # CONFLICT → arbitrate (LLM via injected ShieldModelRouter arbiter).
-            raw_arbitration = self._arbiter(signals)
+            decide_with_record = getattr(self._arbiter, "decide", None)
+            raw_arbitration = (
+                decide_with_record(signals, record=record)
+                if callable(decide_with_record)
+                else self._arbiter(signals)
+            )
             if isinstance(raw_arbitration, ArbitrationResult):
                 decision = raw_arbitration.decision
                 arbiter_reason = raw_arbitration.reason

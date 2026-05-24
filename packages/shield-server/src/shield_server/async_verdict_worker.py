@@ -96,6 +96,7 @@ class AsyncVerdictWorker:
         auditor: Auditor | None = None,
         supervisor: Supervisor | None = None,
         router: ShieldModelRouter | None = None,
+        memory: object | None = None,
         group: str = DEFAULT_GROUP,
         consumer: str = DEFAULT_CONSUMER,
         logger: logging.Logger | None = None,
@@ -115,6 +116,7 @@ class AsyncVerdictWorker:
                 handoff.record,
                 handoff.verdict,
                 self._settings,
+                guardian_evidence=handoff.guardian_evidence,
             )
 
         key_resolver = self._build_key_resolver()
@@ -135,6 +137,7 @@ class AsyncVerdictWorker:
             self._handler = make_router_backed_async_channel2_handler(
                 router=self._router,
                 evaluator_config=EvaluatorConfig(),
+                memory=memory,
                 on_verdict=on_verdict,
                 key_resolver=key_resolver,
             )

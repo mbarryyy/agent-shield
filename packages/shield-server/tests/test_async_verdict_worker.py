@@ -7,15 +7,28 @@ import json
 import pytest
 import shield_sdk.canonical as canonical
 import shield_sdk.crypto as crypto
+import shield_server.async_verdict_worker as worker_mod
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from shield_governance.auditor import Auditor
 from shield_governance.channel2 import InMemoryChannel2Transport, StreamEntry, stream_key
 from shield_governance.evaluator import Evaluator, EvaluatorConfig
+from shield_governance.evidence import GuardianEvidence
+from shield_governance.memory import ChromaIncidentMemory, ChromaMemoryConfig
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_governance.supervisor import Supervisor
-from shield_sdk.schema import ActionRef, GovernanceVerdict, Phase, ShieldActionRecord
+from shield_governance.verdicts import AsyncVerdictHandoff
+from shield_sdk.schema import (
+    ActionRef,
+    Decision,
+    GovernanceVerdict,
+    Guardian,
+    Phase,
+    ServedVia,
+    ShieldActionRecord,
+)
 from shield_server import agents as agent_svc
+from shield_server import reads as reads_svc
 from shield_server.async_verdict_worker import (
     AsyncVerdictWorker,
     CacheChannel2Transport,
@@ -150,7 +163,7 @@ class _ToolableFakeChatModel(FakeMessagesListChatModel):
         return self
 
 
-def _evaluator_responses() -> list[AIMessage]:
+def _evaluator_responses(tool_name: str = "eval_invariant_policies") -> list[AIMessage]:
     """Two-turn evaluator: tool_call → final GROUNDED decision.
 
     The tool result is discarded; we just need the agent loop to terminate.
@@ -158,7 +171,7 @@ def _evaluator_responses() -> list[AIMessage]:
     return [
         AIMessage(
             content="",
-            tool_calls=[{"name": "eval_invariant_policies", "args": {}, "id": "tc-eval-1"}],
+            tool_calls=[{"name": tool_name, "args": {}, "id": "tc-eval-1"}],
             usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         ),
         AIMessage(
@@ -192,12 +205,12 @@ class _SpyRouter(ShieldModelRouter):
         return super().model_factory(role)
 
 
-def _spy_router() -> _SpyRouter:
+def _spy_router(*, evaluator_tool_name: str = "eval_invariant_policies") -> _SpyRouter:
     """Build a spy router with per-role toolable fake BaseChatModels."""
 
     def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
         if resolved.role == "evaluator":
-            return _ToolableFakeChatModel(responses=_evaluator_responses())
+            return _ToolableFakeChatModel(responses=_evaluator_responses(evaluator_tool_name))
         return _ToolableFakeChatModel(responses=[_single_message("PASS")])
 
     guardians = {
@@ -301,6 +314,114 @@ async def test_key_resolver_enables_chain_verify_for_known_kid(
     assert resolved != KID, "regression: kid was passed as the public key (G-7)"
     # mark unused vars used to keep ruff happy
     _ = auditor
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_guardian_evidence_from_handoff(
+    monkeypatch: pytest.MonkeyPatch, storage: Storage, settings: Settings
+) -> None:
+    rec = _signed_record()
+    evidence = (
+        GuardianEvidence(
+            record_id="wrong-record",
+            correlation_id="wrong-correlation",
+            guardian=Guardian.AUDITOR,
+            decision=Decision.ALERT,
+            reasons=("ARQ audit queue requested",),
+            model_id="fixture-auditor-v1",
+            served_via=ServedVia.LOCAL,
+            prompt_tokens=3,
+            completion_tokens=2,
+            latency_ms=4.5,
+            cost_usd=0.0,
+        ),
+    )
+
+    def fake_handler_factory(*, on_verdict, **_kwargs):  # type: ignore[no-untyped-def]
+        async def handle(record: ShieldActionRecord) -> None:
+            verdict = GovernanceVerdict(
+                record_id="wrong-record",
+                correlation_id="wrong-correlation",
+                run_id="wrong-run",
+                decision=Decision.ALERT,
+                risk_score=0.42,
+            )
+            await on_verdict(
+                AsyncVerdictHandoff.from_record(
+                    record,
+                    verdict,
+                    guardian_evidence=evidence,
+                )
+            )
+
+        return handle
+
+    monkeypatch.setattr(worker_mod, "make_async_channel2_handler", fake_handler_factory)
+    transport = InMemoryChannel2Transport()
+    transport.publish(stream_key(rec.workflow_id), rec)
+
+    handled = await _worker(storage, settings, transport).run_once(rec.workflow_id, block_ms=0)
+
+    assert handled == 1
+    view = await reads_svc.verdict_by_correlation(storage, ORG, rec.correlation_id)
+    assert view.guardian_evidence == [
+        {
+            "record_id": rec.record_id,
+            "correlation_id": rec.correlation_id,
+            "guardian": "auditor",
+            "decision": "ALERT",
+            "reasons": ["ARQ audit queue requested"],
+            "model_id": "fixture-auditor-v1",
+            "served_via": "local",
+            "prompt_tokens": 3,
+            "completion_tokens": 2,
+            "latency_ms": 4.5,
+            "cost_usd": 0.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_chroma_memory_evidence_sidecar(
+    storage: Storage, settings: Settings, tmp_path
+) -> None:
+    await _register(storage)
+    memory = ChromaIncidentMemory(
+        ChromaMemoryConfig(
+            persist_directory=tmp_path,
+            collection_name="agent_shield_worker_memory_test",
+        )
+    )
+    memory.remember_record(
+        _signed_record(run_id="prior-memory-run", nonce="asyncWorkerNoncePrior1"),
+        decision=Decision.ALERT,
+        reasons=("evaluator.behavior_drift",),
+    )
+    rec = _signed_record(run_id="worker-memory-run", nonce="asyncWorkerNonceMemory")
+    transport = InMemoryChannel2Transport()
+    transport.publish(stream_key(rec.workflow_id), rec)
+
+    worker = AsyncVerdictWorker(
+        storage=storage,
+        settings=settings,
+        transport=transport,
+        router=_spy_router(evaluator_tool_name="recall_similar_incidents"),
+        memory=memory,
+    )
+
+    handled = await worker.run_once(rec.workflow_id, block_ms=0)
+
+    assert handled == 1
+    view = await reads_svc.verdict_by_correlation(storage, ORG, rec.correlation_id)
+    evaluator_rows = [
+        row for row in view.guardian_evidence if row["guardian"] == Guardian.EVALUATOR.value
+    ]
+    assert evaluator_rows
+    memory_evidence = evaluator_rows[0]["memory"]
+    assert memory_evidence["memory_backend"] == "chroma"
+    assert memory_evidence["collection"] == "agent_shield_worker_memory_test"
+    assert memory_evidence["hit_count"] >= 1
+    assert evaluator_rows[0]["tool_calls"] == ["recall_similar_incidents"]
 
 
 @pytest.mark.asyncio

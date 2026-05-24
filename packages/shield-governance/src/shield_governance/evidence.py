@@ -6,8 +6,11 @@ that router-backed guardians can hand across the async verdict seam.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import Lock
+from types import MappingProxyType
+from typing import Any
 
 from shield_sdk.schema import Decision, Guardian, ServedVia, ShieldActionRecord
 
@@ -27,6 +30,8 @@ class GuardianEvidence:
     completion_tokens: int = 0
     latency_ms: float = 0.0
     cost_usd: float = 0.0
+    memory: Mapping[str, Any] | None = None
+    tool_calls: tuple[str, ...] = ()
 
 
 class GuardianEvidenceRecorder:
@@ -54,6 +59,8 @@ class GuardianEvidenceRecorder:
         completion_tokens: int = 0,
         latency_ms: float = 0.0,
         cost_usd: float = 0.0,
+        memory: Mapping[str, Any] | None = None,
+        tool_calls: tuple[str, ...] | list[str] = (),
     ) -> GuardianEvidence:
         return self.record(
             GuardianEvidence(
@@ -68,6 +75,8 @@ class GuardianEvidenceRecorder:
                 completion_tokens=max(0, int(completion_tokens)),
                 latency_ms=max(0.0, float(latency_ms)),
                 cost_usd=max(0.0, float(cost_usd)),
+                memory=None if memory is None else MappingProxyType(dict(memory)),
+                tool_calls=tuple(tool_calls),
             )
         )
 

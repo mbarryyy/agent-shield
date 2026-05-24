@@ -16,7 +16,7 @@ defeated by 3×$10k structuring" result, auto-scored, never cherry-picked.
 
 NOTE (honest scope): MockedLLM produces a *deterministic transcript*, not a
 measured model. It proves the A0/A0b plumbing + oracle scoring offline. Real,
-quotable ASR/utility come from real models via ``eval.yml`` (W4/W5). Numbers
+quotable ASR/utility require a separate explicit provider-backed run. Numbers
 from this mock are labelled as such and are never reported as measured ASR.
 """
 
@@ -105,9 +105,11 @@ class MockedLLM(BasePipelineElement):  # type: ignore[misc]
         query: str,
         runtime: FunctionsRuntime,
         env: Env = EmptyEnv(),  # noqa: B008
-        messages: Sequence[ChatMessage] = [],  # noqa: B006
-        extra_args: dict[str, Any] = {},  # noqa: B006
+        messages: Sequence[ChatMessage] | None = None,
+        extra_args: dict[str, Any] | None = None,
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict[str, Any]]:
+        messages = [] if messages is None else messages
+        extra_args = {} if extra_args is None else extra_args
         plan = self._plan(query, env)
         if (
             self._injection_task is not None

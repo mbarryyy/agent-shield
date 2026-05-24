@@ -13,22 +13,125 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 from .arms import ARM_LABELS
+from .provider_slice import (
+    HAIKU_PROVIDER_SLICE_MODEL,
+    HAIKU_PROVIDER_SLICE_PROFILE,
+    PROVIDER_SLICE_APPROVAL_THRESHOLD_USD,
+    default_guardian_evidence_rows,
+    env_key_available,
+    guardian_model_rows,
+)
 
 REAL_EVAL_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_ENV_KEY = "ANTHROPIC_API_KEY"
-INPUT_PRICE_PER_MTOK = 1.00
-OUTPUT_PRICE_PER_MTOK = 5.00
 DEFAULT_HARD_CAP_USD = 5.00
-DEFAULT_PLANNING_THRESHOLD_USD = 4.50
+DEFAULT_PLANNING_THRESHOLD_USD = 3.00
 DEFAULT_MAX_OUTPUT_TOKENS = 2_000
-COST_FORMULA = "(input_tokens / 1_000_000 * 1.00) + (output_tokens / 1_000_000 * 5.00)"
+DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS = 800
+DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS: dict[str, dict[str, int | str]] = {
+    "defender": {
+        "model_invocations_per_record": 0,
+        "tool_calls_per_record": 0,
+        "chroma_queries_per_record": 0,
+        "tool_loop_bound": 0,
+    },
+    "evaluator": {
+        "model_invocations_per_record": 3,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 3,
+    },
+    "supervisor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+    "auditor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 3,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+}
+COST_FORMULA = (
+    "sum((input_tokens / 1_000_000 * model.input_usd_per_mtok) + "
+    "(output_tokens / 1_000_000 * model.output_usd_per_mtok))"
+)
+# Source: Anthropic Claude API pricing, model pricing table, accessed
+# 2026-05-24: https://platform.claude.com/docs/en/about-claude/pricing
+MODEL_PRICE_SOURCE = (
+    "Anthropic Claude API pricing, model pricing table, accessed 2026-05-24: "
+    "https://platform.claude.com/docs/en/about-claude/pricing"
+)
+ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
+    "claude-haiku-4-5-20251001": {
+        "input": 1.00,
+        "output": 5.00,
+        "pricing_basis": "Claude Haiku 4.5",
+    },
+    "claude-haiku-4-5": {
+        "input": 1.00,
+        "output": 5.00,
+        "pricing_basis": "Claude Haiku 4.5",
+    },
+    "claude-sonnet-4": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4",
+    },
+    "claude-sonnet-4-20250514": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4",
+    },
+    "claude-sonnet-4-5": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.5",
+    },
+    "claude-sonnet-4-5-20250929": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.5",
+    },
+    "claude-sonnet-4-6": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.6",
+    },
+    "claude-opus-4": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4",
+    },
+    "claude-opus-4-20250514": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4",
+    },
+    "claude-opus-4-1": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4.1",
+    },
+    "claude-opus-4-1-20250805": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4.1",
+    },
+    "claude-opus-4-7": {
+        "input": 5.00,
+        "output": 25.00,
+        "pricing_basis": "Claude Opus 4.7",
+    },
+}
 
 _DETECTION_DECISIONS = {"ALERT", "BLOCK", "ESCALATE", "ROLLBACK", "REWRITE"}
 _CHECK_RE = re.compile(r"^\s*([a-zA-Z0-9_]+)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)\s*$")
@@ -264,6 +367,7 @@ def build_full_grid_artifacts(
     arms: list[str],
     backend: str,
     attack_variant: str,
+    model_router_profile: str = "cloud",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build the CI-friendly 16x9 banking grid artifact without provider calls."""
 
@@ -308,6 +412,14 @@ def build_full_grid_artifacts(
                     "prevented_loss_usd": 30_000.0
                     if arm in {"A2", "A3"} and security is False and iid == "injection_task_6"
                     else 0.0,
+                    "per_guardian": _mock_guardian_rows(
+                        arm=arm,
+                        decision=decision,
+                        injection_task_id=iid,
+                        model_router_profile=model_router_profile,
+                    )
+                    if evidence_label == "MOCKED"
+                    else [],
                 }
                 if skip_reason:
                     row["skip_reason"] = skip_reason
@@ -326,6 +438,41 @@ def build_full_grid_artifacts(
     return report, cases
 
 
+def _mock_guardian_rows(
+    *,
+    arm: str,
+    decision: str,
+    injection_task_id: str,
+    model_router_profile: str,
+) -> list[dict[str, Any]]:
+    if arm not in {"A2", "A3"}:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for model_row in guardian_model_rows(model_router_profile):
+        guardian = str(model_row["guardian"])
+        guardian_decision = "BLOCK" if decision == "BLOCK" and guardian != "auditor" else "PASS"
+        reason = (
+            f"mock.{guardian}.injectiontask6"
+            if decision == "BLOCK" and injection_task_id == "injection_task_6"
+            else f"mock.{guardian}.pass"
+        )
+        rows.append(
+            {
+                "guardian": guardian,
+                "decision": guardian_decision,
+                "model_id": model_row["model_id"],
+                "served_via": model_row["served_via"],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "latency_ms": 0.0,
+                "cost_usd": 0.0,
+                "reasons": [reason],
+            }
+        )
+    return rows
+
+
 def build_full_grid_metrics_report(
     *,
     suite: str,
@@ -336,6 +483,7 @@ def build_full_grid_metrics_report(
     evidence_label: str,
     cases: list[dict[str, Any]],
     skip_reason: str | None = None,
+    errors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     primary_arm = "A2" if "A2" in arms else (arms[0] if arms else "A0")
     primary_cases = [
@@ -356,10 +504,25 @@ def build_full_grid_metrics_report(
     token_overhead = sum(
         _int(row.get("prompt_tokens")) + _int(row.get("completion_tokens")) for row in primary_cases
     )
+    primary_actual_cost = sum(_float(row.get("cost_usd")) for row in primary_cases)
+    total_prompt_tokens = sum(_int(row.get("prompt_tokens")) for row in cases)
+    total_completion_tokens = sum(_int(row.get("completion_tokens")) for row in cases)
+    total_tokens = total_prompt_tokens + total_completion_tokens
+    actual_cost_usd = round(sum(_float(row.get("cost_usd")) for row in cases), 6)
+    api_statuses = {str(row.get("api_call_status") or "SKIPPED").upper() for row in cases}
+    api_call_status = "EXECUTED" if "EXECUTED" in api_statuses else "SKIPPED"
+    evidence_labels = {
+        str(row.get("evidence_label") or evidence_label)
+        for row in cases
+        if row.get("evidence_label")
+    }
+    summary_evidence_label = (
+        evidence_label if len(evidence_labels) != 1 else next(iter(evidence_labels))
+    )
 
     metric_label = evidence_label
     # F1 (Phase F, EM-2): ``MEASURED-INLINE-DECIDE`` — values from REAL
-    # benchmark_suite_with_injections via decide.real_server_transport()
+    # benchmark_suite_with_injections via decide.real_server_harness()
     # with the MockedLLM worker (keyless, CI-runnable).
     # F2 (Phase F, EM-3): ``MEASURED-REAL-MODEL`` — same plumbing as F1
     # but with the REAL provider model as the worker LLM (M3 execution —
@@ -378,7 +541,7 @@ def build_full_grid_metrics_report(
     elif measured_inline:
         asr_source = (
             "MEASURED — AgentDojo security() oracle across the full grid via "
-            "the real shield decide() (decide.real_server_transport()) with "
+            "the real shield decide() (decide.real_server_harness()) with "
             "the deterministic MockedLLM worker (F1)"
         )
     elif measured_real:
@@ -452,7 +615,7 @@ def build_full_grid_metrics_report(
             ),
         ),
         "estimated_cost_usd": _metric(
-            0.0 if populated else None,
+            primary_actual_cost if populated else None,
             label=metric_label,
             unit="USD",
             source=(
@@ -466,22 +629,34 @@ def build_full_grid_metrics_report(
                 else "Not populated outside the mock / measured paths"
             ),
         ),
+        "actual_cost_usd": _metric(
+            primary_actual_cost if populated else None,
+            label=metric_label,
+            unit="USD",
+            source="Summed provider cost from primary-arm case rows",
+        ),
         "benefit_cost_usd": _metric(
-            prevented_loss if populated else None,
+            (prevented_loss - primary_actual_cost) if populated else None,
             label=metric_label,
             unit="USD",
             source="prevented_loss_usd - estimated_cost_usd",
         ),
         "benefit_cost_ratio": _metric(
-            None,
-            label="SKIPPED",
+            (prevented_loss / primary_actual_cost) if primary_actual_cost > 0 else None,
+            label=metric_label if primary_actual_cost > 0 else "SKIPPED",
             unit="ratio",
-            source="Skipped when provider cost is zero or backend is not executed",
+            source="prevented_loss_usd / actual_cost_usd; skipped when provider cost is zero",
         ),
     }
     report: dict[str, Any] = {
         "schema_version": "eval-full-grid.v1",
         "run_label": metric_label,
+        "evidence_label": summary_evidence_label,
+        "api_call_status": api_call_status,
+        "actual_cost_usd": actual_cost_usd,
+        "prompt_tokens": total_prompt_tokens,
+        "completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
         "suite": suite,
         "backend": backend,
         "arms": list(arms),
@@ -500,8 +675,8 @@ def build_full_grid_metrics_report(
         "notes": (
             [
                 "MEASURED-INLINE-DECIDE (F1): per-cell oracle scoring via "
-                "decide.real_server_transport() — real shield_server.create_app "
-                "+ load_governance_app() in-process. Inline /decide measures the "
+                "decide.real_server_harness() — real shield_server.create_app "
+                "+ load_governance_app() over local HTTP. Inline /decide measures the "
                 "deployed gov surface (2-node pre-Phase-A; router-backed "
                 "post-Phase-A — no code change here). Worker = MockedLLM (keyless).",
                 "Provider-backed real-model ASR remains a future step (M3 = AndyHu).",
@@ -510,7 +685,7 @@ def build_full_grid_metrics_report(
             else (
                 [
                     "MEASURED-REAL-MODEL (F2 wiring; M3 execution): per-cell "
-                    "oracle scoring via decide.real_server_transport() with a "
+                    "oracle scoring via decide.real_server_harness() with a "
                     "REAL provider model as worker LLM. Gated on "
                     "--execute-real-run + ANTHROPIC_API_KEY + budget OK; default "
                     "OFF, CI never enters this branch. Quotable only after an "
@@ -524,19 +699,121 @@ def build_full_grid_metrics_report(
             )
         ),
     }
+    report["errors"] = list(errors or [])
     if skip_reason:
         report["skip_reason"] = skip_reason
     return report
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    return (input_tokens / 1_000_000 * INPUT_PRICE_PER_MTOK) + (
-        output_tokens / 1_000_000 * OUTPUT_PRICE_PER_MTOK
-    )
+def _model_price(model_id: str) -> dict[str, float | str]:
+    try:
+        return ANTHROPIC_PRICE_TABLE_USD_PER_MTOK[model_id]
+    except KeyError as e:
+        raise ValueError(f"unknown Anthropic model_id for cost estimate: {model_id}") from e
+
+
+def _estimate_model_cost(
+    model_id: str, input_tokens: int, output_tokens: int
+) -> tuple[float, dict[str, float | str]]:
+    price = _model_price(model_id)
+    input_price = float(price["input"])
+    output_price = float(price["output"])
+    cost = (input_tokens / 1_000_000 * input_price) + (output_tokens / 1_000_000 * output_price)
+    return cost, price
 
 
 def _token_estimate(serialized_prompt_chars: int) -> int:
     return max(0, math.ceil(serialized_prompt_chars / 3))
+
+
+def _model_backed_guardian_units(
+    *, arms: list[str], user_count: int, injection_count: int, sample_count: int
+) -> int:
+    if not any(arm in {"A1", "A2", "A3"} for arm in arms):
+        return 0
+    return user_count * injection_count * sample_count
+
+
+def _guardian_tool_loop_assumption(guardian: object) -> dict[str, int | str]:
+    return DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.get(
+        str(guardian),
+        {
+            "model_invocations_per_record": 1,
+            "tool_calls_per_record": 0,
+            "chroma_queries_per_record": 0,
+            "tool_loop_bound": 1,
+        },
+    )
+
+
+def _guardian_cost_estimates(
+    *,
+    model_router_profile: str,
+    model_backed_records_per_guardian: int,
+    input_tokens_per_model_invocation: int,
+    output_tokens_per_model_invocation: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in guardian_model_rows(model_router_profile):
+        guardian = str(row["guardian"])
+        assumption = _guardian_tool_loop_assumption(guardian)
+        model_invocations_per_record = int(assumption["model_invocations_per_record"])
+        tool_calls_per_record = int(assumption["tool_calls_per_record"])
+        chroma_queries_per_record = int(assumption["chroma_queries_per_record"])
+        tool_loop_bound = int(assumption["tool_loop_bound"])
+        served_via = str(row["served_via"])
+        provider = str(row["provider"])
+        model_id = str(row["model_id"])
+        if served_via == "local" or provider == "local":
+            rows.append(
+                {
+                    "guardian": guardian,
+                    "provider": provider,
+                    "model_id": model_id,
+                    "served_via": served_via,
+                    "model_backed_records_per_guardian": 0,
+                    "model_invocations_per_record": 0,
+                    "estimated_model_invocations": 0,
+                    "tool_calls_per_record": tool_calls_per_record,
+                    "chroma_queries_per_record": chroma_queries_per_record,
+                    "tool_loop_bound": tool_loop_bound,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "input_usd_per_mtok": 0.0,
+                    "output_usd_per_mtok": 0.0,
+                    "pricing_basis": "local deterministic; no Anthropic token cost",
+                    "cost_usd": 0.0,
+                }
+            )
+            continue
+
+        estimated_model_invocations = (
+            model_invocations_per_record * model_backed_records_per_guardian
+        )
+        input_tokens = input_tokens_per_model_invocation * estimated_model_invocations
+        output_tokens = output_tokens_per_model_invocation * estimated_model_invocations
+        cost, price = _estimate_model_cost(model_id, input_tokens, output_tokens)
+        rows.append(
+            {
+                "guardian": guardian,
+                "provider": provider,
+                "model_id": model_id,
+                "served_via": served_via,
+                "model_backed_records_per_guardian": model_backed_records_per_guardian,
+                "model_invocations_per_record": model_invocations_per_record,
+                "estimated_model_invocations": estimated_model_invocations,
+                "tool_calls_per_record": tool_calls_per_record,
+                "chroma_queries_per_record": chroma_queries_per_record,
+                "tool_loop_bound": tool_loop_bound,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "input_usd_per_mtok": float(price["input"]),
+                "output_usd_per_mtok": float(price["output"]),
+                "pricing_basis": price["pricing_basis"],
+                "cost_usd": round(cost, 6),
+            }
+        )
+    return rows
 
 
 def build_real_runner_budget_artifact(
@@ -546,11 +823,14 @@ def build_real_runner_budget_artifact(
     injection_tasks: list[str],
     samples: int,
     serialized_prompt_chars: int,
+    model: str = REAL_EVAL_MODEL,
+    model_router_profile: str = "cloud",
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     hard_cap_usd: float = DEFAULT_HARD_CAP_USD,
     planning_threshold_usd: float = DEFAULT_PLANNING_THRESHOLD_USD,
+    allow_plan_shrink: bool = True,
 ) -> dict[str, Any]:
-    """Estimate and shrink a Haiku 4.5 real eval plan without making API calls."""
+    """Estimate and shrink a real eval plan without making API calls."""
 
     arm_count = max(1, len(arms))
     user_count = max(1, len(user_tasks))
@@ -562,32 +842,66 @@ def build_real_runner_budget_artifact(
     output_per_unit = max(0, max_output_tokens)
     requested_input = input_per_unit * requested_units
     requested_output = output_per_unit * requested_units
-    requested_cost = _estimate_cost(requested_input, requested_output)
-    key_present = bool(os.environ.get(ANTHROPIC_ENV_KEY))
+    worker_cost, worker_price = _estimate_model_cost(model, requested_input, requested_output)
+    guardian_records = _model_backed_guardian_units(
+        arms=arms,
+        user_count=user_count,
+        injection_count=injection_count,
+        sample_count=sample_count,
+    )
+    guardian_input_per_model_invocation = input_per_unit
+    guardian_output_per_model_invocation = min(
+        max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS
+    )
+    guardian_estimates = _guardian_cost_estimates(
+        model_router_profile=model_router_profile,
+        model_backed_records_per_guardian=guardian_records,
+        input_tokens_per_model_invocation=guardian_input_per_model_invocation,
+        output_tokens_per_model_invocation=guardian_output_per_model_invocation,
+    )
+    guardian_cost = sum(float(row["cost_usd"]) for row in guardian_estimates)
+    guardian_input = sum(_int(row["input_tokens"]) for row in guardian_estimates)
+    guardian_output = sum(_int(row["output_tokens"]) for row in guardian_estimates)
+    requested_cost = worker_cost + guardian_cost
+    requested_total_input = requested_input + guardian_input
+    requested_total_output = requested_output + guardian_output
+    key_present = env_key_available(ANTHROPIC_ENV_KEY)
 
     effective_units = requested_units
-    effective_input = requested_input
-    effective_output = requested_output
+    effective_input = requested_total_input
+    effective_output = requested_total_output
     effective_cost = requested_cost
     shrink_applied = False
     skip_reason: str | None = None
     status_label = "ESTIMATED"
 
     if requested_cost > planning_threshold_usd:
-        per_unit_cost = _estimate_cost(input_per_unit, output_per_unit)
-        effective_units = int(planning_threshold_usd // per_unit_cost) if per_unit_cost > 0 else 0
-        effective_units = min(requested_units, effective_units)
-        shrink_applied = effective_units < requested_units
-        effective_input = input_per_unit * effective_units
-        effective_output = output_per_unit * effective_units
-        effective_cost = _estimate_cost(effective_input, effective_output)
-        if effective_units <= 0 or effective_cost > hard_cap_usd:
+        if allow_plan_shrink:
+            per_unit_cost = requested_cost / requested_units if requested_units > 0 else 0.0
+            effective_units = (
+                int(planning_threshold_usd // per_unit_cost) if per_unit_cost > 0 else 0
+            )
+            effective_units = min(requested_units, effective_units)
+            shrink_applied = effective_units < requested_units
+            scale = effective_units / requested_units if requested_units > 0 else 0.0
+            effective_input = round(requested_total_input * scale)
+            effective_output = round(requested_total_output * scale)
+            effective_cost = requested_cost * scale
+            if effective_units <= 0 or effective_cost > hard_cap_usd:
+                status_label = "SKIPPED"
+                skip_reason = "REAL_EVAL_SKIPPED_BUDGET_GUARD"
+                effective_units = 0
+                effective_input = 0
+                effective_output = 0
+                effective_cost = 0.0
+        else:
             status_label = "SKIPPED"
-            skip_reason = "REAL_EVAL_SKIPPED_BUDGET_GUARD"
+            skip_reason = "REAL_EVAL_SKIPPED_APPROVAL_THRESHOLD"
+            shrink_applied = False
             effective_units = 0
             effective_input = 0
             effective_output = 0
-            effective_cost = 0.0
+            effective_cost = requested_cost
 
     if not key_present:
         status_label = "SKIPPED"
@@ -595,23 +909,73 @@ def build_real_runner_budget_artifact(
 
     return {
         "schema_version": "real-runner-budget.v1",
-        "model": REAL_EVAL_MODEL,
+        "model": model,
+        "model_router_profile": model_router_profile,
+        "guardian_models": list(guardian_model_rows(model_router_profile)),
         "env_key_name": ANTHROPIC_ENV_KEY,
         "status_label": status_label,
         "skip_reason": skip_reason,
         "api_call_status": "SKIPPED",
         "api_call_reason": "budget estimator only; no Anthropic API call was made",
         "formula": COST_FORMULA,
+        "price_source": MODEL_PRICE_SOURCE,
         "prices": {
-            "input_usd_per_mtok": INPUT_PRICE_PER_MTOK,
-            "output_usd_per_mtok": OUTPUT_PRICE_PER_MTOK,
+            "worker": {
+                "model_id": model,
+                "input_usd_per_mtok": float(worker_price["input"]),
+                "output_usd_per_mtok": float(worker_price["output"]),
+                "pricing_basis": worker_price["pricing_basis"],
+            },
+            "source": MODEL_PRICE_SOURCE,
         },
+        "worker_estimate": {
+            "model_id": model,
+            "input_tokens": requested_input,
+            "output_tokens": requested_output,
+            "input_usd_per_mtok": float(worker_price["input"]),
+            "output_usd_per_mtok": float(worker_price["output"]),
+            "pricing_basis": worker_price["pricing_basis"],
+            "cost_usd": round(worker_cost, 6),
+        },
+        "assumption_per_guardian": {
+            "model_backed_records_per_guardian": guardian_records,
+            "input_tokens_per_model_invocation": guardian_input_per_model_invocation,
+            "max_output_tokens_per_model_invocation": guardian_output_per_model_invocation,
+            "tool_loop_model_invocations": {
+                guardian: int(values["model_invocations_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "tool_calls_per_record": {
+                guardian: int(values["tool_calls_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_queries_per_record": {
+                guardian: int(values["chroma_queries_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_backend": "local persistent Chroma; no provider token cost",
+            "basis": (
+                "post-M6/M7 conservative estimate: each model-backed guardian "
+                "uses bounded create_agent loop model invocations, includes "
+                "local Chroma recall tool calls as zero provider-token-cost "
+                "operations, and emits at most 800 output tokens per model "
+                "invocation"
+            ),
+        },
+        "per_guardian_cost_estimates": guardian_estimates,
         "hard_cap_usd": hard_cap_usd,
         "planning_threshold_usd": planning_threshold_usd,
         "requested_units": requested_units,
         "effective_units": effective_units,
-        "requested_input_tokens": requested_input,
-        "requested_output_tokens": requested_output,
+        "requested_input_tokens": requested_total_input,
+        "requested_output_tokens": requested_total_output,
+        "requested_worker_input_tokens": requested_input,
+        "requested_worker_output_tokens": requested_output,
+        "requested_guardian_input_tokens": guardian_input,
+        "requested_guardian_output_tokens": guardian_output,
         "effective_input_tokens": effective_input,
         "effective_output_tokens": effective_output,
         "requested_cost_usd": round(requested_cost, 6),
@@ -625,6 +989,68 @@ def build_real_runner_budget_artifact(
             "api_call_status": "SKIPPED",
         },
         "arm_labels": dict(ARM_LABELS),
+    }
+
+
+def build_provider_slice_budget_artifact(
+    *,
+    user_task_id: str,
+    injection_task_id: str,
+    attack_variant: str,
+    arms: list[str],
+    samples: int,
+    serialized_prompt_chars: int,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    model_router_profile: str = HAIKU_PROVIDER_SLICE_PROFILE,
+    worker_model: str = HAIKU_PROVIDER_SLICE_MODEL,
+    approval_threshold_usd: float = PROVIDER_SLICE_APPROVAL_THRESHOLD_USD,
+) -> dict[str, Any]:
+    budget = build_real_runner_budget_artifact(
+        arms=arms,
+        user_tasks=[user_task_id],
+        injection_tasks=[injection_task_id],
+        samples=samples,
+        serialized_prompt_chars=serialized_prompt_chars,
+        model=worker_model,
+        model_router_profile=model_router_profile,
+        max_output_tokens=max_output_tokens,
+        hard_cap_usd=approval_threshold_usd,
+        planning_threshold_usd=approval_threshold_usd,
+        allow_plan_shrink=False,
+    )
+    return {
+        "schema_version": "provider-slice-budget.v1",
+        "scenario": {
+            "suite": "banking",
+            "user_task_id": user_task_id,
+            "injection_task_id": injection_task_id,
+            "attack_variant": attack_variant,
+        },
+        "arms": list(arms),
+        "samples": samples,
+        "worker_model": worker_model,
+        "model_router_profile": model_router_profile,
+        "guardian_models": budget["guardian_models"],
+        "api_call_status": "SKIPPED",
+        "api_call_reason": "estimate only; no Anthropic API call was made",
+        "approval_required_over_usd": approval_threshold_usd,
+        "status_label": budget["status_label"],
+        "skip_reason": budget["skip_reason"],
+        "requested_units": budget["requested_units"],
+        "requested_input_tokens": budget["requested_input_tokens"],
+        "requested_output_tokens": budget["requested_output_tokens"],
+        "requested_cost_usd": budget["requested_cost_usd"],
+        "estimated_cost_usd": budget["estimated_cost_usd"],
+        "formula": budget["formula"],
+        "price_source": budget["price_source"],
+        "prices": budget["prices"],
+        "worker_estimate": budget["worker_estimate"],
+        "assumption_per_guardian": budget["assumption_per_guardian"],
+        "per_guardian_cost_estimates": budget["per_guardian_cost_estimates"],
+        "labels": {
+            "estimated_cost_usd": "ESTIMATED",
+            "api_call_status": "SKIPPED",
+        },
     }
 
 
@@ -649,7 +1075,17 @@ def build_provider_slice_artifact(
 
     status = api_call_status.upper()
     executed = status == "EXECUTED"
-    guardians = per_guardian if per_guardian is not None else _default_slice_guardians()
+    if executed and per_guardian is None:
+        raise ValueError("PROVIDER_BACKED artifacts require explicit per_guardian rows")
+    guardians = (
+        per_guardian
+        if per_guardian is not None
+        else default_guardian_evidence_rows(model_router_profile)
+    )
+    reported_a0_latency_ms = a0_latency_ms if executed else 0.0
+    reported_a2_latency_ms = a2_latency_ms if executed else 0.0
+    reported_actual_cost_usd = actual_cost_usd if executed else 0.0
+    reported_prevented_loss_usd = prevented_loss_usd if executed else 0.0
     prompt_tokens = sum(_int(g.get("prompt_tokens")) for g in guardians)
     completion_tokens = sum(_int(g.get("completion_tokens")) for g in guardians)
     artifact: dict[str, Any] = {
@@ -669,82 +1105,33 @@ def build_provider_slice_artifact(
         "budget": {
             "hard_cap_usd": hard_cap_usd,
             "estimated_cost_usd": estimated_cost_usd,
-            "actual_cost_usd": actual_cost_usd if executed else 0.0,
+            "actual_cost_usd": reported_actual_cost_usd,
         },
         "arms": {
             "A0": {
                 "security": None,
                 "utility": None,
-                "latency_ms": a0_latency_ms,
+                "latency_ms": reported_a0_latency_ms,
                 "per_guardian": [],
             },
             "A2": {
                 "security": None,
                 "utility": None,
-                "latency_ms": a2_latency_ms,
+                "latency_ms": reported_a2_latency_ms,
                 "per_guardian": guardians,
             },
         },
         "totals": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "latency_ms": a0_latency_ms + a2_latency_ms,
-            "cost_usd": actual_cost_usd if executed else 0.0,
-            "prevented_loss_usd": prevented_loss_usd,
+            "latency_ms": reported_a0_latency_ms + reported_a2_latency_ms,
+            "cost_usd": reported_actual_cost_usd,
+            "prevented_loss_usd": reported_prevented_loss_usd,
         },
     }
     if not executed:
         artifact["skip_reason"] = skip_reason or "REAL_EVAL_SKIPPED"
     return artifact
-
-
-def _default_slice_guardians() -> list[dict[str, Any]]:
-    return [
-        {
-            "guardian": "defender",
-            "decision": "PASS",
-            "model_id": "local-deterministic",
-            "served_via": "local",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "evaluator",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "supervisor",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-        {
-            "guardian": "auditor",
-            "decision": "PASS",
-            "model_id": "from-model-router",
-            "served_via": "cloud",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "latency_ms": 0.0,
-            "cost_usd": 0.0,
-            "reasons": [],
-        },
-    ]
 
 
 def write_json(path: str | Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:

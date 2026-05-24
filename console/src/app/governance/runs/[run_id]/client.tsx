@@ -152,6 +152,7 @@ export default function GovernanceRunShell() {
               verdict={selectedVerdict}
               preExec={detail?.pre_exec ?? null}
               postExec={detail?.post_exec ?? null}
+              guardianEvidence={detail?.guardian_evidence ?? []}
             />
           ) : (
             <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">

@@ -26,6 +26,7 @@ from .audit import decode_cursor, encode_cursor
 from .config import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 from .errors import AppError
 from .export_report import render_compliance_pdf
+from .governance import guardian_evidence_key
 from .merkle import epoch_artifact_bytes, epoch_from_operation_rows, sign_eer
 from .models import (
     EER,
@@ -257,6 +258,24 @@ async def _load_json(storage: Storage, key: str | None) -> dict[str, Any] | None
     return obj if isinstance(obj, dict) else None
 
 
+async def _load_guardian_evidence(
+    storage: Storage, verdict_row: dict[str, object]
+) -> list[dict[str, Any]]:
+    key = verdict_row.get("r2_verdict_key")
+    if not key:
+        return []
+    raw = await storage.objects.get(guardian_evidence_key(str(key)))
+    if raw is None:
+        return []
+    try:
+        obj = json.loads(raw)
+    except ValueError:  # pragma: no cover - defensive
+        return []
+    if not isinstance(obj, list):
+        return []
+    return [dict(item) for item in obj if isinstance(item, dict)]
+
+
 async def timeline(
     storage: Storage,
     org_id: str,
@@ -321,7 +340,8 @@ async def verdict_by_correlation(storage: Storage, org_id: str, correlation_id: 
     if not matches:
         raise AppError(404, "NOT_FOUND", "No verdict for that correlation_id.")
     matches.sort(key=lambda r: _i(r["created_at"]), reverse=True)
-    verdict = await _load_json(storage, str(matches[0]["r2_verdict_key"]))
+    latest = matches[0]
+    verdict = await _load_json(storage, str(latest["r2_verdict_key"]))
 
     ops = await storage.db.fetch("SELECT * FROM operations")
     paired = [o for o in ops if o.get("correlation_id") == correlation_id and o["org_id"] == org_id]
@@ -332,6 +352,7 @@ async def verdict_by_correlation(storage: Storage, org_id: str, correlation_id: 
         verdict=verdict,
         pre_exec=await _load_json(storage, None if pre is None else str(pre["r2_payload_key"])),
         post_exec=await _load_json(storage, None if post is None else str(post["r2_payload_key"])),
+        guardian_evidence=await _load_guardian_evidence(storage, latest),
     )
 
 

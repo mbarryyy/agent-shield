@@ -42,10 +42,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+from agentdojo.functions_runtime import EmptyEnv
 
 from .decide import DecideProvider, build_decider, mock_transport
 
@@ -82,9 +83,11 @@ ARM_LABELS: dict[str, str] = {
 #   * tool_filter → from_config raises ValueError unless the llm is an OpenAILLM.
 _MOCK_INCOMPATIBLE: dict[str, str] = {
     "transformers_pi_detector": (
-        "needs agentdojo[transformers] (torch + HF model) — real-model eval only"
+        "needs agentdojo[transformers] (torch + HF model) — explicit provider-backed eval only"
     ),
-    "tool_filter": "from_config restricts tool_filter to OpenAI models — real-model eval only",
+    "tool_filter": (
+        "from_config restricts tool_filter to OpenAI models — explicit provider-backed eval only"
+    ),
 }
 
 # Shield arm → conceptual /decide endpoint (reporting + W3 wiring). A1 Free =
@@ -97,6 +100,53 @@ _SHIELD_DECIDE: dict[str, str] = {"A1": "noop", "A2": "mock", "A3": "mock"}
 
 class ArmUnavailable(RuntimeError):
     """Raised when a requested arm cannot run in this phase/backend (SKIP, not FAIL)."""
+
+
+class FreshAgentPipeline(AgentPipeline):  # type: ignore[misc]
+    """AgentDojo pipeline with explicit message and Shield state containers.
+
+    AgentDojo's upstream ``AgentPipeline.query`` has mutable defaults for
+    ``messages`` and ``extra_args``. Shield stores chain state in ``extra_args``,
+    so eval-owned repeated runs must scope those containers to the current
+    server-backed run instead of leaking through class-level defaults.
+    """
+
+    def __init__(self, elements: Any, *, shared_extra_args: dict[str, Any] | None = None) -> None:
+        super().__init__(elements)
+        self._runtime: Any | None = None
+        self._messages: Any = []
+        self._extra_args: dict[str, Any] = (
+            shared_extra_args if shared_extra_args is not None else {}
+        )
+
+    def query(
+        self,
+        query: str,
+        runtime: Any,
+        env: Any | None = None,
+        messages: Any | None = None,
+        extra_args: dict[str, Any] | None = None,
+    ) -> tuple[str, Any, Any, Any, dict[str, Any]]:
+        if runtime is not self._runtime:
+            self._runtime = runtime
+            self._messages = []
+        use_messages = self._messages if messages is None else messages
+        use_extra_args = self._extra_args if extra_args is None else extra_args
+        result = super().query(
+            query,
+            runtime,
+            EmptyEnv() if env is None else env,
+            use_messages,
+            use_extra_args,
+        )
+        _, _, _, self._messages, self._extra_args = result
+        return cast(tuple[str, Any, Any, Any, dict[str, Any]], result)
+
+
+def _fresh_pipeline(pipeline: AgentPipeline) -> FreshAgentPipeline:
+    fresh = FreshAgentPipeline(pipeline.elements)
+    fresh.name = pipeline.name
+    return fresh
 
 
 @dataclass(frozen=True)
@@ -116,11 +166,12 @@ class ShieldWiring:
     # is driven in-process via httpx.MockTransport over this eval-owned
     # provider (no live server). None ⇒ real HTTP path (needs base_url+key).
     local_provider: DecideProvider | None = None
+    shared_extra_args: dict[str, Any] | None = None
     # Pre-built httpx transport (eval-owned). Highest precedence: used as-is on
-    # the unchanged sdk ShieldClient. This is how the REAL-graph run drives the
-    # real gov 4-guardian decide() in-process (decide.real_gov_transport()),
-    # and how the deterministic path could pass a ready transport. None ⇒
-    # fall back to local_provider (mock) or real external HTTP (base_url).
+    # the unchanged sdk ShieldClient. This is retained for deterministic mock
+    # and compatibility transports. The real server-backed path now prefers
+    # base_url + agent key from decide.real_server_harness().
+    # None ⇒ fall back to local_provider (mock) or real external HTTP (base_url).
     transport: Any | None = None
 
 
@@ -150,7 +201,7 @@ class Arm:
             system_message=None,
         )
         try:
-            return AgentPipeline.from_config(config)
+            return _fresh_pipeline(AgentPipeline.from_config(config))
         except ValueError as e:  # e.g. tool_filter on a non-OpenAI llm
             raise ArmUnavailable(f"{self.key} ({self.defense}): {e}") from e
 
@@ -224,9 +275,9 @@ class Arm:
             }
             if w.transport is not None:
                 # Highest precedence: an eval-owned pre-built transport on the
-                # UNCHANGED sdk ShieldClient. This is the REAL-graph path
-                # (decide.real_gov_transport() → the real gov 4-guardian
-                # decide()); also accepts any ready transport. Frozen golden
+                # UNCHANGED sdk ShieldClient. This supports deterministic or
+                # compatibility transports; real server-backed governance now
+                # uses base_url from decide.real_server_harness(). Frozen golden
                 # test key signs the records (test fixture; keyless).
                 client_kw["base_url"] = w.base_url or "http://shield.local"
                 client_kw["transport"] = w.transport
@@ -256,7 +307,10 @@ class Arm:
             base = self._build_native(llm, mock=isinstance(llm, BasePipelineElement))
             sysmsg, initq, worker = base.elements[0], base.elements[1], base.elements[2]
             loop = ToolsExecutionLoop(shield_loop_elements(cfg, worker))
-            pipeline = AgentPipeline([sysmsg, initq, worker, loop])
+            pipeline = FreshAgentPipeline(
+                [sysmsg, initq, worker, loop],
+                shared_extra_args=w.shared_extra_args,
+            )
             pipeline.name = f"{getattr(worker, 'name', 'shield')}-{self.key.lower()}"
             return pipeline
         except (TypeError, AttributeError) as e:  # pragma: no cover - contract drift

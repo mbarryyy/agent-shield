@@ -24,17 +24,21 @@ guardians:
     served_via: local
   evaluator:
     provider: anthropic
-    model: claude-sonnet-4
+    # Use official Anthropic pinned API IDs here. Claude 4.6+ pinned IDs are
+    # dateless snapshots; do not commit placeholder aliases like claude-sonnet-4.
+    # Deprecated fallback reference: claude-sonnet-4-20250514.
+    model: claude-sonnet-4-6
     served_via: cloud
     temperature: 0.0
   supervisor:
     provider: anthropic
-    model: claude-opus-4
+    # Deprecated fallback reference: claude-opus-4-20250514.
+    model: claude-opus-4-7
     served_via: cloud
     temperature: 0.0
   auditor:
     provider: anthropic
-    model: claude-haiku-4
+    model: claude-haiku-4-5-20251001
     served_via: cloud
     temperature: 0.0
 
@@ -44,7 +48,7 @@ aux_roles:
   # technique, re-implemented training-free; cached per policy-hash).
   policy_codegen:
     provider: anthropic
-    model: claude-haiku-4
+    model: claude-haiku-4-5-20251001
     served_via: cloud
     temperature: 0.0
   # LlamaFirewall AlignmentCheck — the only model-using scanner. Disabled in
