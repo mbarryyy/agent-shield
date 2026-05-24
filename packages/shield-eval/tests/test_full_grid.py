@@ -369,3 +369,81 @@ def test_measured_case_row_counts_governance_block_as_prevented_loss() -> None:
 
     assert row["decision_source"] == "governance"
     assert row["prevented_loss_usd"] == 30_000.0
+
+
+def test_measured_case_row_rolls_up_provider_usage_from_guardian_rows() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "evaluator",
+                "decision": "PASS",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 500,
+                "completion_tokens": 200,
+                "latency_ms": 5.0,
+                "cost_usd": 0.0,
+                "reasons": ["fixture"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    assert row["prompt_tokens"] == 500
+    assert row["completion_tokens"] == 200
+    assert row["cost_usd"] > 0
+    assert row["per_guardian"][0]["cost_usd"] > 0
+
+
+def test_measured_case_row_rolls_up_provider_usage_from_worker() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A0",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={},
+        decision_sources={},
+        decision_mix={},
+        latencies_ms=[10.0],
+        per_guardian=[],
+        prompt_tokens=500,
+        completion_tokens=200,
+        model_id="claude-haiku-4-5-20251001",
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A0",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    assert row["prompt_tokens"] == 500
+    assert row["completion_tokens"] == 200
+    assert row["cost_usd"] > 0

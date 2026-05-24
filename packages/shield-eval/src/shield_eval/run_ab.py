@@ -75,8 +75,73 @@ def _real_llm_for_worker(worker: str) -> Any:
         from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
         from anthropic import AsyncAnthropic
 
+        class UsageTrackingAnthropicLLM(AnthropicLLM):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                self.prompt_tokens = 0
+                self.completion_tokens = 0
+                self.cost_usd = 0.0
+
+            def query(
+                self,
+                query: str,
+                runtime: Any,
+                env: Any = None,
+                messages: Any = None,
+                extra_args: dict[str, Any] | None = None,
+            ) -> tuple[str, Any, Any, Any, dict[str, Any]]:
+                import asyncio as _asyncio
+                import re as _re
+
+                from agentdojo.agent_pipeline.llms import anthropic_llm as _anthropic_llm
+
+                env = _anthropic_llm.EmptyEnv() if env is None else env
+                messages = [] if messages is None else list(messages)
+                extra_args = {} if extra_args is None else dict(extra_args)
+                system_prompt, anthropic_messages = _anthropic_llm._conversation_to_anthropic(
+                    messages
+                )
+                if "claude-3-sonnet" in self.model or "claude-3-haiku" in self.model:
+                    system_prompt = f"{self._COT_PROMPT}\n\n{system_prompt}"
+                anthropic_tools = [
+                    _anthropic_llm._function_to_anthropic(tool)
+                    for tool in runtime.functions.values()
+                ]
+                completion = _asyncio.run(
+                    _anthropic_llm.chat_completion_request(
+                        self.client,
+                        self.model,
+                        anthropic_messages,
+                        anthropic_tools,
+                        max_tokens=self._MAX_TOKENS,
+                        system_prompt=system_prompt,
+                        temperature=self.temperature,
+                        thinking_budget_tokens=self.thinking_budget_tokens,
+                    )
+                )
+                usage = getattr(completion, "usage", None)
+                prompt_tokens = _safe_int(getattr(usage, "input_tokens", 0))
+                completion_tokens = _safe_int(getattr(usage, "output_tokens", 0))
+                self.prompt_tokens += prompt_tokens
+                self.completion_tokens += completion_tokens
+                self.cost_usd += _usage_cost_usd(
+                    self.model, prompt_tokens, completion_tokens
+                )
+
+                output = _anthropic_llm._anthropic_to_assistant_message(completion)
+                if output["tool_calls"] is not None:
+                    invalid_tool_calls: list[int] = []
+                    for i, tool_call in enumerate(output["tool_calls"]):
+                        if _re.match("^[a-zA-Z0-9_-]{1,64}$", tool_call.function) is None:
+                            invalid_tool_calls.append(i)
+                    for index in sorted(invalid_tool_calls, reverse=True):
+                        del output["tool_calls"][index]
+
+                messages = [*messages, output]
+                return query, runtime, env, messages, extra_args
+
         max_tokens = int(os.environ.get("SHIELD_REAL_EVAL_MAX_TOKENS", "1024"))
-        llm = AnthropicLLM(
+        llm = UsageTrackingAnthropicLLM(
             AsyncAnthropic(api_key=api_key),
             model=worker,
             max_tokens=max_tokens,
@@ -570,6 +635,10 @@ class HttpCellOutcome:
     decision_mix: dict[str, int]
     latencies_ms: list[float]
     per_guardian: list[dict[str, Any]]
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+    model_id: str | None = None
 
 
 class _AsyncGuardianEvidenceDrain:
@@ -810,6 +879,60 @@ def _primary_decision_source(decisions: dict[str, str], decision_sources: dict[s
     return sources[0] if sources else "governance"
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _usage_cost_usd(model_id: str | None, prompt_tokens: int, completion_tokens: int) -> float:
+    if not model_id:
+        return 0.0
+    try:
+        from .metrics import _estimate_model_cost
+
+        cost, _price = _estimate_model_cost(
+            model_id, max(0, prompt_tokens), max(0, completion_tokens)
+        )
+    except ValueError:
+        return 0.0
+    return round(cost, 6)
+
+
+def _worker_usage_from_llm(llm: Any, model_id: str | None) -> tuple[int, int, float]:
+    prompt_tokens = _safe_int(getattr(llm, "prompt_tokens", 0))
+    completion_tokens = _safe_int(getattr(llm, "completion_tokens", 0))
+    cost_usd = _safe_float(getattr(llm, "cost_usd", 0.0))
+    if cost_usd == 0.0:
+        cost_usd = _usage_cost_usd(model_id, prompt_tokens, completion_tokens)
+    return prompt_tokens, completion_tokens, cost_usd
+
+
+def _guardian_row_with_cost(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(row)
+    prompt_tokens = _safe_int(normalized.get("prompt_tokens"))
+    completion_tokens = _safe_int(normalized.get("completion_tokens"))
+    normalized["prompt_tokens"] = prompt_tokens
+    normalized["completion_tokens"] = completion_tokens
+    cost_usd = _safe_float(normalized.get("cost_usd"))
+    if cost_usd == 0.0 and str(normalized.get("served_via", "")).lower() == "cloud":
+        cost_usd = _usage_cost_usd(
+            str(normalized.get("model_id") or ""),
+            prompt_tokens,
+            completion_tokens,
+        )
+    normalized["cost_usd"] = cost_usd
+    return normalized
+
+
 def _score_http_cell(
     *,
     arm: Arm,
@@ -840,6 +963,9 @@ def _score_http_cell(
     security: dict[tuple[str, str], bool] = {}
     utility: dict[tuple[str, str], bool] = {}
     inj_task = suite.get_injection_task_by_id(injection_task_id)
+    worker_prompt_tokens = 0
+    worker_completion_tokens = 0
+    worker_cost_usd = 0.0
 
     for uid in user_task_ids:
         user_task = suite.get_user_task_by_id(uid)
@@ -888,6 +1014,10 @@ def _score_http_cell(
             )
         security.update(sr["security_results"])
         utility.update(sr["utility_results"])
+        prompt_tokens, completion_tokens, cost_usd = _worker_usage_from_llm(llm, worker)
+        worker_prompt_tokens += prompt_tokens
+        worker_completion_tokens += completion_tokens
+        worker_cost_usd += cost_usd
 
     decision_mix: dict[str, int] = {}
     for d in sink.decisions.values():
@@ -916,6 +1046,10 @@ def _score_http_cell(
         decision_mix=decision_mix,
         latencies_ms=list(sink.latencies_ms),
         per_guardian=list(sink.per_guardian),
+        prompt_tokens=worker_prompt_tokens,
+        completion_tokens=worker_completion_tokens,
+        cost_usd=round(worker_cost_usd, 6),
+        model_id=worker,
     )
 
 
@@ -987,7 +1121,25 @@ def _measured_case_row(
         )
         else 0.0
     )
-    per_guardian = list(outcome.per_guardian) if decision_source == "governance" else []
+    per_guardian = (
+        [_guardian_row_with_cost(row) for row in outcome.per_guardian]
+        if decision_source == "governance"
+        else []
+    )
+    guardian_prompt_tokens = sum(_safe_int(row.get("prompt_tokens")) for row in per_guardian)
+    guardian_completion_tokens = sum(
+        _safe_int(row.get("completion_tokens")) for row in per_guardian
+    )
+    guardian_cost_usd = sum(_safe_float(row.get("cost_usd")) for row in per_guardian)
+    worker_prompt_tokens = _safe_int(getattr(outcome, "prompt_tokens", 0))
+    worker_completion_tokens = _safe_int(getattr(outcome, "completion_tokens", 0))
+    worker_cost_usd = _safe_float(getattr(outcome, "cost_usd", 0.0))
+    if worker_cost_usd == 0.0:
+        worker_cost_usd = _usage_cost_usd(
+            getattr(outcome, "model_id", None),
+            worker_prompt_tokens,
+            worker_completion_tokens,
+        )
     return {
         "schema_version": "eval-case-v1",
         "suite": suite,
@@ -1004,9 +1156,9 @@ def _measured_case_row(
         "latency_ms": (
             sum(outcome.latencies_ms) / len(outcome.latencies_ms) if outcome.latencies_ms else 0.0
         ),
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "cost_usd": 0.0,
+        "prompt_tokens": worker_prompt_tokens + guardian_prompt_tokens,
+        "completion_tokens": worker_completion_tokens + guardian_completion_tokens,
+        "cost_usd": round(worker_cost_usd + guardian_cost_usd, 6),
         "prevented_loss_usd": prevented,
         "per_guardian": per_guardian,
     }
@@ -1049,6 +1201,9 @@ def _score_real_cell(
     security: dict[tuple[str, str], bool] = {}
     utility: dict[tuple[str, str], bool] = {}
     inj_task = suite.get_injection_task_by_id(injection_task_id)
+    worker_prompt_tokens = 0
+    worker_completion_tokens = 0
+    worker_cost_usd = 0.0
 
     for uid in user_task_ids:
         user_task = suite.get_user_task_by_id(uid)
@@ -1113,6 +1268,10 @@ def _score_real_cell(
             )
         security.update(sr["security_results"])
         utility.update(sr["utility_results"])
+        prompt_tokens, completion_tokens, cost_usd = _worker_usage_from_llm(llm, worker)
+        worker_prompt_tokens += prompt_tokens
+        worker_completion_tokens += completion_tokens
+        worker_cost_usd += cost_usd
 
     decision_mix: dict[str, int] = {}
     for d in sink.decisions.values():
@@ -1141,6 +1300,10 @@ def _score_real_cell(
         decision_mix=decision_mix,
         latencies_ms=list(sink.latencies_ms),
         per_guardian=list(sink.per_guardian),
+        prompt_tokens=worker_prompt_tokens,
+        completion_tokens=worker_completion_tokens,
+        cost_usd=round(worker_cost_usd, 6),
+        model_id=worker,
     )
 
 
