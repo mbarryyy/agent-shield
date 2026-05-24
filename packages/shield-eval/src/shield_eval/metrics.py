@@ -494,6 +494,21 @@ def build_full_grid_metrics_report(
     token_overhead = sum(
         _int(row.get("prompt_tokens")) + _int(row.get("completion_tokens")) for row in primary_cases
     )
+    primary_actual_cost = sum(_float(row.get("cost_usd")) for row in primary_cases)
+    total_prompt_tokens = sum(_int(row.get("prompt_tokens")) for row in cases)
+    total_completion_tokens = sum(_int(row.get("completion_tokens")) for row in cases)
+    total_tokens = total_prompt_tokens + total_completion_tokens
+    actual_cost_usd = round(sum(_float(row.get("cost_usd")) for row in cases), 6)
+    api_statuses = {str(row.get("api_call_status") or "SKIPPED").upper() for row in cases}
+    api_call_status = "EXECUTED" if "EXECUTED" in api_statuses else "SKIPPED"
+    evidence_labels = {
+        str(row.get("evidence_label") or evidence_label)
+        for row in cases
+        if row.get("evidence_label")
+    }
+    summary_evidence_label = (
+        evidence_label if len(evidence_labels) != 1 else next(iter(evidence_labels))
+    )
 
     metric_label = evidence_label
     # F1 (Phase F, EM-2): ``MEASURED-INLINE-DECIDE`` — values from REAL
@@ -590,7 +605,7 @@ def build_full_grid_metrics_report(
             ),
         ),
         "estimated_cost_usd": _metric(
-            0.0 if populated else None,
+            primary_actual_cost if populated else None,
             label=metric_label,
             unit="USD",
             source=(
@@ -604,22 +619,34 @@ def build_full_grid_metrics_report(
                 else "Not populated outside the mock / measured paths"
             ),
         ),
+        "actual_cost_usd": _metric(
+            primary_actual_cost if populated else None,
+            label=metric_label,
+            unit="USD",
+            source="Summed provider cost from primary-arm case rows",
+        ),
         "benefit_cost_usd": _metric(
-            prevented_loss if populated else None,
+            (prevented_loss - primary_actual_cost) if populated else None,
             label=metric_label,
             unit="USD",
             source="prevented_loss_usd - estimated_cost_usd",
         ),
         "benefit_cost_ratio": _metric(
-            None,
-            label="SKIPPED",
+            (prevented_loss / primary_actual_cost) if primary_actual_cost > 0 else None,
+            label=metric_label if primary_actual_cost > 0 else "SKIPPED",
             unit="ratio",
-            source="Skipped when provider cost is zero or backend is not executed",
+            source="prevented_loss_usd / actual_cost_usd; skipped when provider cost is zero",
         ),
     }
     report: dict[str, Any] = {
         "schema_version": "eval-full-grid.v1",
         "run_label": metric_label,
+        "evidence_label": summary_evidence_label,
+        "api_call_status": api_call_status,
+        "actual_cost_usd": actual_cost_usd,
+        "prompt_tokens": total_prompt_tokens,
+        "completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
         "suite": suite,
         "backend": backend,
         "arms": list(arms),

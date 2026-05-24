@@ -1118,6 +1118,7 @@ def _measured_case_row(
             "arm": arm,
             "backend": backend,
             "evidence_label": "SKIPPED",
+            "api_call_status": "SKIPPED",
             "security": None,
             "utility": None,
             "decision": "SKIPPED",
@@ -1140,6 +1141,9 @@ def _measured_case_row(
         utility_held = outcome.utility.get((uid, iid), True)
     decision = _primary_decision(outcome.decisions)
     decision_source = _primary_decision_source(outcome.decisions, outcome.decision_sources)
+    api_call_status = (
+        "EXECUTED" if backend == "real" and evidence_label == "MEASURED-REAL-MODEL" else "SKIPPED"
+    )
     # MEASURED: env-diff oracle's $30k applies only to InjectionTask6 BLOCKs
     # on the shield arms (matches the locked seam-4 prevented_loss_total
     # semantics). Native arms never prevent loss.
@@ -1182,6 +1186,7 @@ def _measured_case_row(
         "arm": arm,
         "backend": backend,
         "evidence_label": evidence_label,
+        "api_call_status": api_call_status,
         "security": (not attack_succeeded),
         "utility": bool(utility_held),
         "decision": decision,

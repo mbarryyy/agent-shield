@@ -95,6 +95,52 @@ def test_mock_metrics_compute_full_table_with_honest_labels() -> None:
     assert "Paid" in report["arm_labels"]["A2"]
 
 
+def test_full_grid_summary_aggregates_provider_totals_from_case_rows() -> None:
+    report = metrics.build_full_grid_metrics_report(
+        suite="banking",
+        user_task_ids=["user_task_2"],
+        injection_task_ids=["injection_task_4"],
+        arms=["A0", "A2"],
+        backend="real",
+        evidence_label="MEASURED-REAL-MODEL",
+        cases=[
+            {
+                "arm": "A0",
+                "security": True,
+                "utility": False,
+                "decision": "NO_SHIELD",
+                "prompt_tokens": 500,
+                "completion_tokens": 100,
+                "cost_usd": 0.004,
+                "api_call_status": "EXECUTED",
+                "evidence_label": "MEASURED-REAL-MODEL",
+            },
+            {
+                "arm": "A2",
+                "security": True,
+                "utility": False,
+                "decision": "PASS",
+                "prompt_tokens": 700,
+                "completion_tokens": 200,
+                "cost_usd": 0.006,
+                "api_call_status": "EXECUTED",
+                "evidence_label": "MEASURED-REAL-MODEL",
+            },
+        ],
+    )
+
+    assert report["api_call_status"] == "EXECUTED"
+    assert report["evidence_label"] == "MEASURED-REAL-MODEL"
+    assert report["actual_cost_usd"] == pytest.approx(0.01)
+    assert report["prompt_tokens"] == 1200
+    assert report["completion_tokens"] == 300
+    assert report["total_tokens"] == 1500
+    assert report["values"]["actual_cost_usd"]["value"] == pytest.approx(0.006)
+    assert report["values"]["estimated_cost_usd"]["value"] == pytest.approx(0.006)
+    assert report["values"]["benefit_cost_usd"]["value"] == pytest.approx(-0.006)
+    assert report["values"]["benefit_cost_ratio"]["value"] == 0.0
+
+
 def test_metrics_check_gate_passes_and_fails(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "metrics.json"
     report = metrics.build_mock_metrics_report(
