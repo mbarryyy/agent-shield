@@ -95,6 +95,7 @@ def _pct(sorted_vals: list[float], p: int) -> float:
 @dataclass
 class _DecisionSink:
     decisions: dict[str, str] = field(default_factory=dict)
+    decision_sources: dict[str, str] = field(default_factory=dict)
     latencies_ms: list[float] = field(default_factory=list)
     # F3 (Phase F, EM-6): forward-compat per-guardian passthrough. Pre-Phase-A
     # the inline /decide verdict has no ``guardian_evidence`` attribute and
@@ -106,6 +107,49 @@ class _DecisionSink:
     _seen_guardian_rows: set[tuple[str, str]] = field(default_factory=set)
 
 
+def _attr(obj: Any, name: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _enum_value(obj: Any) -> str:
+    if obj is None:
+        return ""
+    v = getattr(obj, "value", None)
+    return str(v) if v is not None else str(obj)
+
+
+def _decision_source_from_verdict(verdict: Any) -> str:
+    """Classify whether a blocked tool came from governance or SDK fallback."""
+
+    reasons = _attr(verdict, "reasons", ()) or ()
+    if not isinstance(reasons, list | tuple):
+        reasons = [reasons]
+    labels = [str(_attr(reason, "label", "")) for reason in reasons]
+    if any(label.startswith("shield-degraded-") for label in labels):
+        return "sdk_fail_closed"
+
+    evidence = _attr(verdict, "guardian_evidence", ()) or ()
+    if evidence:
+        return "governance"
+
+    for reason in reasons:
+        agent = _enum_value(_attr(reason, "agent", None) or _attr(reason, "guardian", None))
+        model_id = _attr(reason, "model_id", None)
+        if agent in {"evaluator", "supervisor", "auditor"} or model_id:
+            return "governance"
+
+    if any(
+        _enum_value(_attr(reason, "agent", None) or _attr(reason, "guardian", None))
+        == "defender"
+        for reason in reasons
+    ):
+        return "sync_defender_local"
+
+    return "governance"
+
+
 def _serialize_guardian_evidence(row: Any) -> dict[str, Any]:
     """Snapshot a ``GuardianEvidence``-like row into a JSON-safe dict.
 
@@ -114,17 +158,6 @@ def _serialize_guardian_evidence(row: Any) -> dict[str, Any]:
     or dict access (fixture / test shimming). The serialised shape mirrors
     the gov dataclass fields verbatim — pure passthrough, never recomputed.
     """
-
-    def _attr(obj: Any, name: str, default: Any = None) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(name, default)
-        return getattr(obj, name, default)
-
-    def _enum_value(obj: Any) -> str:
-        if obj is None:
-            return ""
-        v = getattr(obj, "value", None)
-        return str(v) if v is not None else str(obj)
 
     reasons = _attr(row, "reasons", ()) or ()
     if not isinstance(reasons, list | tuple):
@@ -171,6 +204,7 @@ class _DecisionTap(BasePipelineElement):  # type: ignore[misc]  # agentdojo base
             decision = getattr(verdict, "decision", None)
             if decision is not None:
                 self._sink.decisions[str(key)] = getattr(decision, "value", str(decision))
+                self._sink.decision_sources[str(key)] = _decision_source_from_verdict(verdict)
                 lat = getattr(verdict, "latency_ms", None)
                 if isinstance(lat, int | float):
                     self._sink.latencies_ms.append(float(lat))

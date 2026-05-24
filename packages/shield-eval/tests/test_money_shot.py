@@ -222,6 +222,7 @@ def test_decision_tap_passes_through_gov_guardian_evidence_when_present() -> Non
     tap.query("q", FunctionsRuntime([]), EmptyEnv(), [], extra_args)
 
     assert sink.decisions == {"k": "BLOCK"}
+    assert sink.decision_sources == {"k": "governance"}
     assert sink.latencies_ms == [602.0]
     assert [r["guardian"] for r in sink.per_guardian] == ["defender", "evaluator"]
     eval_row = sink.per_guardian[1]
@@ -237,6 +238,45 @@ def test_decision_tap_passes_through_gov_guardian_evidence_when_present() -> Non
     # Replay the same evidence: dedup keeps just one row per (record_id, guardian).
     tap.query("q", FunctionsRuntime([]), EmptyEnv(), [], extra_args)
     assert len(sink.per_guardian) == 2
+
+
+def test_decision_tap_classifies_sdk_degraded_verdict_source() -> None:
+    from dataclasses import dataclass
+
+    from agentdojo.functions_runtime import EmptyEnv, FunctionsRuntime
+    from shield_eval.money_shot import _DecisionSink, _DecisionTap
+
+    @dataclass
+    class _StubEnum:
+        value: str
+
+    @dataclass
+    class _StubReason:
+        label: str
+
+    @dataclass
+    class _StubVerdict:
+        decision: _StubEnum
+        latency_ms: float
+        reasons: tuple[_StubReason, ...]
+
+    @dataclass
+    class _StubDecisionEntry:
+        verdict: _StubVerdict
+
+    verdict = _StubVerdict(
+        decision=_StubEnum("BLOCK"),
+        latency_ms=1.0,
+        reasons=(_StubReason("shield-degraded-fail-closed"),),
+    )
+    extra_args = {"shield": {"decisions": {"k": _StubDecisionEntry(verdict=verdict)}}}
+
+    sink = _DecisionSink()
+    tap = _DecisionTap(sink)
+    tap.query("q", FunctionsRuntime([]), EmptyEnv(), [], extra_args)
+
+    assert sink.decisions == {"k": "BLOCK"}
+    assert sink.decision_sources == {"k": "sdk_fail_closed"}
 
 
 def test_build_artifact_aggregates_passed_through_per_guardian_into_rollup() -> None:
