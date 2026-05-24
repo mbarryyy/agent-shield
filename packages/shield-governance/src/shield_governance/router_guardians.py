@@ -48,6 +48,20 @@ class RouterBackedGuardians:
     evidence_recorder: GuardianEvidenceRecorder
 
 
+class GuardianModelInvocationError(RuntimeError):
+    """Model-provider failure annotated with guardian/model context."""
+
+    def __init__(self, guardian_name: str, model_id: str, cause: Exception) -> None:
+        self.guardian_name = guardian_name
+        self.model_id = model_id
+        self.error_class = cause.__class__.__name__
+        self.error_message = str(cause)
+        super().__init__(
+            f"{guardian_name} model {model_id} failed: "
+            f"{self.error_class}: {self.error_message}"
+        )
+
+
 class RouterHallucinationChecker:
     """Evaluator hallucination / value-sanity seam.
 
@@ -95,15 +109,6 @@ class RouterHallucinationChecker:
         started = time.perf_counter()
         tool_call_log: list[str] = []
         memory_evidence_log: list[dict[str, object]] = []
-        agent = make_evaluator_agent(
-            self._router,
-            record=record,
-            trace=trace,
-            analyzer=self._analyzer,
-            memory=self._memory,
-            tool_call_log=tool_call_log,
-            memory_evidence_log=memory_evidence_log,
-        )
 
         user_prompt = (
             "Tool-call record under review:\n"
@@ -113,7 +118,22 @@ class RouterHallucinationChecker:
             f"  step_index={record.step_index}\n"
             "Use the tools and then answer in the DECISION/REASON format."
         )
-        result = await agent.ainvoke({"messages": [{"role": "user", "content": user_prompt}]})
+        resolved = self._router.for_role("evaluator")
+        try:
+            agent = make_evaluator_agent(
+                self._router,
+                record=record,
+                trace=trace,
+                analyzer=self._analyzer,
+                memory=self._memory,
+                tool_call_log=tool_call_log,
+                memory_evidence_log=memory_evidence_log,
+            )
+            result = await agent.ainvoke({"messages": [{"role": "user", "content": user_prompt}]})
+        except Exception as exc:
+            raise GuardianModelInvocationError(
+                Guardian.EVALUATOR.value, resolved.model, exc
+            ) from exc
 
         messages = result.get("messages", []) if isinstance(result, dict) else []
         self.last_tool_calls = list(tool_call_log)
@@ -142,7 +162,6 @@ class RouterHallucinationChecker:
                     else getattr(content[0], "text", str(content))
                 )
 
-        resolved = self._router.for_role("evaluator")
         model_id = resolved.model
         served_via = resolved.served_via
 

@@ -473,6 +473,7 @@ def build_full_grid_metrics_report(
     evidence_label: str,
     cases: list[dict[str, Any]],
     skip_reason: str | None = None,
+    errors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     primary_arm = "A2" if "A2" in arms else (arms[0] if arms else "A0")
     primary_cases = [
@@ -661,6 +662,7 @@ def build_full_grid_metrics_report(
             )
         ),
     }
+    report["errors"] = list(errors or [])
     if skip_reason:
         report["skip_reason"] = skip_reason
     return report

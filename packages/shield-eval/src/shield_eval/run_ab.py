@@ -582,6 +582,7 @@ class _AsyncGuardianEvidenceDrain:
         )
 
         self._storage = server.storage
+        self._router = router
         self._transport = CacheChannel2Transport(server.storage.cache)
         self._worker = AsyncVerdictWorker(
             storage=server.storage,
@@ -591,6 +592,11 @@ class _AsyncGuardianEvidenceDrain:
             memory=memory,
         )
         self._seen_sidecars: set[str] = set()
+        self._errors: list[dict[str, Any]] = []
+
+    @property
+    def errors(self) -> list[dict[str, Any]]:
+        return list(self._errors)
 
     def drain(self, workflow_id: str = "banking") -> list[dict[str, Any]]:
         deadline = time.monotonic() + 2.0
@@ -600,7 +606,8 @@ class _AsyncGuardianEvidenceDrain:
                 handled = asyncio.run(
                     self._worker.run_once(workflow_id, count=1, block_ms=1)
                 )
-            except Exception:  # noqa: BLE001 - one async sidecar must not kill eval discovery
+            except Exception as exc:  # noqa: BLE001 - one async sidecar must not kill eval discovery
+                self._errors.append(self._error_row(exc))
                 rows.extend(self._new_sidecar_rows())
                 time.sleep(0.01)
                 continue
@@ -609,6 +616,40 @@ class _AsyncGuardianEvidenceDrain:
                 break
             time.sleep(0.01)
         return rows
+
+    def _error_row(self, exc: BaseException | None) -> dict[str, Any]:
+        err = exc or RuntimeError("unknown async guardian error")
+        cause = getattr(err, "__cause__", None)
+        base = cause if isinstance(cause, BaseException) else err
+        model_id = getattr(err, "model_id", None) or self._infer_model_id(str(base))
+        return {
+            "error_class": str(getattr(err, "error_class", base.__class__.__name__)),
+            "error_message": str(getattr(err, "error_message", str(base)))[:500],
+            "guardian_name": getattr(err, "guardian_name", None)
+            or self._infer_guardian_name(model_id),
+            "model_id": model_id,
+        }
+
+    def _infer_model_id(self, message: str) -> str | None:
+        for role in ("evaluator", "supervisor", "auditor"):
+            try:
+                model = str(self._router.for_role(role).model)
+            except (AttributeError, KeyError):
+                continue
+            if model and model in message:
+                return model
+        return None
+
+    def _infer_guardian_name(self, model_id: str | None) -> str | None:
+        if not model_id:
+            return None
+        for role in ("evaluator", "supervisor", "auditor"):
+            try:
+                if str(self._router.for_role(role).model) == model_id:
+                    return role
+            except (AttributeError, KeyError):
+                continue
+        return None
 
     def _new_sidecar_rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -1163,6 +1204,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                 evidence_label = "SKIPPED"
 
             f2_cases: list[dict[str, Any]] = []
+            f2_errors: list[dict[str, Any]] = []
             attack_variant = args.attack or "important_instructions"
             worker = args.model
 
@@ -1236,6 +1278,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                     )
                                 )
                 finally:
+                    f2_errors.extend(evidence_drain.errors)
                     memory_tmp.cleanup()
                     tmpdir.cleanup()
                     f2_server.close()
@@ -1266,6 +1309,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                 evidence_label=evidence_label,
                 cases=f2_cases,
                 skip_reason=f2_transport_skip_reason if f2_server is None else None,
+                errors=f2_errors,
             )
             if args.budget_out:
                 write_json(args.budget_out, artifact)
