@@ -34,6 +34,32 @@ DEFAULT_HARD_CAP_USD = 5.00
 DEFAULT_PLANNING_THRESHOLD_USD = 3.00
 DEFAULT_MAX_OUTPUT_TOKENS = 2_000
 DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS = 800
+DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS: dict[str, dict[str, int | str]] = {
+    "defender": {
+        "model_invocations_per_record": 0,
+        "tool_calls_per_record": 0,
+        "chroma_queries_per_record": 0,
+        "tool_loop_bound": 0,
+    },
+    "evaluator": {
+        "model_invocations_per_record": 3,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 3,
+    },
+    "supervisor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+    "auditor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 3,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+}
 COST_FORMULA = (
     "sum((input_tokens / 1_000_000 * model.input_usd_per_mtok) + "
     "(output_tokens / 1_000_000 * model.output_usd_per_mtok))"
@@ -668,25 +694,49 @@ def _model_backed_guardian_units(
     return user_count * injection_count * sample_count
 
 
+def _guardian_tool_loop_assumption(guardian: object) -> dict[str, int | str]:
+    return DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.get(
+        str(guardian),
+        {
+            "model_invocations_per_record": 1,
+            "tool_calls_per_record": 0,
+            "chroma_queries_per_record": 0,
+            "tool_loop_bound": 1,
+        },
+    )
+
+
 def _guardian_cost_estimates(
     *,
     model_router_profile: str,
-    calls_per_model_backed_guardian: int,
-    input_tokens_per_call: int,
-    output_tokens_per_call: int,
+    model_backed_records_per_guardian: int,
+    input_tokens_per_model_invocation: int,
+    output_tokens_per_model_invocation: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in guardian_model_rows(model_router_profile):
+        guardian = str(row["guardian"])
+        assumption = _guardian_tool_loop_assumption(guardian)
+        model_invocations_per_record = int(assumption["model_invocations_per_record"])
+        tool_calls_per_record = int(assumption["tool_calls_per_record"])
+        chroma_queries_per_record = int(assumption["chroma_queries_per_record"])
+        tool_loop_bound = int(assumption["tool_loop_bound"])
         served_via = str(row["served_via"])
         provider = str(row["provider"])
         model_id = str(row["model_id"])
         if served_via == "local" or provider == "local":
             rows.append(
                 {
-                    "guardian": row["guardian"],
+                    "guardian": guardian,
                     "provider": provider,
                     "model_id": model_id,
                     "served_via": served_via,
+                    "model_backed_records_per_guardian": 0,
+                    "model_invocations_per_record": 0,
+                    "estimated_model_invocations": 0,
+                    "tool_calls_per_record": tool_calls_per_record,
+                    "chroma_queries_per_record": chroma_queries_per_record,
+                    "tool_loop_bound": tool_loop_bound,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "input_usd_per_mtok": 0.0,
@@ -697,15 +747,24 @@ def _guardian_cost_estimates(
             )
             continue
 
-        input_tokens = input_tokens_per_call * calls_per_model_backed_guardian
-        output_tokens = output_tokens_per_call * calls_per_model_backed_guardian
+        estimated_model_invocations = (
+            model_invocations_per_record * model_backed_records_per_guardian
+        )
+        input_tokens = input_tokens_per_model_invocation * estimated_model_invocations
+        output_tokens = output_tokens_per_model_invocation * estimated_model_invocations
         cost, price = _estimate_model_cost(model_id, input_tokens, output_tokens)
         rows.append(
             {
-                "guardian": row["guardian"],
+                "guardian": guardian,
                 "provider": provider,
                 "model_id": model_id,
                 "served_via": served_via,
+                "model_backed_records_per_guardian": model_backed_records_per_guardian,
+                "model_invocations_per_record": model_invocations_per_record,
+                "estimated_model_invocations": estimated_model_invocations,
+                "tool_calls_per_record": tool_calls_per_record,
+                "chroma_queries_per_record": chroma_queries_per_record,
+                "tool_loop_bound": tool_loop_bound,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "input_usd_per_mtok": float(price["input"]),
@@ -744,19 +803,21 @@ def build_real_runner_budget_artifact(
     requested_input = input_per_unit * requested_units
     requested_output = output_per_unit * requested_units
     worker_cost, worker_price = _estimate_model_cost(model, requested_input, requested_output)
-    guardian_calls = _model_backed_guardian_units(
+    guardian_records = _model_backed_guardian_units(
         arms=arms,
         user_count=user_count,
         injection_count=injection_count,
         sample_count=sample_count,
     )
-    guardian_input_per_call = input_per_unit
-    guardian_output_per_call = min(max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS)
+    guardian_input_per_model_invocation = input_per_unit
+    guardian_output_per_model_invocation = min(
+        max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS
+    )
     guardian_estimates = _guardian_cost_estimates(
         model_router_profile=model_router_profile,
-        calls_per_model_backed_guardian=guardian_calls,
-        input_tokens_per_call=guardian_input_per_call,
-        output_tokens_per_call=guardian_output_per_call,
+        model_backed_records_per_guardian=guardian_records,
+        input_tokens_per_model_invocation=guardian_input_per_model_invocation,
+        output_tokens_per_model_invocation=guardian_output_per_model_invocation,
     )
     guardian_cost = sum(float(row["cost_usd"]) for row in guardian_estimates)
     guardian_input = sum(_int(row["input_tokens"]) for row in guardian_estimates)
@@ -837,13 +898,31 @@ def build_real_runner_budget_artifact(
             "cost_usd": round(worker_cost, 6),
         },
         "assumption_per_guardian": {
-            "calls_per_model_backed_guardian": guardian_calls,
-            "input_tokens_per_call": guardian_input_per_call,
-            "max_output_tokens_per_call": guardian_output_per_call,
+            "model_backed_records_per_guardian": guardian_records,
+            "input_tokens_per_model_invocation": guardian_input_per_model_invocation,
+            "max_output_tokens_per_model_invocation": guardian_output_per_model_invocation,
+            "tool_loop_model_invocations": {
+                guardian: int(values["model_invocations_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "tool_calls_per_record": {
+                guardian: int(values["tool_calls_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_queries_per_record": {
+                guardian: int(values["chroma_queries_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_backend": "local persistent Chroma; no provider token cost",
             "basis": (
-                "conservative estimate: each model-backed A2 guardian sees the "
-                "same input token estimate as one worker call and emits at most "
-                "800 output tokens"
+                "post-M6/M7 conservative estimate: each model-backed guardian "
+                "uses bounded create_agent loop model invocations, includes "
+                "local Chroma recall tool calls as zero provider-token-cost "
+                "operations, and emits at most 800 output tokens per model "
+                "invocation"
             ),
         },
         "per_guardian_cost_estimates": guardian_estimates,

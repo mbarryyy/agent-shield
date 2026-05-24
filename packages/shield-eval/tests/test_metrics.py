@@ -202,26 +202,30 @@ def test_haiku_provider_slice_budget_has_per_guardian_price_breakdown(monkeypatc
 
     assert artifact["api_call_status"] == "SKIPPED"
     assert artifact["worker_estimate"]["cost_usd"] == pytest.approx(0.012)
-    assert artifact["estimated_cost_usd"] == pytest.approx(0.012, abs=0.02)
-    assert artifact["assumption_per_guardian"] == {
-        "calls_per_model_backed_guardian": 1,
-        "input_tokens_per_call": 1000,
-        "max_output_tokens_per_call": 800,
-        "basis": (
-            "conservative estimate: each model-backed A2 guardian sees the "
-            "same input token estimate as one worker call and emits at most "
-            "800 output tokens"
-        ),
-    }
+    assert artifact["estimated_cost_usd"] == pytest.approx(0.087)
+    assumption = artifact["assumption_per_guardian"]
+    assert assumption["model_backed_records_per_guardian"] == 1
+    assert assumption["input_tokens_per_model_invocation"] == 1000
+    assert assumption["max_output_tokens_per_model_invocation"] == 800
+    assert assumption["chroma_backend"] == "local persistent Chroma; no provider token cost"
+    assert "bounded create_agent" in assumption["basis"]
     guardians = {
         row["guardian"]: row for row in artifact["per_guardian_cost_estimates"]
     }
     assert guardians["defender"]["cost_usd"] == 0.0
+    assert guardians["evaluator"]["model_invocations_per_record"] == 3
+    assert guardians["evaluator"]["chroma_queries_per_record"] == 1
+    assert guardians["evaluator"]["cost_usd"] == pytest.approx(0.015)
+    assert guardians["supervisor"]["model_invocations_per_record"] == 6
+    assert guardians["supervisor"]["tool_calls_per_record"] == 2
+    assert guardians["supervisor"]["cost_usd"] == pytest.approx(0.03)
+    assert guardians["auditor"]["model_invocations_per_record"] == 6
+    assert guardians["auditor"]["tool_calls_per_record"] == 3
+    assert guardians["auditor"]["cost_usd"] == pytest.approx(0.03)
     for guardian in ("evaluator", "supervisor", "auditor"):
         assert guardians[guardian]["model_id"] == "claude-haiku-4-5-20251001"
         assert guardians[guardian]["input_usd_per_mtok"] == 1.0
         assert guardians[guardian]["output_usd_per_mtok"] == 5.0
-        assert guardians[guardian]["cost_usd"] == pytest.approx(0.005)
 
 
 def test_cloud_profile_budget_uses_guardian_model_prices(monkeypatch) -> None:  # type: ignore[no-untyped-def]
