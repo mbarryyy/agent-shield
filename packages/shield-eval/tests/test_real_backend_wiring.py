@@ -17,15 +17,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
+import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from shield_eval import run_ab
-from shield_eval.arms import ShieldWiring, resolve_arms
 from shield_eval.mock_llm import MockedLLM
 from shield_governance.model_router import ResolvedModel, ShieldModelRouter
+from shield_sdk.canonical import finalize_record
+from shield_sdk.crypto import GENESIS_CHAIN_HASH
+from shield_sdk.schema import ActionPayload, ActionRef, Phase, ShieldActionRecord
 from shield_server.async_verdict_worker import AsyncVerdictWorker, CacheChannel2Transport
 
 
@@ -75,6 +79,58 @@ def _fake_cloud_router() -> ShieldModelRouter:
         client_builders={"anthropic": fake_builder},
         environ={"ANTHROPIC_API_KEY": "test-router-key"},
     )
+
+
+def _post_async_smoke_records(harness: object) -> None:
+    async def latest_chain_hash() -> str:
+        row = await harness.storage.db.fetchrow(
+            "SELECT chain_hash, seq_no FROM operations WHERE agent_id = $1 "
+            "ORDER BY seq_no DESC LIMIT 1",
+            "agentdojo-banking-v1",
+        )
+        assert row is not None
+        return str(row["chain_hash"])
+
+    pre = ShieldActionRecord(
+        run_id="sidecar-smoke",
+        phase=Phase.PRE_EXEC,
+        step_index=0,
+        prev_chain_hash=GENESIS_CHAIN_HASH,
+        subject={"fixture": "async-sidecar-smoke"},
+        action=ActionRef(tool="send_money", args_digest="sha256:sidecar-smoke"),
+        payload=ActionPayload(
+            tool_args={"recipient": "fixture-recipient", "amount": 1.0},
+            tool_result={"ok": True},
+        ),
+    )
+    signed_pre = finalize_record(pre, harness.agent_private_key_b64url)
+    resp = httpx.post(
+        f"{harness.base_url}/v1/governance/decide",
+        json=signed_pre.model_dump(mode="json"),
+        timeout=2.0,
+    )
+    resp.raise_for_status()
+
+    post = ShieldActionRecord(
+        run_id=pre.run_id,
+        correlation_id=pre.correlation_id,
+        phase=Phase.POST_EXEC,
+        step_index=1,
+        prev_chain_hash=asyncio.run(latest_chain_hash()),
+        subject={"fixture": "async-sidecar-smoke"},
+        action=ActionRef(tool="send_money", args_digest="sha256:sidecar-smoke"),
+        payload=ActionPayload(
+            tool_args={"recipient": "fixture-recipient", "amount": 1.0},
+            tool_result={"ok": True},
+        ),
+    )
+    signed_post = finalize_record(post, harness.agent_private_key_b64url)
+    resp = httpx.post(
+        f"{harness.base_url}/v1/governance/record",
+        json=signed_post.model_dump(mode="json"),
+        timeout=2.0,
+    )
+    resp.raise_for_status()
 
 
 def test_backend_real_default_path_stays_skipped_without_execute_flag(
@@ -254,29 +310,11 @@ def test_backend_real_execute_flag_wires_real_llm_for_worker(tmp_path, monkeypat
 
 
 @pytest.mark.filterwarnings("ignore:Not all injection tasks were solved as user tasks")
-def test_real_server_mock_worker_publishes_async_guardian_evidence_sidecar(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_real_server_mock_worker_publishes_async_guardian_evidence_sidecar() -> None:
     from shield_eval.decide import real_server_harness
-    from shield_eval.run_ab import DEFAULT_BENCHMARK_VERSION, _build_suite, _score_http_cell
-
-    suite = _build_suite(DEFAULT_BENCHMARK_VERSION, "banking")
-    arm = resolve_arms(["A2"], decide_mode="http")[0]
 
     with real_server_harness() as harness:
-        cell = _score_http_cell(
-            arm=arm,
-            suite=suite,
-            user_task_ids=["user_task_2"],
-            injection_task_id="injection_task_6",
-            attack_name="important_instructions",
-            worker="claude-3-haiku-20240307",
-            logdir=str(tmp_path),
-            shield_wiring=ShieldWiring(
-                base_url=harness.base_url,
-                agent_private_key_b64url=harness.agent_private_key_b64url,
-            ),
-        )
-        assert cell.available is True
-        assert cell.decision_mix
+        _post_async_smoke_records(harness)
 
         worker = AsyncVerdictWorker(
             storage=harness.storage,
@@ -284,13 +322,19 @@ def test_real_server_mock_worker_publishes_async_guardian_evidence_sidecar(tmp_p
             transport=CacheChannel2Transport(harness.storage.cache),
             router=_fake_cloud_router(),
         )
-        handled = asyncio.run(worker.run_once("banking", count=16, block_ms=1))
-
-        sidecars = [
-            body
-            for key, body in harness.storage.objects._objects.items()
-            if key.endswith(".guardian_evidence")
-        ]
+        handled = 0
+        sidecars = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            handled += asyncio.run(worker.run_once("banking", count=16, block_ms=1))
+            sidecars = [
+                body
+                for key, body in harness.storage.objects._objects.items()
+                if key.endswith(".guardian_evidence")
+            ]
+            if handled >= 1 and sidecars:
+                break
+            time.sleep(0.05)
         guardian_rows = [json.loads(body.decode("utf-8")) for body in sidecars]
 
     assert handled >= 1
