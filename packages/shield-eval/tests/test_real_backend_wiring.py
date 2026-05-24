@@ -390,3 +390,140 @@ def test_backend_real_execute_flag_skips_when_real_gov_unavailable(tmp_path, mon
     assert "REAL_GOV_UNAVAILABLE" in summary["skip_reason"]
     assert {row["evidence_label"] for row in cases} == {"SKIPPED"}
     assert {row["backend"] for row in cases} == {"real"}
+
+
+def test_backend_real_records_async_guardian_errors_in_summary(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class NotFoundError(Exception):
+        pass
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-mocked")
+
+    def fake_real_llm(worker: str) -> Any:  # noqa: ARG001
+        llm = MockedLLM(name="placeholder", user_task=None, injection_task=None)
+        llm.name = "claude-3-haiku-20240307 (mock-worker)"
+        return llm
+
+    def bad_router(model_router_profile: str) -> ShieldModelRouter:
+        def bad_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
+            raise NotFoundError(f"model {resolved.model} not found")
+
+        return ShieldModelRouter(
+            run_ab._router_config_from_eval_profile(model_router_profile),
+            client_builders={"anthropic": bad_builder},
+            environ={"ANTHROPIC_API_KEY": "test-router-key"},
+        )
+
+    def fake_score_real_cell(
+        *,
+        arm: Any,
+        suite: Any,  # noqa: ARG001
+        user_task_ids: list[str],
+        injection_task_id: str,
+        attack_name: str,  # noqa: ARG001
+        worker: str,  # noqa: ARG001
+        logdir: str,  # noqa: ARG001
+        shield_wiring: Any,
+        guardian_evidence_drain: Any,
+    ) -> run_ab.HttpCellOutcome:
+        record = ShieldActionRecord(
+            run_id="async-error-artifact",
+            phase=Phase.PRE_EXEC,
+            step_index=0,
+            prev_chain_hash=GENESIS_CHAIN_HASH,
+            subject={"fixture": "async-error-artifact"},
+            action=ActionRef(tool="send_money", args_digest="sha256:error"),
+            payload=ActionPayload(
+                tool_args={"recipient": "fixture-recipient", "amount": 1.0},
+                tool_result={},
+            ),
+        )
+        signed = finalize_record(record, shield_wiring.agent_private_key_b64url)
+        resp = httpx.post(
+            f"{shield_wiring.base_url}/v1/governance/decide",
+            json=signed.model_dump(mode="json"),
+            timeout=2.0,
+        )
+        resp.raise_for_status()
+        drain = guardian_evidence_drain.__self__
+        row = asyncio.run(
+            drain._storage.db.fetchrow(
+                "SELECT chain_hash, seq_no FROM operations WHERE agent_id = $1 "
+                "ORDER BY seq_no DESC LIMIT 1",
+                "agentdojo-banking-v1",
+            )
+        )
+        assert row is not None
+        post = ShieldActionRecord(
+            run_id=record.run_id,
+            correlation_id=record.correlation_id,
+            phase=Phase.POST_EXEC,
+            step_index=1,
+            prev_chain_hash=str(row["chain_hash"]),
+            subject={"fixture": "async-error-artifact"},
+            action=ActionRef(tool="send_money", args_digest="sha256:error"),
+            payload=ActionPayload(
+                tool_args={"recipient": "fixture-recipient", "amount": 1.0},
+                tool_result={"ok": True},
+            ),
+        )
+        signed_post = finalize_record(post, shield_wiring.agent_private_key_b64url)
+        resp = httpx.post(
+            f"{shield_wiring.base_url}/v1/governance/record",
+            json=signed_post.model_dump(mode="json"),
+            timeout=2.0,
+        )
+        resp.raise_for_status()
+        rows = guardian_evidence_drain()
+        uid = user_task_ids[0]
+        return run_ab.HttpCellOutcome(
+            arm=arm.key,
+            injection_task_id=injection_task_id,
+            available=True,
+            skip_reason=None,
+            security={(uid, injection_task_id): True},
+            utility={(uid, injection_task_id): True},
+            decisions={record.record_id: "PASS"},
+            decision_sources={record.record_id: "governance"},
+            decision_mix={"PASS": 1},
+            latencies_ms=[1.0],
+            per_guardian=rows,
+        )
+
+    monkeypatch.setattr(run_ab, "_real_llm_for_worker", fake_real_llm)
+    monkeypatch.setattr(run_ab, "_score_real_cell", fake_score_real_cell)
+    monkeypatch.setattr(run_ab, "_provider_router_for_real", bad_router)
+
+    summary_path = tmp_path / "real_error_summary.json"
+    cases_path = tmp_path / "real_error_cases.json"
+
+    rc = run_ab.main(
+        [
+            "--full",
+            "--suite",
+            "banking",
+            "--backend",
+            "real",
+            "--execute-real-run",
+            "--arms",
+            "A2",
+            "--user-task",
+            "user_task_2",
+            "--injection-task",
+            "injection_task_4",
+            "--samples",
+            "1",
+            "--model-router-profile",
+            "cloud",
+            "--metrics-out",
+            str(summary_path),
+            "--cases-out",
+            str(cases_path),
+        ]
+    )
+
+    assert rc == 0
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    error = summary["errors"][0]
+    assert error["error_class"] == "NotFoundError"
+    assert error["guardian_name"] == "evaluator"
+    assert error["model_id"] == "claude-sonnet-4-6"

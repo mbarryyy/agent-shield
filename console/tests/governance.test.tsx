@@ -101,6 +101,14 @@ describe('VerdictPanel', () => {
             completion_tokens: 2,
             latency_ms: 4.5,
             cost_usd: 0.0012,
+            tool_calls: ['inspect_chain_state', 'recall_similar_incidents'],
+            memory_backend: 'chroma',
+            collection: 'agent_shield_worker_memory_test',
+            hit_count: 1,
+            memory_latency_ms: 2.4,
+            top_hit_id: 'rec-prior',
+            score: 0.98,
+            distance: 0.02,
           },
         ]}
       />,
@@ -112,6 +120,9 @@ describe('VerdictPanel', () => {
     expect(screen.getByText(/3 prompt \/ 2 completion/i)).toBeInTheDocument();
     expect(screen.getByText(/4.5 ms/i)).toBeInTheDocument();
     expect(screen.getByText(/cost \$0.0012/i)).toBeInTheDocument();
+    expect(screen.getByText(/tools inspect_chain_state, recall_similar_incidents/i)).toBeInTheDocument();
+    expect(screen.getByText(/memory chroma · agent_shield_worker_memory_test · 1 hit/i)).toBeInTheDocument();
+    expect(screen.getByText(/rec-prior · score 0.98/i)).toBeInTheDocument();
   });
 });
 

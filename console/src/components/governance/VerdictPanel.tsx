@@ -7,7 +7,7 @@ import type {
   ShieldActionRecord,
   VerdictReason,
 } from '@elydora/shared';
-import type { GuardianEvidenceRow } from '@/types/governance';
+import type { GuardianEvidenceRow, GuardianMemoryHit } from '@/types/governance';
 import { evidenceLabelFrom } from '@/types/governance';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
@@ -30,6 +30,43 @@ function formatGuardianCost(value: number): string {
     currency: 'USD',
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatEvidenceNumber(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 4,
+  }).format(value);
+}
+
+function formatMemorySummary(row: GuardianEvidenceRow): string | null {
+  const memoryBackend = row.memory_backend ?? row.memory?.memory_backend;
+  if (!memoryBackend) return null;
+  const collection = row.collection ?? row.memory?.collection;
+  const hitCount = row.hit_count ?? row.memory?.hit_count;
+  const latencyMs = row.memory_latency_ms ?? row.memory?.latency_ms;
+  const parts = [`memory ${memoryBackend}`];
+  if (collection) parts.push(collection);
+  if (hitCount != null) {
+    parts.push(`${hitCount} ${hitCount === 1 ? 'hit' : 'hits'}`);
+  }
+  if (latencyMs != null) {
+    parts.push(`${formatEvidenceNumber(latencyMs)} ms`);
+  }
+  return parts.join(' · ');
+}
+
+function formatMemoryHit(hit: GuardianMemoryHit): string {
+  const parts = [hit.id];
+  if (hit.score != null) parts.push(`score ${formatEvidenceNumber(hit.score)}`);
+  if (hit.distance != null) parts.push(`distance ${formatEvidenceNumber(hit.distance)}`);
+  return parts.join(' · ');
+}
+
+function memoryHits(row: GuardianEvidenceRow): GuardianMemoryHit[] {
+  if (row.top_hit_id) {
+    return [{ id: row.top_hit_id, score: row.score, distance: row.distance }];
+  }
+  return row.memory?.top_hits ?? [];
 }
 
 function GuardianLane({
@@ -95,6 +132,38 @@ function GuardianLane({
                 <div className="text-ink-dim normal-case mt-0.5 break-words">
                   model {row.model_id}
                 </div>
+              )}
+              {row.tool_calls && row.tool_calls.length > 0 && (
+                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                  tools {row.tool_calls.join(', ')}
+                </div>
+              )}
+              {(formatMemorySummary(row) || row.query_id || row.missing_reason || memoryHits(row).length > 0) && (
+                <>
+                  {formatMemorySummary(row) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      {formatMemorySummary(row)}
+                    </div>
+                  )}
+                  {(row.query_id ?? row.memory?.query_id) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      query {row.query_id ?? row.memory?.query_id}
+                    </div>
+                  )}
+                  {(row.missing_reason ?? row.memory?.missing_reason) && (
+                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                      missing {row.missing_reason ?? row.memory?.missing_reason}
+                    </div>
+                  )}
+                  {memoryHits(row).slice(0, 3).map((hit) => (
+                    <div
+                      key={`${row.record_id}-${hit.id}`}
+                      className="text-ink-dim normal-case mt-0.5 break-words"
+                    >
+                      {formatMemoryHit(hit)}
+                    </div>
+                  ))}
+                </>
               )}
             </li>
           ))}

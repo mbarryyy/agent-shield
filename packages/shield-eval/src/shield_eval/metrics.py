@@ -34,14 +34,38 @@ DEFAULT_HARD_CAP_USD = 5.00
 DEFAULT_PLANNING_THRESHOLD_USD = 3.00
 DEFAULT_MAX_OUTPUT_TOKENS = 2_000
 DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS = 800
+DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS: dict[str, dict[str, int | str]] = {
+    "defender": {
+        "model_invocations_per_record": 0,
+        "tool_calls_per_record": 0,
+        "chroma_queries_per_record": 0,
+        "tool_loop_bound": 0,
+    },
+    "evaluator": {
+        "model_invocations_per_record": 3,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 3,
+    },
+    "supervisor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 2,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+    "auditor": {
+        "model_invocations_per_record": 6,
+        "tool_calls_per_record": 3,
+        "chroma_queries_per_record": 1,
+        "tool_loop_bound": 6,
+    },
+}
 COST_FORMULA = (
     "sum((input_tokens / 1_000_000 * model.input_usd_per_mtok) + "
     "(output_tokens / 1_000_000 * model.output_usd_per_mtok))"
 )
 # Source: Anthropic Claude API pricing, model pricing table, accessed
 # 2026-05-24: https://platform.claude.com/docs/en/about-claude/pricing
-# The repo's `claude-haiku-4` shorthand is priced as Claude Haiku 4.5 because
-# Anthropic's public pricing table lists Haiku 4.5, not a separate Haiku 4 row.
 MODEL_PRICE_SOURCE = (
     "Anthropic Claude API pricing, model pricing table, accessed 2026-05-24: "
     "https://platform.claude.com/docs/en/about-claude/pricing"
@@ -57,12 +81,12 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "output": 5.00,
         "pricing_basis": "Claude Haiku 4.5",
     },
-    "claude-haiku-4": {
-        "input": 1.00,
-        "output": 5.00,
-        "pricing_basis": "Claude Haiku 4.5",
-    },
     "claude-sonnet-4": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4",
+    },
+    "claude-sonnet-4-20250514": {
         "input": 3.00,
         "output": 15.00,
         "pricing_basis": "Claude Sonnet 4",
@@ -77,7 +101,17 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "output": 15.00,
         "pricing_basis": "Claude Sonnet 4.5",
     },
+    "claude-sonnet-4-6": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.6",
+    },
     "claude-opus-4": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4",
+    },
+    "claude-opus-4-20250514": {
         "input": 15.00,
         "output": 75.00,
         "pricing_basis": "Claude Opus 4",
@@ -91,6 +125,11 @@ ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
         "input": 15.00,
         "output": 75.00,
         "pricing_basis": "Claude Opus 4.1",
+    },
+    "claude-opus-4-7": {
+        "input": 5.00,
+        "output": 25.00,
+        "pricing_basis": "Claude Opus 4.7",
     },
 }
 
@@ -444,6 +483,7 @@ def build_full_grid_metrics_report(
     evidence_label: str,
     cases: list[dict[str, Any]],
     skip_reason: str | None = None,
+    errors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     primary_arm = "A2" if "A2" in arms else (arms[0] if arms else "A0")
     primary_cases = [
@@ -463,6 +503,21 @@ def build_full_grid_metrics_report(
     latency_p95 = max(latency_values) if latency_values else None
     token_overhead = sum(
         _int(row.get("prompt_tokens")) + _int(row.get("completion_tokens")) for row in primary_cases
+    )
+    primary_actual_cost = sum(_float(row.get("cost_usd")) for row in primary_cases)
+    total_prompt_tokens = sum(_int(row.get("prompt_tokens")) for row in cases)
+    total_completion_tokens = sum(_int(row.get("completion_tokens")) for row in cases)
+    total_tokens = total_prompt_tokens + total_completion_tokens
+    actual_cost_usd = round(sum(_float(row.get("cost_usd")) for row in cases), 6)
+    api_statuses = {str(row.get("api_call_status") or "SKIPPED").upper() for row in cases}
+    api_call_status = "EXECUTED" if "EXECUTED" in api_statuses else "SKIPPED"
+    evidence_labels = {
+        str(row.get("evidence_label") or evidence_label)
+        for row in cases
+        if row.get("evidence_label")
+    }
+    summary_evidence_label = (
+        evidence_label if len(evidence_labels) != 1 else next(iter(evidence_labels))
     )
 
     metric_label = evidence_label
@@ -560,7 +615,7 @@ def build_full_grid_metrics_report(
             ),
         ),
         "estimated_cost_usd": _metric(
-            0.0 if populated else None,
+            primary_actual_cost if populated else None,
             label=metric_label,
             unit="USD",
             source=(
@@ -574,22 +629,34 @@ def build_full_grid_metrics_report(
                 else "Not populated outside the mock / measured paths"
             ),
         ),
+        "actual_cost_usd": _metric(
+            primary_actual_cost if populated else None,
+            label=metric_label,
+            unit="USD",
+            source="Summed provider cost from primary-arm case rows",
+        ),
         "benefit_cost_usd": _metric(
-            prevented_loss if populated else None,
+            (prevented_loss - primary_actual_cost) if populated else None,
             label=metric_label,
             unit="USD",
             source="prevented_loss_usd - estimated_cost_usd",
         ),
         "benefit_cost_ratio": _metric(
-            None,
-            label="SKIPPED",
+            (prevented_loss / primary_actual_cost) if primary_actual_cost > 0 else None,
+            label=metric_label if primary_actual_cost > 0 else "SKIPPED",
             unit="ratio",
-            source="Skipped when provider cost is zero or backend is not executed",
+            source="prevented_loss_usd / actual_cost_usd; skipped when provider cost is zero",
         ),
     }
     report: dict[str, Any] = {
         "schema_version": "eval-full-grid.v1",
         "run_label": metric_label,
+        "evidence_label": summary_evidence_label,
+        "api_call_status": api_call_status,
+        "actual_cost_usd": actual_cost_usd,
+        "prompt_tokens": total_prompt_tokens,
+        "completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
         "suite": suite,
         "backend": backend,
         "arms": list(arms),
@@ -632,6 +699,7 @@ def build_full_grid_metrics_report(
             )
         ),
     }
+    report["errors"] = list(errors or [])
     if skip_reason:
         report["skip_reason"] = skip_reason
     return report
@@ -668,25 +736,49 @@ def _model_backed_guardian_units(
     return user_count * injection_count * sample_count
 
 
+def _guardian_tool_loop_assumption(guardian: object) -> dict[str, int | str]:
+    return DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.get(
+        str(guardian),
+        {
+            "model_invocations_per_record": 1,
+            "tool_calls_per_record": 0,
+            "chroma_queries_per_record": 0,
+            "tool_loop_bound": 1,
+        },
+    )
+
+
 def _guardian_cost_estimates(
     *,
     model_router_profile: str,
-    calls_per_model_backed_guardian: int,
-    input_tokens_per_call: int,
-    output_tokens_per_call: int,
+    model_backed_records_per_guardian: int,
+    input_tokens_per_model_invocation: int,
+    output_tokens_per_model_invocation: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in guardian_model_rows(model_router_profile):
+        guardian = str(row["guardian"])
+        assumption = _guardian_tool_loop_assumption(guardian)
+        model_invocations_per_record = int(assumption["model_invocations_per_record"])
+        tool_calls_per_record = int(assumption["tool_calls_per_record"])
+        chroma_queries_per_record = int(assumption["chroma_queries_per_record"])
+        tool_loop_bound = int(assumption["tool_loop_bound"])
         served_via = str(row["served_via"])
         provider = str(row["provider"])
         model_id = str(row["model_id"])
         if served_via == "local" or provider == "local":
             rows.append(
                 {
-                    "guardian": row["guardian"],
+                    "guardian": guardian,
                     "provider": provider,
                     "model_id": model_id,
                     "served_via": served_via,
+                    "model_backed_records_per_guardian": 0,
+                    "model_invocations_per_record": 0,
+                    "estimated_model_invocations": 0,
+                    "tool_calls_per_record": tool_calls_per_record,
+                    "chroma_queries_per_record": chroma_queries_per_record,
+                    "tool_loop_bound": tool_loop_bound,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "input_usd_per_mtok": 0.0,
@@ -697,15 +789,24 @@ def _guardian_cost_estimates(
             )
             continue
 
-        input_tokens = input_tokens_per_call * calls_per_model_backed_guardian
-        output_tokens = output_tokens_per_call * calls_per_model_backed_guardian
+        estimated_model_invocations = (
+            model_invocations_per_record * model_backed_records_per_guardian
+        )
+        input_tokens = input_tokens_per_model_invocation * estimated_model_invocations
+        output_tokens = output_tokens_per_model_invocation * estimated_model_invocations
         cost, price = _estimate_model_cost(model_id, input_tokens, output_tokens)
         rows.append(
             {
-                "guardian": row["guardian"],
+                "guardian": guardian,
                 "provider": provider,
                 "model_id": model_id,
                 "served_via": served_via,
+                "model_backed_records_per_guardian": model_backed_records_per_guardian,
+                "model_invocations_per_record": model_invocations_per_record,
+                "estimated_model_invocations": estimated_model_invocations,
+                "tool_calls_per_record": tool_calls_per_record,
+                "chroma_queries_per_record": chroma_queries_per_record,
+                "tool_loop_bound": tool_loop_bound,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "input_usd_per_mtok": float(price["input"]),
@@ -744,19 +845,21 @@ def build_real_runner_budget_artifact(
     requested_input = input_per_unit * requested_units
     requested_output = output_per_unit * requested_units
     worker_cost, worker_price = _estimate_model_cost(model, requested_input, requested_output)
-    guardian_calls = _model_backed_guardian_units(
+    guardian_records = _model_backed_guardian_units(
         arms=arms,
         user_count=user_count,
         injection_count=injection_count,
         sample_count=sample_count,
     )
-    guardian_input_per_call = input_per_unit
-    guardian_output_per_call = min(max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS)
+    guardian_input_per_model_invocation = input_per_unit
+    guardian_output_per_model_invocation = min(
+        max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS
+    )
     guardian_estimates = _guardian_cost_estimates(
         model_router_profile=model_router_profile,
-        calls_per_model_backed_guardian=guardian_calls,
-        input_tokens_per_call=guardian_input_per_call,
-        output_tokens_per_call=guardian_output_per_call,
+        model_backed_records_per_guardian=guardian_records,
+        input_tokens_per_model_invocation=guardian_input_per_model_invocation,
+        output_tokens_per_model_invocation=guardian_output_per_model_invocation,
     )
     guardian_cost = sum(float(row["cost_usd"]) for row in guardian_estimates)
     guardian_input = sum(_int(row["input_tokens"]) for row in guardian_estimates)
@@ -837,13 +940,31 @@ def build_real_runner_budget_artifact(
             "cost_usd": round(worker_cost, 6),
         },
         "assumption_per_guardian": {
-            "calls_per_model_backed_guardian": guardian_calls,
-            "input_tokens_per_call": guardian_input_per_call,
-            "max_output_tokens_per_call": guardian_output_per_call,
+            "model_backed_records_per_guardian": guardian_records,
+            "input_tokens_per_model_invocation": guardian_input_per_model_invocation,
+            "max_output_tokens_per_model_invocation": guardian_output_per_model_invocation,
+            "tool_loop_model_invocations": {
+                guardian: int(values["model_invocations_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "tool_calls_per_record": {
+                guardian: int(values["tool_calls_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_queries_per_record": {
+                guardian: int(values["chroma_queries_per_record"])
+                for guardian, values in DEFAULT_GUARDIAN_TOOL_LOOP_ASSUMPTIONS.items()
+                if guardian != "defender"
+            },
+            "chroma_backend": "local persistent Chroma; no provider token cost",
             "basis": (
-                "conservative estimate: each model-backed A2 guardian sees the "
-                "same input token estimate as one worker call and emits at most "
-                "800 output tokens"
+                "post-M6/M7 conservative estimate: each model-backed guardian "
+                "uses bounded create_agent loop model invocations, includes "
+                "local Chroma recall tool calls as zero provider-token-cost "
+                "operations, and emits at most 800 output tokens per model "
+                "invocation"
             ),
         },
         "per_guardian_cost_estimates": guardian_estimates,

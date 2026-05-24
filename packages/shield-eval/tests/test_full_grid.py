@@ -95,7 +95,7 @@ def test_full_mock_a2_cases_emit_profile_aware_guardian_rows(tmp_path) -> None: 
     assert guardians["defender"]["model_id"] == "local-deterministic"
     assert guardians["defender"]["served_via"] == "local"
     assert guardians["defender"]["decision"] == "BLOCK"
-    assert guardians["evaluator"]["model_id"] == "claude-sonnet-4"
+    assert guardians["evaluator"]["model_id"] == "claude-sonnet-4-6"
     assert guardians["evaluator"]["served_via"] == "cloud"
     assert guardians["evaluator"]["decision"] == "BLOCK"
     assert all(
@@ -214,6 +214,49 @@ def test_full_grid_http_backend_runs_measured_via_real_server_harness(tmp_path) 
     assert a2_inj6["per_guardian"] == []
 
 
+def test_http_governance_pass_path_emits_guardian_evidence(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Regression: governance-routed PASS cells must still expose guardian evidence.
+
+    InjectionTask6 is intentionally caught by the sync Defender, so it has no
+    model-backed rows. InjectionTask4 reaches the governance route; that path
+    must not drop Evaluator/Supervisor/Auditor sidecar evidence before Module 3.
+    """
+    cases_path = tmp_path / "http_governance_pass_cases.json"
+
+    rc = run_ab.main(
+        [
+            "--full",
+            "--suite",
+            "banking",
+            "--backend",
+            "http",
+            "--arms",
+            "A2",
+            "--user-task",
+            "user_task_2",
+            "--injection-task",
+            "injection_task_4",
+            "--cases-out",
+            str(cases_path),
+        ]
+    )
+
+    assert rc == 0
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
+    a2_case = next(row for row in cases if row["arm"] == "A2")
+
+    assert a2_case["decision_source"] == "governance"
+    guardians = {row["guardian"]: row for row in a2_case["per_guardian"]}
+    assert {"evaluator", "supervisor", "auditor"} <= set(guardians)
+    model_backed = [
+        row
+        for row in a2_case["per_guardian"]
+        if row["guardian"] in {"evaluator", "supervisor", "auditor"}
+    ]
+    assert any(row.get("memory", {}).get("memory_backend") == "chroma" for row in model_backed)
+    assert any("recall_similar_incidents" in row.get("tool_calls", []) for row in model_backed)
+
+
 def test_full_grid_http_backend_skips_honestly_when_real_gov_unavailable(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
@@ -326,3 +369,228 @@ def test_measured_case_row_counts_governance_block_as_prevented_loss() -> None:
 
     assert row["decision_source"] == "governance"
     assert row["prevented_loss_usd"] == 30_000.0
+
+
+def test_measured_case_row_rolls_up_provider_usage_from_guardian_rows() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "evaluator",
+                "decision": "PASS",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 500,
+                "completion_tokens": 200,
+                "latency_ms": 5.0,
+                "cost_usd": 0.0,
+                "reasons": ["fixture"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    assert row["prompt_tokens"] == 500
+    assert row["completion_tokens"] == 200
+    assert row["cost_usd"] > 0
+    assert row["per_guardian"][0]["cost_usd"] > 0
+
+
+def test_measured_case_row_rolls_up_provider_usage_from_worker() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A0",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={},
+        decision_sources={},
+        decision_mix={},
+        latencies_ms=[10.0],
+        per_guardian=[],
+        prompt_tokens=500,
+        completion_tokens=200,
+        model_id="claude-haiku-4-5-20251001",
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A0",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    assert row["prompt_tokens"] == 500
+    assert row["completion_tokens"] == 200
+    assert row["cost_usd"] > 0
+
+
+def test_measured_case_row_marks_non_invoked_supervisor_as_skipped() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "supervisor",
+                "decision": "PASS",
+                "model_id": None,
+                "served_via": None,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "latency_ms": 0.0,
+                "cost_usd": 0.0,
+                "reasons": ["supervisor.aggregate"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    supervisor = row["per_guardian"][0]
+    assert supervisor["decision"] == "SKIPPED"
+    assert supervisor["invocation_status"] == "SKIPPED"
+    assert supervisor["reasons"] == ["supervisor.skipped_no_conflict"]
+
+
+def test_measured_case_row_preserves_invoked_supervisor_usage() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "BLOCK"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"BLOCK": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "supervisor",
+                "decision": "BLOCK",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 600,
+                "completion_tokens": 100,
+                "latency_ms": 40.0,
+                "cost_usd": 0.0,
+                "reasons": ["supervisor.arbitrated"],
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    supervisor = row["per_guardian"][0]
+    assert supervisor["decision"] == "BLOCK"
+    assert supervisor["invocation_status"] == "EXECUTED"
+    assert supervisor["prompt_tokens"] == 600
+    assert supervisor["completion_tokens"] == 100
+    assert supervisor["cost_usd"] > 0
+
+
+def test_measured_case_row_flattens_memory_evidence_fields() -> None:
+    outcome = run_ab.HttpCellOutcome(
+        arm="A2",
+        injection_task_id="injection_task_4",
+        available=True,
+        skip_reason=None,
+        security={("user_task_2", "injection_task_4"): True},
+        utility={("user_task_2", "injection_task_4"): True},
+        decisions={"record-1": "PASS"},
+        decision_sources={"record-1": "governance"},
+        decision_mix={"PASS": 1},
+        latencies_ms=[10.0],
+        per_guardian=[
+            {
+                "guardian": "auditor",
+                "decision": "PASS",
+                "model_id": "claude-haiku-4-5-20251001",
+                "served_via": "cloud",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "latency_ms": 40.0,
+                "cost_usd": 0.0,
+                "reasons": ["auditor.tool_loop"],
+                "memory": {
+                    "memory_backend": "chroma",
+                    "collection": "agent_shield_eval_guardian_memory",
+                    "query_id": "query-1",
+                    "hit_count": 1,
+                    "latency_ms": 6.5,
+                    "top_hits": [{"id": "hit-1", "score": 0.91, "distance": 0.09}],
+                },
+            }
+        ],
+    )
+
+    row = run_ab._measured_case_row(
+        suite="banking",
+        uid="user_task_2",
+        iid="injection_task_4",
+        attack_variant="important_instructions",
+        arm="A2",
+        evidence_label="MEASURED-REAL-MODEL",
+        outcome=outcome,
+        backend="real",
+    )
+
+    auditor = row["per_guardian"][0]
+    assert auditor["memory_backend"] == "chroma"
+    assert auditor["collection"] == "agent_shield_eval_guardian_memory"
+    assert auditor["query_id"] == "query-1"
+    assert auditor["hit_count"] == 1
+    assert auditor["memory_latency_ms"] == 6.5
+    assert auditor["top_hit_id"] == "hit-1"
+    assert auditor["score"] == 0.91
+    assert auditor["distance"] == 0.09

@@ -162,7 +162,7 @@ def _serialize_guardian_evidence(row: Any) -> dict[str, Any]:
     reasons = _attr(row, "reasons", ()) or ()
     if not isinstance(reasons, list | tuple):
         reasons = [reasons]
-    return {
+    item: dict[str, Any] = {
         "guardian": _enum_value(_attr(row, "guardian")),
         "decision": _enum_value(_attr(row, "decision")),
         "reasons": [str(r) for r in reasons],
@@ -173,6 +173,11 @@ def _serialize_guardian_evidence(row: Any) -> dict[str, Any]:
         "latency_ms": float(_attr(row, "latency_ms", 0.0) or 0.0),
         "cost_usd": float(_attr(row, "cost_usd", 0.0) or 0.0),
     }
+    for key in ("record_id", "correlation_id", "memory", "tool_calls"):
+        value = _attr(row, key, None)
+        if value:
+            item[key] = value
+    return item
 
 
 class _DecisionTap(BasePipelineElement):  # type: ignore[misc]  # agentdojo base untyped

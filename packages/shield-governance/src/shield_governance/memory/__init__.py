@@ -1,1 +1,23 @@
-# W0 STUB — AgentSafe ReviewMemory / quarantine land here (W2).
+"""Guardian memory backends."""
+
+from __future__ import annotations
+
+from shield_governance.memory.incidents import (
+    ChromaIncidentMemory,
+    ChromaMemoryConfig,
+    DeterministicHashEmbedder,
+    MemoryBackendName,
+    MemoryBackendUnavailable,
+    MemoryHit,
+    MemoryQueryResult,
+)
+
+__all__ = [
+    "ChromaIncidentMemory",
+    "ChromaMemoryConfig",
+    "DeterministicHashEmbedder",
+    "MemoryBackendName",
+    "MemoryBackendUnavailable",
+    "MemoryHit",
+    "MemoryQueryResult",
+]

@@ -26,16 +26,20 @@ from __future__ import annotations
 
 import argparse
 import ast
+import asyncio
+import copy
 import json
 import os
 import sys
 import tempfile
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from .arms import Arm, ArmUnavailable, ShieldWiring, arm_alias, resolve_arms
 from .mock_llm import MockedLLM
-from .provider_slice import dotenv_value, ensure_env_key_loaded
+from .provider_slice import dotenv_value, ensure_env_key_loaded, guardian_model_rows
 
 # Eval-plan §5: a mid-tier worker keeps undefended ASR visibly high. The mock
 # only uses this to (a) seed the per-arm pipeline.name and (b) let the
@@ -71,8 +75,73 @@ def _real_llm_for_worker(worker: str) -> Any:
         from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
         from anthropic import AsyncAnthropic
 
+        class UsageTrackingAnthropicLLM(AnthropicLLM):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                self.prompt_tokens = 0
+                self.completion_tokens = 0
+                self.cost_usd = 0.0
+
+            def query(
+                self,
+                query: str,
+                runtime: Any,
+                env: Any = None,
+                messages: Any = None,
+                extra_args: dict[str, Any] | None = None,
+            ) -> tuple[str, Any, Any, Any, dict[str, Any]]:
+                import asyncio as _asyncio
+                import re as _re
+
+                from agentdojo.agent_pipeline.llms import anthropic_llm as _anthropic_llm
+
+                env = _anthropic_llm.EmptyEnv() if env is None else env
+                messages = [] if messages is None else list(messages)
+                extra_args = {} if extra_args is None else dict(extra_args)
+                system_prompt, anthropic_messages = _anthropic_llm._conversation_to_anthropic(
+                    messages
+                )
+                if "claude-3-sonnet" in self.model or "claude-3-haiku" in self.model:
+                    system_prompt = f"{self._COT_PROMPT}\n\n{system_prompt}"
+                anthropic_tools = [
+                    _anthropic_llm._function_to_anthropic(tool)
+                    for tool in runtime.functions.values()
+                ]
+                completion = _asyncio.run(
+                    _anthropic_llm.chat_completion_request(
+                        self.client,
+                        self.model,
+                        anthropic_messages,
+                        anthropic_tools,
+                        max_tokens=self._MAX_TOKENS,
+                        system_prompt=system_prompt,
+                        temperature=self.temperature,
+                        thinking_budget_tokens=self.thinking_budget_tokens,
+                    )
+                )
+                usage = getattr(completion, "usage", None)
+                prompt_tokens = _safe_int(getattr(usage, "input_tokens", 0))
+                completion_tokens = _safe_int(getattr(usage, "output_tokens", 0))
+                self.prompt_tokens += prompt_tokens
+                self.completion_tokens += completion_tokens
+                self.cost_usd += _usage_cost_usd(
+                    self.model, prompt_tokens, completion_tokens
+                )
+
+                output = _anthropic_llm._anthropic_to_assistant_message(completion)
+                if output["tool_calls"] is not None:
+                    invalid_tool_calls: list[int] = []
+                    for i, tool_call in enumerate(output["tool_calls"]):
+                        if _re.match("^[a-zA-Z0-9_-]{1,64}$", tool_call.function) is None:
+                            invalid_tool_calls.append(i)
+                    for index in sorted(invalid_tool_calls, reverse=True):
+                        del output["tool_calls"][index]
+
+                messages = [*messages, output]
+                return query, runtime, env, messages, extra_args
+
         max_tokens = int(os.environ.get("SHIELD_REAL_EVAL_MAX_TOKENS", "1024"))
-        llm = AnthropicLLM(
+        llm = UsageTrackingAnthropicLLM(
             AsyncAnthropic(api_key=api_key),
             model=worker,
             max_tokens=max_tokens,
@@ -85,7 +154,7 @@ def _real_llm_for_worker(worker: str) -> Any:
 def _build_suite(version: str, suite_name: str) -> Any:
     from agentdojo.task_suite.load_suites import get_suite
 
-    return get_suite(version, suite_name)
+    return copy.deepcopy(get_suite(version, suite_name))
 
 
 def _run_arm(
@@ -482,6 +551,7 @@ def _dispatch(args: argparse.Namespace, suite: Any, logdir: str) -> int:
         decide_path=args.decide_path,
         record_path=args.record_path,
         agent_private_key_b64url=args.shield_agent_key,
+        shared_extra_args={},
     )
 
     results: dict[str, ArmResult] = {}
@@ -565,6 +635,335 @@ class HttpCellOutcome:
     decision_mix: dict[str, int]
     latencies_ms: list[float]
     per_guardian: list[dict[str, Any]]
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+    model_id: str | None = None
+
+
+class _AsyncGuardianEvidenceDrain:
+    """Drain server Channel-2 sidecar rows after a server-backed eval cell."""
+
+    def __init__(self, server: Any, *, router: Any, memory: Any | None = None) -> None:
+        from shield_server.async_verdict_worker import (
+            AsyncVerdictWorker,
+            CacheChannel2Transport,
+        )
+
+        self._storage = server.storage
+        self._router = router
+        self._transport = CacheChannel2Transport(server.storage.cache)
+        self._worker = AsyncVerdictWorker(
+            storage=server.storage,
+            settings=server.settings,
+            transport=self._transport,
+            router=router,
+            memory=memory,
+        )
+        self._seen_sidecars: set[str] = set()
+        self._errors: list[dict[str, Any]] = []
+
+    @property
+    def errors(self) -> list[dict[str, Any]]:
+        return list(self._errors)
+
+    def drain(self, workflow_id: str = "banking") -> list[dict[str, Any]]:
+        deadline = time.monotonic() + 2.0
+        rows: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            try:
+                handled = asyncio.run(
+                    self._worker.run_once(workflow_id, count=1, block_ms=1)
+                )
+            except Exception as exc:  # noqa: BLE001 - one async sidecar must not kill eval discovery
+                self._errors.append(self._error_row(exc))
+                rows.extend(self._new_sidecar_rows())
+                time.sleep(0.01)
+                continue
+            rows.extend(self._new_sidecar_rows())
+            if handled == 0:
+                break
+            time.sleep(0.01)
+        return rows
+
+    def _error_row(self, exc: BaseException | None) -> dict[str, Any]:
+        err = exc or RuntimeError("unknown async guardian error")
+        cause = getattr(err, "__cause__", None)
+        base = cause if isinstance(cause, BaseException) else err
+        model_id = getattr(err, "model_id", None) or self._infer_model_id(str(base))
+        return {
+            "error_class": str(getattr(err, "error_class", base.__class__.__name__)),
+            "error_message": str(getattr(err, "error_message", str(base)))[:500],
+            "guardian_name": getattr(err, "guardian_name", None)
+            or self._infer_guardian_name(model_id),
+            "model_id": model_id,
+        }
+
+    def _infer_model_id(self, message: str) -> str | None:
+        for role in ("evaluator", "supervisor", "auditor"):
+            try:
+                model = str(self._router.for_role(role).model)
+            except (AttributeError, KeyError):
+                continue
+            if model and model in message:
+                return model
+        return None
+
+    def _infer_guardian_name(self, model_id: str | None) -> str | None:
+        if not model_id:
+            return None
+        for role in ("evaluator", "supervisor", "auditor"):
+            try:
+                if str(self._router.for_role(role).model) == model_id:
+                    return role
+            except (AttributeError, KeyError):
+                continue
+        return None
+
+    def _new_sidecar_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        objects = getattr(self._storage.objects, "_objects", {})
+        for key, body in objects.items():
+            key_str = str(key)
+            if not key_str.endswith(".guardian_evidence") or key_str in self._seen_sidecars:
+                continue
+            self._seen_sidecars.add(key_str)
+            decoded = json.loads(body.decode("utf-8"))
+            if isinstance(decoded, list):
+                rows.extend(row for row in decoded if isinstance(row, dict))
+        return rows
+
+
+def _message(text: str, *, prompt: int = 0, completion: int = 0) -> Any:
+    from langchain_core.messages import AIMessage
+
+    return AIMessage(
+        content=text,
+        usage_metadata={
+            "input_tokens": prompt,
+            "output_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    )
+
+
+def _tool_message(name: str, call_id: str) -> Any:
+    from langchain_core.messages import AIMessage
+
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": name, "args": {}, "id": call_id}],
+        usage_metadata={"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+    )
+
+
+def _no_provider_router_for_http(model_router_profile: str) -> Any:
+    """Router-backed guardian loop for http discovery, without provider calls."""
+
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from shield_governance.model_router import ResolvedModel, ShieldModelRouter
+
+    class _ToolableFakeChatModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools: object, **kwargs: object) -> object:  # noqa: ARG002
+            return self
+
+    def fake_builder(resolved: ResolvedModel, api_key: str | None) -> object:  # noqa: ARG001
+        if resolved.role == "evaluator":
+            return _ToolableFakeChatModel(
+                responses=(
+                    [
+                        _tool_message("eval_invariant_policies", "eval-tc-1"),
+                        _tool_message("recall_similar_incidents", "eval-tc-2"),
+                        _message("DECISION: GROUNDED\nREASON: no invariant violation"),
+                    ]
+                    * 64
+                )
+            )
+        if resolved.role == "supervisor":
+            return _ToolableFakeChatModel(
+                responses=(
+                    [
+                        _tool_message("inspect_guardian_signals", "sup-tc-1"),
+                        _tool_message("recall_similar_incidents", "sup-tc-2"),
+                        _message("PASS: no conflict requiring escalation", prompt=7, completion=2),
+                    ]
+                    * 64
+                )
+            )
+        if resolved.role == "auditor":
+            return _ToolableFakeChatModel(
+                responses=(
+                    [
+                        _tool_message("inspect_chain_state", "aud-tc-1"),
+                        _tool_message("inspect_provenance_summary", "aud-tc-2"),
+                        _tool_message("recall_similar_incidents", "aud-tc-3"),
+                        _message("AUDIT: chain and provenance inspected", prompt=5, completion=4),
+                    ]
+                    * 64
+                )
+            )
+        return _ToolableFakeChatModel(responses=[_message("PASS")] * 64)
+
+    return ShieldModelRouter(
+        _router_config_from_eval_profile(model_router_profile),
+        client_builders={"anthropic": fake_builder},
+        environ={"ANTHROPIC_API_KEY": "not-used-by-http-discovery"},
+    )
+
+
+def _router_config_from_eval_profile(model_router_profile: str) -> dict[str, Any]:
+    guardians: dict[str, dict[str, object]] = {}
+    for row in guardian_model_rows(model_router_profile):
+        provider = str(row["provider"])
+        if provider == "model_router":
+            provider = "anthropic"
+        guardians[str(row["guardian"])] = {
+            "provider": provider,
+            "model": row["model_id"],
+            "served_via": row["served_via"],
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "temperature": 0.0,
+            "max_tokens": 800,
+        }
+    return {"profile": model_router_profile, "guardians": guardians}
+
+
+def _provider_router_for_real(model_router_profile: str) -> Any:
+    from shield_governance.model_router import ShieldModelRouter
+
+    return ShieldModelRouter(_router_config_from_eval_profile(model_router_profile))
+
+
+def _chroma_memory_for_eval() -> tuple[Any, tempfile.TemporaryDirectory[str]]:
+    from shield_governance.memory import ChromaIncidentMemory, ChromaMemoryConfig
+
+    tmp = tempfile.TemporaryDirectory(prefix="shield_eval_chroma_")
+    return ChromaIncidentMemory(
+        ChromaMemoryConfig(
+            persist_directory=tmp.name,
+            collection_name="agent_shield_eval_guardian_memory",
+        )
+    ), tmp
+
+
+def _primary_decision(decisions: dict[str, str]) -> str:
+    if not decisions:
+        return "NO_SHIELD"
+    if any(v == "BLOCK" for v in decisions.values()):
+        return "BLOCK"
+    return next(iter(decisions.values()))
+
+
+def _primary_decision_source(decisions: dict[str, str], decision_sources: dict[str, str]) -> str:
+    if not decisions:
+        return "none"
+    decision = _primary_decision(decisions)
+    if decision == "BLOCK":
+        sources = [
+            decision_sources.get(key, "governance")
+            for key, value in decisions.items()
+            if value == "BLOCK"
+        ]
+    else:
+        sources = [
+            decision_sources.get(key, "governance")
+            for key, value in decisions.items()
+            if value == decision
+        ]
+    if "governance" in sources:
+        return "governance"
+    if "sync_defender_local" in sources:
+        return "sync_defender_local"
+    if "sdk_fail_closed" in sources:
+        return "sdk_fail_closed"
+    return sources[0] if sources else "governance"
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _usage_cost_usd(model_id: str | None, prompt_tokens: int, completion_tokens: int) -> float:
+    if not model_id:
+        return 0.0
+    try:
+        from .metrics import _estimate_model_cost
+
+        cost, _price = _estimate_model_cost(
+            model_id, max(0, prompt_tokens), max(0, completion_tokens)
+        )
+    except ValueError:
+        return 0.0
+    return round(cost, 6)
+
+
+def _worker_usage_from_llm(llm: Any, model_id: str | None) -> tuple[int, int, float]:
+    prompt_tokens = _safe_int(getattr(llm, "prompt_tokens", 0))
+    completion_tokens = _safe_int(getattr(llm, "completion_tokens", 0))
+    cost_usd = _safe_float(getattr(llm, "cost_usd", 0.0))
+    if cost_usd == 0.0:
+        cost_usd = _usage_cost_usd(model_id, prompt_tokens, completion_tokens)
+    return prompt_tokens, completion_tokens, cost_usd
+
+
+def _flatten_memory_fields(normalized: dict[str, Any]) -> None:
+    memory = normalized.get("memory")
+    if not isinstance(memory, dict):
+        return
+    for key in ("memory_backend", "collection", "query_id", "hit_count", "missing_reason"):
+        if key in memory and normalized.get(key) is None:
+            normalized[key] = memory.get(key)
+    if normalized.get("memory_latency_ms") is None and memory.get("latency_ms") is not None:
+        normalized["memory_latency_ms"] = memory.get("latency_ms")
+    top_hits = memory.get("top_hits")
+    if isinstance(top_hits, list) and top_hits:
+        top_hit = top_hits[0]
+        if isinstance(top_hit, dict):
+            if normalized.get("top_hit_id") is None:
+                normalized["top_hit_id"] = top_hit.get("id")
+            if normalized.get("score") is None:
+                normalized["score"] = top_hit.get("score")
+            if normalized.get("distance") is None:
+                normalized["distance"] = top_hit.get("distance")
+
+
+def _guardian_row_with_cost(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(row)
+    _flatten_memory_fields(normalized)
+    prompt_tokens = _safe_int(normalized.get("prompt_tokens"))
+    completion_tokens = _safe_int(normalized.get("completion_tokens"))
+    normalized["prompt_tokens"] = prompt_tokens
+    normalized["completion_tokens"] = completion_tokens
+    guardian = str(normalized.get("guardian") or "")
+    reasons = [str(reason) for reason in (normalized.get("reasons") or [])]
+    model_id = normalized.get("model_id")
+    invoked = bool(model_id) or prompt_tokens > 0 or completion_tokens > 0
+    if guardian == "supervisor" and not invoked:
+        normalized["decision"] = "SKIPPED"
+        normalized["invocation_status"] = "SKIPPED"
+        if reasons == ["supervisor.aggregate"]:
+            normalized["reasons"] = ["supervisor.skipped_no_conflict"]
+    elif guardian == "supervisor":
+        normalized["invocation_status"] = "EXECUTED"
+    cost_usd = _safe_float(normalized.get("cost_usd"))
+    if cost_usd == 0.0 and str(normalized.get("served_via", "")).lower() == "cloud":
+        cost_usd = _usage_cost_usd(
+            str(normalized.get("model_id") or ""),
+            prompt_tokens,
+            completion_tokens,
+        )
+    normalized["cost_usd"] = cost_usd
+    return normalized
 
 
 def _score_http_cell(
@@ -577,6 +976,7 @@ def _score_http_cell(
     worker: str,
     logdir: str,
     shield_wiring: ShieldWiring | None,
+    guardian_evidence_drain: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> HttpCellOutcome:
     """Run the agentdojo bench across ``user_task_ids`` × one injection task.
 
@@ -586,7 +986,6 @@ def _score_http_cell(
     to the pipeline (LAST element, never modifying sdk-owned ones) so the
     real verdict trail + per-guardian passthrough are captured.
     """
-    from agentdojo.agent_pipeline import AgentPipeline
     from agentdojo.attacks import load_attack
     from agentdojo.benchmark import benchmark_suite_with_injections
     from agentdojo.logging import OutputLogger
@@ -597,6 +996,9 @@ def _score_http_cell(
     security: dict[tuple[str, str], bool] = {}
     utility: dict[tuple[str, str], bool] = {}
     inj_task = suite.get_injection_task_by_id(injection_task_id)
+    worker_prompt_tokens = 0
+    worker_completion_tokens = 0
+    worker_cost_usd = 0.0
 
     for uid in user_task_ids:
         user_task = suite.get_user_task_by_id(uid)
@@ -623,7 +1025,10 @@ def _score_http_cell(
             )
 
         if arm.kind == "shield":
-            tapped = AgentPipeline([*pipeline.elements, _DecisionTap(sink)])
+            tapped = type(pipeline)(
+                [*pipeline.elements, _DecisionTap(sink)],
+                shared_extra_args=getattr(pipeline, "_extra_args", None),
+            )
             tapped.name = pipeline.name
             pipeline = tapped
 
@@ -642,10 +1047,26 @@ def _score_http_cell(
             )
         security.update(sr["security_results"])
         utility.update(sr["utility_results"])
+        prompt_tokens, completion_tokens, cost_usd = _worker_usage_from_llm(llm, worker)
+        worker_prompt_tokens += prompt_tokens
+        worker_completion_tokens += completion_tokens
+        worker_cost_usd += cost_usd
 
     decision_mix: dict[str, int] = {}
     for d in sink.decisions.values():
         decision_mix[d] = decision_mix.get(d, 0) + 1
+    if (
+        guardian_evidence_drain is not None
+        and _primary_decision_source(sink.decisions, sink.decision_sources) == "governance"
+    ):
+        for row in guardian_evidence_drain():
+            rec_id = str(row.get("record_id", ""))
+            guardian_name = str(row.get("guardian", "unknown"))
+            seen_key = (rec_id, guardian_name)
+            if seen_key in sink._seen_guardian_rows:
+                continue
+            sink._seen_guardian_rows.add(seen_key)
+            sink.per_guardian.append(row)
     return HttpCellOutcome(
         arm=arm.key,
         injection_task_id=injection_task_id,
@@ -658,6 +1079,10 @@ def _score_http_cell(
         decision_mix=decision_mix,
         latencies_ms=list(sink.latencies_ms),
         per_guardian=list(sink.per_guardian),
+        prompt_tokens=worker_prompt_tokens,
+        completion_tokens=worker_completion_tokens,
+        cost_usd=round(worker_cost_usd, 6),
+        model_id=worker,
     )
 
 
@@ -693,6 +1118,7 @@ def _measured_case_row(
             "arm": arm,
             "backend": backend,
             "evidence_label": "SKIPPED",
+            "api_call_status": "SKIPPED",
             "security": None,
             "utility": None,
             "decision": "SKIPPED",
@@ -713,40 +1139,11 @@ def _measured_case_row(
     if utility_held is None:
         # The injection iteration carries the with-injection utility row.
         utility_held = outcome.utility.get((uid, iid), True)
-    decision = (
-        "NO_SHIELD"
-        if not outcome.decisions
-        else (
-            "BLOCK"
-            if any(v == "BLOCK" for v in outcome.decisions.values())
-            else next(iter(outcome.decisions.values()))
-        )
+    decision = _primary_decision(outcome.decisions)
+    decision_source = _primary_decision_source(outcome.decisions, outcome.decision_sources)
+    api_call_status = (
+        "EXECUTED" if backend == "real" and evidence_label == "MEASURED-REAL-MODEL" else "SKIPPED"
     )
-
-    def _row_decision_source() -> str:
-        if not outcome.decisions:
-            return "none"
-        if decision == "BLOCK":
-            sources = [
-                outcome.decision_sources.get(key, "governance")
-                for key, value in outcome.decisions.items()
-                if value == "BLOCK"
-            ]
-        else:
-            sources = [
-                outcome.decision_sources.get(key, "governance")
-                for key, value in outcome.decisions.items()
-                if value == decision
-            ]
-        if "governance" in sources:
-            return "governance"
-        if "sync_defender_local" in sources:
-            return "sync_defender_local"
-        if "sdk_fail_closed" in sources:
-            return "sdk_fail_closed"
-        return sources[0] if sources else "governance"
-
-    decision_source = _row_decision_source()
     # MEASURED: env-diff oracle's $30k applies only to InjectionTask6 BLOCKs
     # on the shield arms (matches the locked seam-4 prevented_loss_total
     # semantics). Native arms never prevent loss.
@@ -761,6 +1158,25 @@ def _measured_case_row(
         )
         else 0.0
     )
+    per_guardian = (
+        [_guardian_row_with_cost(row) for row in outcome.per_guardian]
+        if decision_source == "governance"
+        else []
+    )
+    guardian_prompt_tokens = sum(_safe_int(row.get("prompt_tokens")) for row in per_guardian)
+    guardian_completion_tokens = sum(
+        _safe_int(row.get("completion_tokens")) for row in per_guardian
+    )
+    guardian_cost_usd = sum(_safe_float(row.get("cost_usd")) for row in per_guardian)
+    worker_prompt_tokens = _safe_int(getattr(outcome, "prompt_tokens", 0))
+    worker_completion_tokens = _safe_int(getattr(outcome, "completion_tokens", 0))
+    worker_cost_usd = _safe_float(getattr(outcome, "cost_usd", 0.0))
+    if worker_cost_usd == 0.0:
+        worker_cost_usd = _usage_cost_usd(
+            getattr(outcome, "model_id", None),
+            worker_prompt_tokens,
+            worker_completion_tokens,
+        )
     return {
         "schema_version": "eval-case-v1",
         "suite": suite,
@@ -770,6 +1186,7 @@ def _measured_case_row(
         "arm": arm,
         "backend": backend,
         "evidence_label": evidence_label,
+        "api_call_status": api_call_status,
         "security": (not attack_succeeded),
         "utility": bool(utility_held),
         "decision": decision,
@@ -777,11 +1194,11 @@ def _measured_case_row(
         "latency_ms": (
             sum(outcome.latencies_ms) / len(outcome.latencies_ms) if outcome.latencies_ms else 0.0
         ),
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "cost_usd": 0.0,
+        "prompt_tokens": worker_prompt_tokens + guardian_prompt_tokens,
+        "completion_tokens": worker_completion_tokens + guardian_completion_tokens,
+        "cost_usd": round(worker_cost_usd + guardian_cost_usd, 6),
         "prevented_loss_usd": prevented,
-        "per_guardian": list(outcome.per_guardian),
+        "per_guardian": per_guardian,
     }
 
 
@@ -795,6 +1212,7 @@ def _score_real_cell(
     worker: str,
     logdir: str,
     shield_wiring: ShieldWiring | None,
+    guardian_evidence_drain: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> HttpCellOutcome:
     """F2 (Phase F, EM-3) per-cell scorer for ``--backend real``.
 
@@ -811,7 +1229,6 @@ def _score_real_cell(
     wiring-only; M3 (AndyHu) configures the protected env + key for
     the actual full execution.
     """
-    from agentdojo.agent_pipeline import AgentPipeline
     from agentdojo.attacks import load_attack
     from agentdojo.benchmark import benchmark_suite_with_injections
     from agentdojo.logging import OutputLogger
@@ -822,6 +1239,9 @@ def _score_real_cell(
     security: dict[tuple[str, str], bool] = {}
     utility: dict[tuple[str, str], bool] = {}
     inj_task = suite.get_injection_task_by_id(injection_task_id)
+    worker_prompt_tokens = 0
+    worker_completion_tokens = 0
+    worker_cost_usd = 0.0
 
     for uid in user_task_ids:
         user_task = suite.get_user_task_by_id(uid)
@@ -862,7 +1282,10 @@ def _score_real_cell(
             )
 
         if arm.kind == "shield":
-            tapped = AgentPipeline([*pipeline.elements, _DecisionTap(sink)])
+            tapped = type(pipeline)(
+                [*pipeline.elements, _DecisionTap(sink)],
+                shared_extra_args=getattr(pipeline, "_extra_args", None),
+            )
             tapped.name = pipeline.name
             pipeline = tapped
 
@@ -883,10 +1306,26 @@ def _score_real_cell(
             )
         security.update(sr["security_results"])
         utility.update(sr["utility_results"])
+        prompt_tokens, completion_tokens, cost_usd = _worker_usage_from_llm(llm, worker)
+        worker_prompt_tokens += prompt_tokens
+        worker_completion_tokens += completion_tokens
+        worker_cost_usd += cost_usd
 
     decision_mix: dict[str, int] = {}
     for d in sink.decisions.values():
         decision_mix[d] = decision_mix.get(d, 0) + 1
+    if (
+        guardian_evidence_drain is not None
+        and _primary_decision_source(sink.decisions, sink.decision_sources) == "governance"
+    ):
+        for row in guardian_evidence_drain():
+            rec_id = str(row.get("record_id", ""))
+            guardian_name = str(row.get("guardian", "unknown"))
+            seen_key = (rec_id, guardian_name)
+            if seen_key in sink._seen_guardian_rows:
+                continue
+            sink._seen_guardian_rows.add(seen_key)
+            sink.per_guardian.append(row)
     return HttpCellOutcome(
         arm=arm.key,
         injection_task_id=injection_task_id,
@@ -899,6 +1338,10 @@ def _score_real_cell(
         decision_mix=decision_mix,
         latencies_ms=list(sink.latencies_ms),
         per_guardian=list(sink.per_guardian),
+        prompt_tokens=worker_prompt_tokens,
+        completion_tokens=worker_completion_tokens,
+        cost_usd=round(worker_cost_usd, 6),
+        model_id=worker,
     )
 
 
@@ -962,11 +1405,19 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                 evidence_label = "SKIPPED"
 
             f2_cases: list[dict[str, Any]] = []
+            f2_errors: list[dict[str, Any]] = []
             attack_variant = args.attack or "important_instructions"
             worker = args.model
 
             if f2_server is not None:
                 tmpdir = tempfile.TemporaryDirectory(prefix="shield_eval_real_grid_")
+                shield_extra_args: dict[str, Any] = {}
+                memory, memory_tmp = _chroma_memory_for_eval()
+                evidence_drain = _AsyncGuardianEvidenceDrain(
+                    f2_server,
+                    router=_provider_router_for_real(args.model_router_profile),
+                    memory=memory,
+                )
                 try:
                     for arm_key in arm_tokens:
                         try:
@@ -992,6 +1443,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                             ShieldWiring(
                                 base_url=f2_server.base_url,
                                 agent_private_key_b64url=f2_server.agent_private_key_b64url,
+                                shared_extra_args=shield_extra_args,
                             )
                             if arm.kind == "shield"
                             else None
@@ -1006,6 +1458,9 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                 worker=worker,
                                 logdir=tmpdir.name,
                                 shield_wiring=wiring,
+                                guardian_evidence_drain=(
+                                    evidence_drain.drain if arm.kind == "shield" else None
+                                ),
                             )
                             for uid in user_tasks:
                                 f2_cases.append(
@@ -1024,6 +1479,8 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                     )
                                 )
                 finally:
+                    f2_errors.extend(evidence_drain.errors)
+                    memory_tmp.cleanup()
                     tmpdir.cleanup()
                     f2_server.close()
             else:
@@ -1053,6 +1510,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                 evidence_label=evidence_label,
                 cases=f2_cases,
                 skip_reason=f2_transport_skip_reason if f2_server is None else None,
+                errors=f2_errors,
             )
             if args.budget_out:
                 write_json(args.budget_out, artifact)
@@ -1129,6 +1587,13 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
 
         if server is not None:
             tmpdir = tempfile.TemporaryDirectory(prefix="shield_eval_http_grid_")
+            shield_extra_args: dict[str, Any] = {}
+            memory, memory_tmp = _chroma_memory_for_eval()
+            evidence_drain = _AsyncGuardianEvidenceDrain(
+                server,
+                router=_no_provider_router_for_http(args.model_router_profile),
+                memory=memory,
+            )
             try:
                 for arm_key in arm_tokens:
                     try:
@@ -1153,6 +1618,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                         ShieldWiring(
                             base_url=server.base_url,
                             agent_private_key_b64url=server.agent_private_key_b64url,
+                            shared_extra_args=shield_extra_args,
                         )
                         if arm.kind == "shield"
                         else None
@@ -1167,6 +1633,9 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                             worker=worker,
                             logdir=tmpdir.name,
                             shield_wiring=wiring,
+                            guardian_evidence_drain=(
+                                evidence_drain.drain if arm.kind == "shield" else None
+                            ),
                         )
                         for uid in user_tasks:
                             cases.append(
@@ -1182,6 +1651,7 @@ def _dispatch_full(args: argparse.Namespace, suite: Any) -> int:
                                 )
                             )
             finally:
+                memory_tmp.cleanup()
                 tmpdir.cleanup()
                 server.close()
         else:

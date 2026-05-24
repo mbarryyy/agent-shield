@@ -9,12 +9,14 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from shield_governance.evaluator import EvaluatorConfig
 from shield_governance.evidence import GuardianEvidenceRecorder
+from shield_governance.memory import ChromaIncidentMemory, ChromaMemoryConfig
 from shield_governance.model_router import GUARDIAN_ROLES, ResolvedModel, ShieldModelRouter
 from shield_governance.router_guardians import (
+    RouterSupervisorArbiter,
     build_router_backed_guardians,
     make_router_backed_async_channel2_handler,
 )
-from shield_governance.supervisor import GuardianSignals
+from shield_governance.supervisor import GuardianSignals, Supervisor
 from shield_governance.verdicts import AsyncVerdictHandoff
 from shield_sdk.schema import ActionPayload, Decision, Guardian, Phase, ShieldActionRecord
 
@@ -202,6 +204,107 @@ async def test_router_backed_guardians_call_router_and_record_evidence() -> None
     assert by_guardian[Guardian.AUDITOR].reasons == ("auditor.narrative",)
 
 
+def test_router_supervisor_arbitration_uses_tool_loop_and_records_calls() -> None:
+    recorder = GuardianEvidenceRecorder()
+    guardians = build_router_backed_guardians(
+        _router_with_fakes(
+            supervisor_responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "inspect_guardian_signals",
+                            "args": {},
+                            "id": "tc-supervisor-signals",
+                        }
+                    ],
+                    usage_metadata={"input_tokens": 6, "output_tokens": 1, "total_tokens": 7},
+                ),
+                AIMessage(
+                    content="BLOCK: evaluator anomaly is credible",
+                    usage_metadata={"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
+                ),
+            ]
+        ),
+        evidence_recorder=recorder,
+    )
+    record = _record()
+
+    verdict = guardians.supervisor.decide(
+        GuardianSignals(
+            defender_decision=Decision.PASS,
+            evaluator_anomaly=0.95,
+            evaluator_ran=True,
+        ),
+        record=record,
+    )
+
+    assert verdict.decision is Decision.BLOCK
+    supervisor_row = next(
+        row for row in recorder.for_record(record.record_id) if row.guardian is Guardian.SUPERVISOR
+    )
+    assert supervisor_row.model_id == "supervisor-model"
+    assert supervisor_row.prompt_tokens == 10
+    assert supervisor_row.completion_tokens == 3
+    assert supervisor_row.tool_calls == ("inspect_guardian_signals",)
+
+
+def test_router_supervisor_malformed_output_defaults_to_escalate() -> None:
+    recorder = GuardianEvidenceRecorder()
+    arbiter = RouterSupervisorArbiter(
+        _router_with_fakes(supervisor_responses=[_single_message("not a decision")]),
+        recorder,
+    )
+    record = _record()
+    verdict = Supervisor(arbiter=arbiter).decide(
+        GuardianSignals(
+            defender_decision=Decision.PASS,
+            evaluator_anomaly=0.95,
+            evaluator_ran=True,
+        ),
+        record=record,
+    )
+
+    assert verdict.decision is Decision.ESCALATE
+    supervisor_row = next(
+        row for row in recorder.for_record(record.record_id) if row.guardian is Guardian.SUPERVISOR
+    )
+    assert supervisor_row.reasons == ("supervisor.arbitrated",)
+
+
+def test_router_supervisor_tool_loop_limit_defaults_to_escalate() -> None:
+    recorder = GuardianEvidenceRecorder()
+    tool_turns = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "inspect_guardian_signals", "args": {}, "id": f"tc-loop-{idx}"}
+            ],
+        )
+        for idx in range(8)
+    ]
+    arbiter = RouterSupervisorArbiter(
+        _router_with_fakes(supervisor_responses=tool_turns),
+        recorder,
+        max_iterations=2,
+    )
+    record = _record()
+    verdict = Supervisor(arbiter=arbiter).decide(
+        GuardianSignals(
+            defender_decision=Decision.PASS,
+            evaluator_anomaly=0.95,
+            evaluator_ran=True,
+        ),
+        record=record,
+    )
+
+    assert verdict.decision is Decision.ESCALATE
+    supervisor_row = next(
+        row for row in recorder.for_record(record.record_id) if row.guardian is Guardian.SUPERVISOR
+    )
+    assert "supervisor_tool_loop_error" in supervisor_row.tool_calls
+
+
 @pytest.mark.asyncio
 async def test_router_backed_async_handler_attaches_guardian_evidence_to_handoff() -> None:
     role_calls: list[str] = []
@@ -231,9 +334,98 @@ async def test_router_backed_async_handler_attaches_guardian_evidence_to_handoff
     by_guardian = {row.guardian: row for row in seen[0].guardian_evidence}
     assert by_guardian[Guardian.EVALUATOR].model_id == "evaluator-model"
     assert by_guardian[Guardian.SUPERVISOR].model_id == "supervisor-model"
-    # Auditor narrative is only produced by ``generate_compliance_report``
-    # (which the async handler does not call); the recorder only logs the
-    # auditor's deterministic integrity row here. That row is PASS (the
-    # record verifies cleanly) and carries zero LLM tokens by design.
+    # Module 7: the async handler now runs the Auditor's bounded tool-capable
+    # agent loop and records model usage on the sidecar row.
     assert by_guardian[Guardian.AUDITOR].decision is Decision.PASS
-    assert by_guardian[Guardian.AUDITOR].prompt_tokens == 0
+    assert by_guardian[Guardian.AUDITOR].model_id == "auditor-model"
+    assert by_guardian[Guardian.AUDITOR].prompt_tokens == 5
+    assert by_guardian[Guardian.AUDITOR].completion_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_router_backed_async_handler_emits_chroma_memory_evidence(tmp_path) -> None:
+    recorder = GuardianEvidenceRecorder()
+    seen: list[AsyncVerdictHandoff] = []
+    memory = ChromaIncidentMemory(
+        ChromaMemoryConfig(
+            persist_directory=tmp_path,
+            collection_name="agent_shield_async_handler_memory_test",
+        )
+    )
+    memory.remember_record(
+        _record(run_id="prior-memory-run", recipient="repeat-iban"),
+        decision=Decision.ALERT,
+        reasons=("evaluator.behavior_drift",),
+    )
+
+    async def sink(handoff: AsyncVerdictHandoff) -> None:
+        seen.append(handoff)
+
+    handler = make_router_backed_async_channel2_handler(
+        router=_router_with_fakes(
+            evaluator_responses=_evaluator_tool_call_sequence(
+                "GROUNDED",
+                tool_name="recall_similar_incidents",
+                final_reason="memory evidence reviewed",
+            ),
+        ),
+        evidence_recorder=recorder,
+        evaluator_config=EvaluatorConfig(run_invariant=False, run_hallucination=True),
+        memory=memory,
+        on_verdict=sink,
+        key_resolver=lambda kid: kid,
+    )
+    await handler(_record(run_id="async-memory-run", recipient="repeat-iban"))
+
+    assert len(seen) == 1
+    by_guardian = {row.guardian: row for row in seen[0].guardian_evidence}
+    evaluator_row = by_guardian[Guardian.EVALUATOR]
+    assert evaluator_row.memory is not None
+    assert evaluator_row.memory["memory_backend"] == "chroma"
+    assert evaluator_row.memory["collection"] == "agent_shield_async_handler_memory_test"
+    assert evaluator_row.memory["hit_count"] >= 1
+    assert evaluator_row.tool_calls == ("recall_similar_incidents",)
+
+
+@pytest.mark.asyncio
+async def test_router_backed_async_handler_auditor_uses_tool_loop() -> None:
+    recorder = GuardianEvidenceRecorder()
+    seen: list[AsyncVerdictHandoff] = []
+
+    async def sink(handoff: AsyncVerdictHandoff) -> None:
+        seen.append(handoff)
+
+    handler = make_router_backed_async_channel2_handler(
+        router=_router_with_fakes(
+            auditor_responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "inspect_chain_state",
+                            "args": {},
+                            "id": "tc-auditor-chain",
+                        }
+                    ],
+                    usage_metadata={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                ),
+                AIMessage(
+                    content="AUDIT: chain intact",
+                    usage_metadata={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+                ),
+            ]
+        ),
+        evidence_recorder=recorder,
+        evaluator_config=EvaluatorConfig(run_invariant=False, run_hallucination=True),
+        on_verdict=sink,
+        key_resolver=lambda kid: kid,
+    )
+    await handler(_record(run_id="async-auditor-tool-run"))
+
+    assert len(seen) == 1
+    by_guardian = {row.guardian: row for row in seen[0].guardian_evidence}
+    auditor_row = by_guardian[Guardian.AUDITOR]
+    assert auditor_row.model_id == "auditor-model"
+    assert auditor_row.prompt_tokens == 8
+    assert auditor_row.completion_tokens == 3
+    assert auditor_row.tool_calls == ("inspect_chain_state",)
