@@ -23,19 +23,76 @@ from .provider_slice import (
     HAIKU_PROVIDER_SLICE_MODEL,
     HAIKU_PROVIDER_SLICE_PROFILE,
     PROVIDER_SLICE_APPROVAL_THRESHOLD_USD,
-    build_haiku_provider_slice_profile,
     default_guardian_evidence_rows,
     env_key_available,
+    guardian_model_rows,
 )
 
 REAL_EVAL_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_ENV_KEY = "ANTHROPIC_API_KEY"
-INPUT_PRICE_PER_MTOK = 1.00
-OUTPUT_PRICE_PER_MTOK = 5.00
 DEFAULT_HARD_CAP_USD = 5.00
 DEFAULT_PLANNING_THRESHOLD_USD = 3.00
 DEFAULT_MAX_OUTPUT_TOKENS = 2_000
-COST_FORMULA = "(input_tokens / 1_000_000 * 1.00) + (output_tokens / 1_000_000 * 5.00)"
+DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS = 800
+COST_FORMULA = (
+    "sum((input_tokens / 1_000_000 * model.input_usd_per_mtok) + "
+    "(output_tokens / 1_000_000 * model.output_usd_per_mtok))"
+)
+# Source: Anthropic Claude API pricing, model pricing table, accessed
+# 2026-05-24: https://platform.claude.com/docs/en/about-claude/pricing
+# The repo's `claude-haiku-4` shorthand is priced as Claude Haiku 4.5 because
+# Anthropic's public pricing table lists Haiku 4.5, not a separate Haiku 4 row.
+MODEL_PRICE_SOURCE = (
+    "Anthropic Claude API pricing, model pricing table, accessed 2026-05-24: "
+    "https://platform.claude.com/docs/en/about-claude/pricing"
+)
+ANTHROPIC_PRICE_TABLE_USD_PER_MTOK: dict[str, dict[str, float | str]] = {
+    "claude-haiku-4-5-20251001": {
+        "input": 1.00,
+        "output": 5.00,
+        "pricing_basis": "Claude Haiku 4.5",
+    },
+    "claude-haiku-4-5": {
+        "input": 1.00,
+        "output": 5.00,
+        "pricing_basis": "Claude Haiku 4.5",
+    },
+    "claude-haiku-4": {
+        "input": 1.00,
+        "output": 5.00,
+        "pricing_basis": "Claude Haiku 4.5",
+    },
+    "claude-sonnet-4": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4",
+    },
+    "claude-sonnet-4-5": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.5",
+    },
+    "claude-sonnet-4-5-20250929": {
+        "input": 3.00,
+        "output": 15.00,
+        "pricing_basis": "Claude Sonnet 4.5",
+    },
+    "claude-opus-4": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4",
+    },
+    "claude-opus-4-1": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4.1",
+    },
+    "claude-opus-4-1-20250805": {
+        "input": 15.00,
+        "output": 75.00,
+        "pricing_basis": "Claude Opus 4.1",
+    },
+}
 
 _DETECTION_DECISIONS = {"ALERT", "BLOCK", "ESCALATE", "ROLLBACK", "REWRITE"}
 _CHECK_RE = re.compile(r"^\s*([a-zA-Z0-9_]+)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)\s*$")
@@ -536,14 +593,84 @@ def build_full_grid_metrics_report(
     return report
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    return (input_tokens / 1_000_000 * INPUT_PRICE_PER_MTOK) + (
-        output_tokens / 1_000_000 * OUTPUT_PRICE_PER_MTOK
+def _model_price(model_id: str) -> dict[str, float | str]:
+    try:
+        return ANTHROPIC_PRICE_TABLE_USD_PER_MTOK[model_id]
+    except KeyError as e:
+        raise ValueError(f"unknown Anthropic model_id for cost estimate: {model_id}") from e
+
+
+def _estimate_model_cost(
+    model_id: str, input_tokens: int, output_tokens: int
+) -> tuple[float, dict[str, float | str]]:
+    price = _model_price(model_id)
+    input_price = float(price["input"])
+    output_price = float(price["output"])
+    cost = (input_tokens / 1_000_000 * input_price) + (
+        output_tokens / 1_000_000 * output_price
     )
+    return cost, price
 
 
 def _token_estimate(serialized_prompt_chars: int) -> int:
     return max(0, math.ceil(serialized_prompt_chars / 3))
+
+
+def _model_backed_guardian_units(
+    *, arms: list[str], user_count: int, injection_count: int, sample_count: int
+) -> int:
+    if not any(arm in {"A1", "A2", "A3"} for arm in arms):
+        return 0
+    return user_count * injection_count * sample_count
+
+
+def _guardian_cost_estimates(
+    *,
+    model_router_profile: str,
+    calls_per_model_backed_guardian: int,
+    input_tokens_per_call: int,
+    output_tokens_per_call: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in guardian_model_rows(model_router_profile):
+        served_via = str(row["served_via"])
+        provider = str(row["provider"])
+        model_id = str(row["model_id"])
+        if served_via == "local" or provider == "local":
+            rows.append(
+                {
+                    "guardian": row["guardian"],
+                    "provider": provider,
+                    "model_id": model_id,
+                    "served_via": served_via,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "input_usd_per_mtok": 0.0,
+                    "output_usd_per_mtok": 0.0,
+                    "pricing_basis": "local deterministic; no Anthropic token cost",
+                    "cost_usd": 0.0,
+                }
+            )
+            continue
+
+        input_tokens = input_tokens_per_call * calls_per_model_backed_guardian
+        output_tokens = output_tokens_per_call * calls_per_model_backed_guardian
+        cost, price = _estimate_model_cost(model_id, input_tokens, output_tokens)
+        rows.append(
+            {
+                "guardian": row["guardian"],
+                "provider": provider,
+                "model_id": model_id,
+                "served_via": served_via,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "input_usd_per_mtok": float(price["input"]),
+                "output_usd_per_mtok": float(price["output"]),
+                "pricing_basis": price["pricing_basis"],
+                "cost_usd": round(cost, 6),
+            }
+        )
+    return rows
 
 
 def build_real_runner_budget_artifact(
@@ -560,7 +687,7 @@ def build_real_runner_budget_artifact(
     planning_threshold_usd: float = DEFAULT_PLANNING_THRESHOLD_USD,
     allow_plan_shrink: bool = True,
 ) -> dict[str, Any]:
-    """Estimate and shrink a Haiku 4.5 real eval plan without making API calls."""
+    """Estimate and shrink a real eval plan without making API calls."""
 
     arm_count = max(1, len(arms))
     user_count = max(1, len(user_tasks))
@@ -572,12 +699,32 @@ def build_real_runner_budget_artifact(
     output_per_unit = max(0, max_output_tokens)
     requested_input = input_per_unit * requested_units
     requested_output = output_per_unit * requested_units
-    requested_cost = _estimate_cost(requested_input, requested_output)
+    worker_cost, worker_price = _estimate_model_cost(model, requested_input, requested_output)
+    guardian_calls = _model_backed_guardian_units(
+        arms=arms,
+        user_count=user_count,
+        injection_count=injection_count,
+        sample_count=sample_count,
+    )
+    guardian_input_per_call = input_per_unit
+    guardian_output_per_call = min(max(0, max_output_tokens), DEFAULT_GUARDIAN_MAX_OUTPUT_TOKENS)
+    guardian_estimates = _guardian_cost_estimates(
+        model_router_profile=model_router_profile,
+        calls_per_model_backed_guardian=guardian_calls,
+        input_tokens_per_call=guardian_input_per_call,
+        output_tokens_per_call=guardian_output_per_call,
+    )
+    guardian_cost = sum(float(row["cost_usd"]) for row in guardian_estimates)
+    guardian_input = sum(_int(row["input_tokens"]) for row in guardian_estimates)
+    guardian_output = sum(_int(row["output_tokens"]) for row in guardian_estimates)
+    requested_cost = worker_cost + guardian_cost
+    requested_total_input = requested_input + guardian_input
+    requested_total_output = requested_output + guardian_output
     key_present = env_key_available(ANTHROPIC_ENV_KEY)
 
     effective_units = requested_units
-    effective_input = requested_input
-    effective_output = requested_output
+    effective_input = requested_total_input
+    effective_output = requested_total_output
     effective_cost = requested_cost
     shrink_applied = False
     skip_reason: str | None = None
@@ -585,15 +732,16 @@ def build_real_runner_budget_artifact(
 
     if requested_cost > planning_threshold_usd:
         if allow_plan_shrink:
-            per_unit_cost = _estimate_cost(input_per_unit, output_per_unit)
+            per_unit_cost = requested_cost / requested_units if requested_units > 0 else 0.0
             effective_units = (
                 int(planning_threshold_usd // per_unit_cost) if per_unit_cost > 0 else 0
             )
             effective_units = min(requested_units, effective_units)
             shrink_applied = effective_units < requested_units
-            effective_input = input_per_unit * effective_units
-            effective_output = output_per_unit * effective_units
-            effective_cost = _estimate_cost(effective_input, effective_output)
+            scale = effective_units / requested_units if requested_units > 0 else 0.0
+            effective_input = round(requested_total_input * scale)
+            effective_output = round(requested_total_output * scale)
+            effective_cost = requested_cost * scale
             if effective_units <= 0 or effective_cost > hard_cap_usd:
                 status_label = "SKIPPED"
                 skip_reason = "REAL_EVAL_SKIPPED_BUDGET_GUARD"
@@ -618,25 +766,53 @@ def build_real_runner_budget_artifact(
         "schema_version": "real-runner-budget.v1",
         "model": model,
         "model_router_profile": model_router_profile,
-        "guardian_models": build_haiku_provider_slice_profile()["guardian_models"]
-        if model_router_profile == HAIKU_PROVIDER_SLICE_PROFILE
-        else [],
+        "guardian_models": list(guardian_model_rows(model_router_profile)),
         "env_key_name": ANTHROPIC_ENV_KEY,
         "status_label": status_label,
         "skip_reason": skip_reason,
         "api_call_status": "SKIPPED",
         "api_call_reason": "budget estimator only; no Anthropic API call was made",
         "formula": COST_FORMULA,
+        "price_source": MODEL_PRICE_SOURCE,
         "prices": {
-            "input_usd_per_mtok": INPUT_PRICE_PER_MTOK,
-            "output_usd_per_mtok": OUTPUT_PRICE_PER_MTOK,
+            "worker": {
+                "model_id": model,
+                "input_usd_per_mtok": float(worker_price["input"]),
+                "output_usd_per_mtok": float(worker_price["output"]),
+                "pricing_basis": worker_price["pricing_basis"],
+            },
+            "source": MODEL_PRICE_SOURCE,
         },
+        "worker_estimate": {
+            "model_id": model,
+            "input_tokens": requested_input,
+            "output_tokens": requested_output,
+            "input_usd_per_mtok": float(worker_price["input"]),
+            "output_usd_per_mtok": float(worker_price["output"]),
+            "pricing_basis": worker_price["pricing_basis"],
+            "cost_usd": round(worker_cost, 6),
+        },
+        "assumption_per_guardian": {
+            "calls_per_model_backed_guardian": guardian_calls,
+            "input_tokens_per_call": guardian_input_per_call,
+            "max_output_tokens_per_call": guardian_output_per_call,
+            "basis": (
+                "conservative estimate: each model-backed A2 guardian sees the "
+                "same input token estimate as one worker call and emits at most "
+                "800 output tokens"
+            ),
+        },
+        "per_guardian_cost_estimates": guardian_estimates,
         "hard_cap_usd": hard_cap_usd,
         "planning_threshold_usd": planning_threshold_usd,
         "requested_units": requested_units,
         "effective_units": effective_units,
-        "requested_input_tokens": requested_input,
-        "requested_output_tokens": requested_output,
+        "requested_input_tokens": requested_total_input,
+        "requested_output_tokens": requested_total_output,
+        "requested_worker_input_tokens": requested_input,
+        "requested_worker_output_tokens": requested_output,
+        "requested_guardian_input_tokens": guardian_input,
+        "requested_guardian_output_tokens": guardian_output,
         "effective_input_tokens": effective_input,
         "effective_output_tokens": effective_output,
         "requested_cost_usd": round(requested_cost, 6),
@@ -701,9 +877,13 @@ def build_provider_slice_budget_artifact(
         "requested_input_tokens": budget["requested_input_tokens"],
         "requested_output_tokens": budget["requested_output_tokens"],
         "requested_cost_usd": budget["requested_cost_usd"],
-        "estimated_cost_usd": budget["requested_cost_usd"],
+        "estimated_cost_usd": budget["estimated_cost_usd"],
         "formula": budget["formula"],
+        "price_source": budget["price_source"],
         "prices": budget["prices"],
+        "worker_estimate": budget["worker_estimate"],
+        "assumption_per_guardian": budget["assumption_per_guardian"],
+        "per_guardian_cost_estimates": budget["per_guardian_cost_estimates"],
         "labels": {
             "estimated_cost_usd": "ESTIMATED",
             "api_call_status": "SKIPPED",

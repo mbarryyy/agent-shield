@@ -13,6 +13,7 @@ from typing import Any
 HAIKU_PROVIDER_SLICE_PROFILE = "provider-slice-haiku"
 HAIKU_PROVIDER_SLICE_MODEL = "claude-haiku-4-5-20251001"
 PROVIDER_SLICE_APPROVAL_THRESHOLD_USD = 3.0
+CLOUD_PROVIDER_PROFILE = "cloud"
 
 
 def build_haiku_provider_slice_profile(
@@ -52,6 +53,33 @@ def guardian_model_rows(model_router_profile: str) -> tuple[dict[str, Any], ...]
                 "guardian": "auditor",
                 "provider": "anthropic",
                 "model_id": HAIKU_PROVIDER_SLICE_MODEL,
+                "served_via": "cloud",
+            },
+        )
+    if model_router_profile == CLOUD_PROVIDER_PROFILE:
+        return (
+            {
+                "guardian": "defender",
+                "provider": "local",
+                "model_id": "local-deterministic",
+                "served_via": "local",
+            },
+            {
+                "guardian": "evaluator",
+                "provider": "anthropic",
+                "model_id": "claude-sonnet-4",
+                "served_via": "cloud",
+            },
+            {
+                "guardian": "supervisor",
+                "provider": "anthropic",
+                "model_id": "claude-opus-4",
+                "served_via": "cloud",
+            },
+            {
+                "guardian": "auditor",
+                "provider": "anthropic",
+                "model_id": "claude-haiku-4",
                 "served_via": "cloud",
             },
         )
