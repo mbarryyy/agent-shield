@@ -309,6 +309,7 @@ async def governance_resume(incident_id: str, request: Request, ctx: Ctx) -> Gov
         incident_id,
         decision,
         payload,
+        ctx.org_id,
     )
 
 

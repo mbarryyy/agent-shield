@@ -222,3 +222,97 @@ def test_governance_hitl_resume_route(client: TestClient) -> None:
         == 400
     )
     assert client.post("/v1/governance/incidents/inc-42/resume", json={}).status_code == 400
+
+
+def test_governance_hitl_resume_route_resolves_real_incident_verdict_id() -> None:
+    import shield_sdk.canonical as canonical
+    import shield_sdk.crypto as crypto
+    from langgraph.checkpoint.memory import InMemorySaver
+    from shield_governance.defender.engine import DefenderConfig
+    from shield_governance.defender.rules import DefenderPolicy
+    from shield_governance.graph import (
+        build_decide_app,
+    )
+    from shield_governance.graph import (
+        decide as gov_decide,
+    )
+    from shield_governance.graph import (
+        resume as gov_resume,
+    )
+    from shield_sdk.schema import ActionRef, Phase, ShieldActionRecord
+    from shield_server.app import create_app
+    from shield_server.config import Settings
+    from shield_server.storage import build_memory_storage
+
+    class RealGov:
+        def __init__(self) -> None:
+            self._app = build_decide_app(
+                defender_config=DefenderConfig(
+                    enabled=True,
+                    policy=DefenderPolicy(
+                        amount_cap=10_000,
+                        cumulative_cap=20_000,
+                        review_floor=5_000,
+                    ),
+                ),
+                checkpointer=InMemorySaver(),
+            )
+
+        async def decide(self, rec: ShieldActionRecord):
+            return await gov_decide(self._app, rec)
+
+        async def resume(self, incident_id: str, decision: str, payload: dict[str, object] | None):
+            return await gov_resume(self._app, incident_id, decision, payload)
+
+    priv = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    pub = crypto.get_public_key_base64url(priv)
+    app = create_app(
+        storage=build_memory_storage(),
+        settings=Settings.from_env(),
+        governance=RealGov(),
+    )
+    with TestClient(app) as real_client:
+        reg = real_client.post(
+            "/v1/agents/register",
+            json={
+                "agent_id": "agentdojo-banking-v1",
+                "keys": [{"kid": "agentdojo-banking-v1-key-v1", "public_key": pub}],
+            },
+        )
+        assert reg.status_code == 201
+        rec = ShieldActionRecord(
+            agent_id="agentdojo-banking-v1",
+            agent_pubkey_kid="agentdojo-banking-v1-key-v1",
+            phase=Phase.PRE_EXEC,
+            run_id="run-hitl-real",
+            action=ActionRef(tool="send_money", args_digest="sha256:redacted-args"),
+        )
+        rec.payload.tool_name = "send_money"
+        rec.payload.tool_args = {
+            "recipient": "NEW-VENDOR",
+            "amount": 6_000.0,
+            "subject": "Invoice",
+        }
+        rec = canonical.finalize_record(rec, priv)
+        gate = real_client.post("/v1/governance/decide", json=rec.model_dump(mode="json"))
+        assert gate.status_code == 200, gate.text
+        gate_body = gate.json()
+        assert gate_body["decision"] == "ESCALATE"
+        incident_id = gate_body["verdict_id"]
+
+        incidents = real_client.get("/v1/governance/incidents?run_id=run-hitl-real")
+        assert incidents.status_code == 200
+        assert incidents.json()["incidents"][0]["incident_id"] == incident_id
+
+        resumed = real_client.post(
+            f"/v1/governance/incidents/{incident_id}/resume",
+            json={"decision": "accept", "payload": {"note": "approved"}},
+        )
+        assert resumed.status_code == 200, resumed.text
+        body = resumed.json()
+        assert body["decision"] == "PASS"
+        assert body["signature_by_shield"]
+
+        after = real_client.get("/v1/governance/incidents?run_id=run-hitl-real")
+        assert after.json()["incidents"][0]["status"] == "resolved"
+        assert after.json()["incidents"][0]["resolution"] == "accept"
