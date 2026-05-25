@@ -104,6 +104,9 @@ describe('Governance run detail', () => {
     expect(screen.getByText(/Pending HITL incidents/i)).toBeInTheDocument();
     expect(screen.getByText('incident-1')).toBeInTheDocument();
     expect(screen.getByText(/permanent evidence/i)).toBeInTheDocument();
+    const flow = await screen.findByTestId('governance-run-flow');
+    expect(flow).toHaveClass('space-y-6');
+    expect(flow).not.toHaveClass('grid');
   });
 
   it('shows backend-empty state instead of fallback data by default', async () => {

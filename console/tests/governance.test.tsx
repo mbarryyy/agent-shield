@@ -37,6 +37,22 @@ describe('VerdictPanel', () => {
     expect(screen.getByText('auditor')).toBeInTheDocument();
   });
 
+  it('allows long guardian labels to wrap inside their lane', () => {
+    const verdict: GovernanceVerdict = {
+      correlation_id: 'c-long-label',
+      decision: 'ESCALATE',
+      risk_score: 0.35,
+      reasons: [
+        { agent: 'defender', label: 'AMOUNT_REVIEW_REQUIRED', score: 0.45 },
+      ],
+    };
+    render(<VerdictPanel verdict={verdict} />);
+
+    expect(screen.getByText('AMOUNT_REVIEW_REQUIRED')).toHaveClass(
+      '[overflow-wrap:anywhere]',
+    );
+  });
+
   it('renders provider, model, latency, evidence label, and record token evidence when present', () => {
     const verdict: GovernanceVerdict & { evidence_label: 'PROVIDER_BACKED' } = {
       correlation_id: 'c-provider',
