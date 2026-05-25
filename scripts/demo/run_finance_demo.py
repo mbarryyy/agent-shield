@@ -296,8 +296,8 @@ class DemoRunner:
                 self._register_agent(client)
                 self._scene_normal_precheck(client)
                 self._scene_unprotected_baseline()
-                self._scene_shield_block(client)
                 self._scene_hitl(client)
+                self._scene_shield_block(client)
                 self._scene_audit_export(client)
                 summary = self._summary(client)
         finally:

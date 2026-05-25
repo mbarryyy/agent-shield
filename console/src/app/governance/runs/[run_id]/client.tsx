@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/ui/PageHeader';
-import ProvenanceDAG from '@/components/governance/ProvenanceDAG';
 import VerdictPanel from '@/components/governance/VerdictPanel';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from '@/components/governance/badges';
 import {
   formatRelativeTime,
+  truncateHash,
   useCost,
   useGovTimeline,
   useIncidents,
@@ -17,7 +17,7 @@ import {
 import { stableRowKey } from '@/lib/governanceKeys';
 import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
 import type { CostRollup, Incident, ProvenanceGraph, TimelineRow, VerdictDetail } from '@/types/governance';
-import { evidenceLabelFrom } from '@/types/governance';
+import { evidenceLabelFrom, isBlockedIntent } from '@/types/governance';
 
 // PRE-RECORDED-DEMO FALLBACK (data-layer resilience ONLY — used if the
 // server READ returns nothing/errors; NOT a zero-backend mode). Typed
@@ -103,6 +103,23 @@ function countFromRollup(
   return rollup?.decision_mix?.[decision] ?? countRows(rows, decision);
 }
 
+function criticalRow(rows: TimelineRow[]): TimelineRow | null {
+  const priority: Record<string, number> = {
+    BLOCK: 0,
+    ESCALATE: 1,
+    ALERT: 2,
+    REWRITE: 3,
+    ROLLBACK: 4,
+    PASS: 5,
+  };
+  return [...rows].sort((a, b) => {
+    const pa = priority[a.decision] ?? 9;
+    const pb = priority[b.decision] ?? 9;
+    if (pa !== pb) return pa - pb;
+    return b.created_at - a.created_at;
+  })[0] ?? null;
+}
+
 function SignedEvidenceBadge() {
   return (
     <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border text-ink-dim">
@@ -129,8 +146,11 @@ function RunOutcomeStrip({
 
   return (
     <div className="mb-6 border border-border">
-      <div className="px-4 py-3 border-b border-border section-label">
-        Run outcome
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+        <div className="section-label">Payment control summary</div>
+        <span className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+          Intervention complete
+        </span>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 divide-x-0 divide-y divide-border lg:divide-y-0 lg:divide-x">
         {[
@@ -154,10 +174,23 @@ function RunOutcomeStrip({
 }
 
 function stepTitle(row: TimelineRow): string {
-  if (row.decision === 'BLOCK') return 'Blocked transfer';
-  if (row.decision === 'ESCALATE') return 'Sent to analyst review';
-  if (row.decision === 'PASS') return 'Allowed action';
+  if (row.decision === 'BLOCK') return 'Blocked structured transfer';
+  if (row.decision === 'ESCALATE') return 'Analyst review required';
+  if (row.decision === 'PASS') return 'Transfer cleared';
   return `${row.decision} verdict`;
+}
+
+function stepDescription(row: TimelineRow): string {
+  if (row.decision === 'BLOCK') {
+    return 'Cumulative exposure crossed the transfer policy limit before execution.';
+  }
+  if (row.decision === 'ESCALATE') {
+    return 'High-value vendor payment required human approval before execution.';
+  }
+  if (row.decision === 'PASS') {
+    return 'Payment stayed within the active policy controls for this run.';
+  }
+  return 'Recorded policy verdict for this payment action.';
 }
 
 function RunStepList({
@@ -173,7 +206,7 @@ function RunStepList({
   return (
     <div className="border border-border">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
-        <div className="section-label">Control sequence</div>
+        <div className="section-label">Payment sequence</div>
         <span className="font-mono text-[11px] text-ink-dim">
           {orderedRows.length} signed verdicts
         </span>
@@ -187,13 +220,14 @@ function RunStepList({
               key={key}
               type="button"
               onClick={() => onSelect(row)}
-              className={`w-full text-left px-4 py-4 transition-colors hover:bg-surface ${
-                selected ? 'outline outline-1 outline-ink bg-surface' : ''
+              aria-pressed={selected}
+              className={`w-full text-left px-4 py-4 border-l-4 transition-colors hover:bg-surface ${
+                selected ? 'border-l-ink bg-surface' : 'border-l-transparent'
               }`}
             >
-              <div className="grid grid-cols-1 lg:grid-cols-[72px_minmax(0,1fr)_auto] gap-3 items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-[56px_minmax(0,1fr)_92px] gap-3 items-start">
                 <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-                  Step {index + 1}
+                  {String(index + 1).padStart(2, '0')}
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -203,6 +237,9 @@ function RunStepList({
                   </div>
                   <div className="font-sans text-[15px] font-semibold text-ink mb-1">
                     {stepTitle(row)}
+                  </div>
+                  <div className="font-mono text-[12px] text-ink-dim mb-2 break-words">
+                    {stepDescription(row)}
                   </div>
                   <div className="font-mono text-[12px] text-ink-dim break-all">
                     {row.correlation_id}
@@ -267,6 +304,9 @@ function HumanReviewPanel({
                   {resolutionLabel(incident)}
                 </span>
               </div>
+              <div className="font-sans text-[15px] font-semibold text-ink mb-1">
+                New vendor payment approved after review
+              </div>
               <div className="font-mono text-[12px] text-ink break-all">
                 {incident.incident_id}
               </div>
@@ -277,6 +317,72 @@ function HumanReviewPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AuditChainPanel({ graph }: { graph: ProvenanceGraph | null }) {
+  const { t } = useTranslation();
+  if (!graph || graph.nodes.length === 0) {
+    return (
+      <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
+        {t('governance.noProvenance')}
+      </div>
+    );
+  }
+
+  const ordered = [...graph.nodes].sort((a, b) => a.seq_no - b.seq_no);
+  const preExecCount = ordered.filter((node) => node.phase === 'pre_exec').length;
+  const blockedCount = ordered.filter(isBlockedIntent).length;
+
+  return (
+    <div className="border border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+        <div className="section-label">Audit chain</div>
+        <span className="font-mono text-[11px] text-ink-dim">
+          {ordered.length} records / {graph.edges.length} chain links
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
+        {[
+          ['Pre-exec checks', String(preExecCount)],
+          ['Pre-exec blocks', String(blockedCount)],
+          ['Run id', displayRunName(graph.run_id)],
+        ].map(([label, value]) => (
+          <div key={label} className="px-4 py-3 min-w-0">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim mb-1">
+              {label}
+            </div>
+            <div className="font-mono text-[12px] text-ink break-words">{value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="divide-y divide-border border-t border-border">
+        {ordered.map((node) => (
+          <div
+            key={node.record_id}
+            className={`px-4 py-3 grid grid-cols-1 md:grid-cols-[72px_120px_minmax(0,1fr)_auto] gap-3 items-center ${
+              isBlockedIntent(node) ? 'bg-red-50' : ''
+            }`}
+          >
+            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+              #{node.seq_no}
+            </div>
+            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+              {node.phase ?? '—'}
+            </div>
+            <div className="font-mono text-[12px] text-ink break-all">
+              {truncateHash(node.correlation_id ?? node.record_id, 10)}
+              {isBlockedIntent(node) && (
+                <span className="ml-3 text-[10px] uppercase tracking-wider text-red-700">
+                  {t('governance.blockedIntentEvidence')}
+                </span>
+              )}
+            </div>
+            <div>{node.decision ? <DecisionBadge decision={node.decision} /> : null}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -294,13 +400,13 @@ export default function GovernanceRunShell() {
   const timeline = useGovTimeline(runId || undefined);
   const incidentsQuery = useIncidents({ run_id: runId }, !!runId);
   const useFallbackFixtures = fallbackFixturesEnabled();
-  const [selKey, setSelKey] = useState<string>('');
+  const [selKey, setSelKey] = useState<string | null>(null);
 
   const live = cost.data != null || prov.data != null || timeline.data != null || incidentsQuery.data != null;
   const rollup = cost.data ?? (useFallbackFixtures ? fallbackRollup() : null);
   const graph = prov.data ?? (useFallbackFixtures ? fallbackGraph(runId) : null);
   const rows = timeline.data?.rows ?? (useFallbackFixtures ? fallbackTimeline(runId) : []);
-  const selectedRow = rows.find((row) => stableRowKey(row) === selKey) ?? null;
+  const selectedRow = rows.find((row) => stableRowKey(row) === selKey) ?? criticalRow(rows);
   const detailQuery = useVerdictDetail(timeline.data && selectedRow ? selectedRow.correlation_id : undefined);
   const detail =
     detailQuery.data ?? (useFallbackFixtures && !timeline.data && selectedRow ? fallbackDetail() : null);
@@ -329,11 +435,6 @@ export default function GovernanceRunShell() {
         ]}
       />
 
-      <div className="mb-6 px-4 py-2 border border-border bg-surface font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-        {t('governance.dataSource')}:{' '}
-        {live ? t('governance.source_poll') : useFallbackFixtures ? t('governance.source_offline') : t('governance.source_backend_empty')}
-      </div>
-
       {!live && useFallbackFixtures && (
         <div className="mb-6 px-4 py-3 border border-amber-300 bg-amber-50 font-mono text-[12px] text-amber-900">
           Fixture data is enabled for local development; live backend data is not available yet.
@@ -349,13 +450,16 @@ export default function GovernanceRunShell() {
       <RunOutcomeStrip rollup={rollup} rows={rows} />
 
       {rows.length > 0 && (
-        <div data-testid="governance-run-flow" className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-6 mb-6">
-          <RunStepList
-            rows={rows}
-            selectedKey={selectedRow ? stableRowKey(selectedRow) : null}
-            onSelect={(row) => setSelKey(stableRowKey(row))}
-          />
-          <div className="min-w-0">
+        <div data-testid="governance-run-flow" className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-6 mb-6">
+          <div className="space-y-6 min-w-0">
+            <RunStepList
+              rows={rows}
+              selectedKey={selectedRow ? stableRowKey(selectedRow) : null}
+              onSelect={(row) => setSelKey(stableRowKey(row))}
+            />
+            <HumanReviewPanel incidents={incidents} onSelectCorrelation={selectCorrelation} />
+          </div>
+          <div className="min-w-0 self-start">
             <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
               {t('governance.verdictPanelTitle')}
             </div>
@@ -375,17 +479,7 @@ export default function GovernanceRunShell() {
         </div>
       )}
 
-      <div className="mb-6">
-        <HumanReviewPanel incidents={incidents} onSelectCorrelation={selectCorrelation} />
-      </div>
-
-      {graph ? (
-        <ProvenanceDAG graph={graph} />
-      ) : (
-        <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-          {t('governance.noProvenance')}
-        </div>
-      )}
+      <AuditChainPanel graph={graph} />
     </div>
   );
 }

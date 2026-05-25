@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { SWRConfig } from 'swr';
@@ -99,13 +99,10 @@ describe('Governance run detail', () => {
     );
 
     expect(await screen.findByText('$30,000')).toBeInTheDocument();
-    expect(screen.getByText(/Control sequence/i)).toBeInTheDocument();
-    expect(screen.getByText(/Sent to analyst review/i)).toBeInTheDocument();
+    expect(screen.getByText(/Payment sequence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analyst review required/i)).toBeInTheDocument();
     expect((await screen.findAllByText('corr-block')).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Select a verdict to inspect details/i)).toBeInTheDocument();
-    expect(screen.queryByText('STRUCTURING')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByText('corr-block')[0]);
+    expect(screen.queryByText(/Select a verdict to inspect details/i)).not.toBeInTheDocument();
 
     expect(await screen.findByText('STRUCTURING')).toBeInTheDocument();
     expect(screen.getAllByText(/Analyst review/i).length).toBeGreaterThan(0);
@@ -148,6 +145,20 @@ describe('Governance run detail', () => {
           total_count: 1,
         }),
       ),
+      http.get(`${API_BASE_URL}/v1/governance/verdicts/corr-block`, () =>
+        HttpResponse.json({
+          correlation_id: 'corr-block',
+          verdict: {
+            correlation_id: 'corr-block',
+            decision: 'BLOCK',
+            risk_score: 0.92,
+            reasons: [{ agent: 'auditor', label: 'PROVENANCE_RECORDED' }],
+            obligations: { prevented_loss: 30000 },
+          },
+          pre_exec: null,
+          post_exec: null,
+        }),
+      ),
       http.get(`${API_BASE_URL}/v1/governance/incidents`, () =>
         HttpResponse.json({ incidents: [], cursor: null, total_count: 0 }),
       ),
@@ -162,7 +173,7 @@ describe('Governance run detail', () => {
     expect((await screen.findAllByText('Payment control run')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Run demo-shield-block/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/demo-shield-block/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Sent to analyst review/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analyst review required/i)).toBeInTheDocument();
     expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
     expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
     expect(screen.getAllByText('SIGNED').length).toBeGreaterThan(0);
@@ -204,7 +215,7 @@ describe('Governance run detail', () => {
       </Fresh>,
     );
 
-    expect((await screen.findAllByText(/Offline fallback/i)).length).toBeGreaterThan(0);
     expect(screen.getByText(/Fixture data is enabled/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/MOCKED/i)).length).toBeGreaterThan(0);
   });
 });
