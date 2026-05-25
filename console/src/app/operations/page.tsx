@@ -10,6 +10,9 @@ import type { Column } from '@/components/ui/DataTable';
 import SearchInput from '@/components/ui/SearchInput';
 import type { Operation } from '@elydora/shared';
 
+const FILTER_INPUT_CLASS =
+  'h-11 w-full px-3 bg-transparent border border-border font-mono text-[13px] leading-none text-ink placeholder:text-ink-dim focus:outline-none focus:border-ink transition-colors';
+
 function OperationsContent() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -28,7 +31,7 @@ function OperationsContent() {
     limit: 50,
   });
 
-  const operations = data?.operations ?? [];
+  const operations = useMemo(() => data?.operations ?? [], [data?.operations]);
 
   const filteredOps = useMemo(() => {
     if (!search.trim()) return operations;
@@ -106,12 +109,17 @@ function OperationsContent() {
       )}
 
       {/* Filter Bar */}
-      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div
+        data-testid="operations-filter-bar"
+        className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end"
+      >
         <SearchInput
           value={search}
           onChange={setSearch}
+          label={t('operations.searchFilter')}
           placeholder={t('operations.searchPlaceholder')}
           className="sm:col-span-2"
+          testId="operations-search-filter"
         />
         <div>
           <label className="font-mono text-[10px] text-ink-dim uppercase tracking-wider block mb-1">
@@ -122,7 +130,7 @@ function OperationsContent() {
             value={agentFilter}
             onChange={(e) => setAgentFilter(e.target.value)}
             placeholder={t('operations.filterByAgent')}
-            className="w-full px-3 py-2.5 bg-transparent border border-border font-mono text-[13px] text-ink placeholder:text-ink-dim focus:outline-none focus:border-ink transition-colors"
+            className={FILTER_INPUT_CLASS}
           />
         </div>
         <div>
@@ -134,7 +142,7 @@ function OperationsContent() {
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
             placeholder={t('operations.filterByType')}
-            className="w-full px-3 py-2.5 bg-transparent border border-border font-mono text-[13px] text-ink placeholder:text-ink-dim focus:outline-none focus:border-ink transition-colors"
+            className={FILTER_INPUT_CLASS}
           />
         </div>
       </div>

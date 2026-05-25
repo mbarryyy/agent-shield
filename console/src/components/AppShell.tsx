@@ -2,7 +2,6 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import Sidebar from '@/components/ui/Sidebar';
 import SessionExpiredModal from '@/components/SessionExpiredModal';
@@ -27,13 +26,11 @@ function isPublic(pathname: string): boolean {
 }
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { t } = useTranslation();
   const {
     user,
     isAuthenticated,
     isLoading,
     authMode,
-    isDevSession,
   } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
@@ -108,16 +105,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       </div>
 
       <main className="min-h-screen md:ml-[260px]">
-        {/* Visible "Dev Session" badge — honest UI (HG#6) when running in
-            open mode (CI/dev). Mirrors the W3 "Pre-release" notice template. */}
-        {isDevSession && (
-          <div
-            role="status"
-            className="border-b border-amber-300 bg-amber-50 px-4 py-2 font-mono text-[11px] text-amber-800 text-center"
-          >
-            {t('common.devSessionBadge')}
-          </div>
-        )}
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-12 pt-20 md:pt-8 pb-8 overflow-hidden">
           {children}
         </div>

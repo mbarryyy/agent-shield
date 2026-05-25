@@ -162,6 +162,25 @@ body {
   background: #EAEAE5;
 }
 
+.sidebar-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(234, 234, 229, 0.3) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(234, 234, 229, 0.3);
+  border-radius: 999px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(234, 234, 229, 0.45);
+}
+
 .console-mobile-icon-button {
   display: inline-flex;
   align-items: center;

@@ -157,9 +157,9 @@ async function _getSession(): Promise<FacadeSessionEnvelope | null> {
 
 // --- public facade (kept identical in shape to better-auth/react) -------- //
 
-export function useSession() {
+export function useSession(enabled = true) {
   const { data, isLoading, mutate } = useSWR<FacadeSessionEnvelope | null>(
-    SESSION_KEY,
+    enabled ? SESSION_KEY : null,
     _getSession,
     { revalidateOnFocus: false, refreshInterval: 5 * 60 * 1000 /* 5 min */ },
   );
