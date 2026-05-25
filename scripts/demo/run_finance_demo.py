@@ -31,9 +31,9 @@ from shield_governance.graph import (
     resume as gov_resume,
 )
 from shield_sdk.schema import ActionRef, Phase, ShieldActionRecord
+from shield_server import governance as governance_svc
 from shield_server.app import create_app
 from shield_server.config import Settings
-from shield_server import governance as governance_svc
 from shield_server.storage import build_memory_storage
 
 DEFAULT_ARTIFACT_DIR = Path("/private/tmp/agent-shield-demo-run-20260525")
