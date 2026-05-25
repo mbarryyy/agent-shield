@@ -106,8 +106,7 @@ class DemoGovernanceApp:
                 agent=Guardian.EVALUATOR,
                 label="LOCAL_EVALUATOR_REVIEW",
                 detail=(
-                    "Resolved HITL verdict retained the local demo review signal; "
-                    "no provider call."
+                    "Resolved HITL verdict retained the local demo review signal; no provider call."
                 ),
                 score=verdict.risk_score,
                 served_via=ServedVia.LOCAL,

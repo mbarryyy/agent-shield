@@ -32,9 +32,7 @@ def test_seeded_demo_backend_exposes_dashboard_and_run_routes(tmp_path, monkeypa
         dashboard = client.get("/v1/governance/dashboard/kpi")
         timeline = client.get("/v1/governance/runs/demo-shield-block/timeline")
         exports = client.get("/v1/exports")
-        block_row = next(
-            row for row in timeline.json()["rows"] if row["decision"] == "BLOCK"
-        )
+        block_row = next(row for row in timeline.json()["rows"] if row["decision"] == "BLOCK")
         block_detail = client.get(f"/v1/governance/verdicts/{block_row['correlation_id']}")
 
     assert dashboard.status_code == 200, dashboard.text
