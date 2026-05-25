@@ -6,7 +6,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import KpiCards from '@/components/governance/KpiCards';
 import LiveMonitor from '@/components/governance/LiveMonitor';
 import VerdictPanel from '@/components/governance/VerdictPanel';
-import { useCost } from '@/lib/hooks';
+import { useCost, useVerdictDetail } from '@/lib/hooks';
 import { useLiveGovernance } from '@/lib/useLiveGovernance';
 import { stableRowKey } from '@/lib/governanceKeys';
 import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
@@ -52,13 +52,18 @@ export default function GovernancePage() {
 
   const rows = live.rows;
   const [selKey, setSelKey] = useState<string>('');
-  const selectedRow =
-    rows.find((r) => stableRowKey(r) === selKey) ?? rows[rows.length - 1] ?? null;
+  const selectedRow = rows.find((r) => stableRowKey(r) === selKey) ?? null;
+  const detailQuery = useVerdictDetail(
+    selectedRow && !live.detailByVerdict.has(selectedRow.verdict_id)
+      ? selectedRow.correlation_id
+      : undefined,
+  );
 
   let detail: VerdictDetail | null = null;
   if (selectedRow) {
     detail =
       live.detailByVerdict.get(selectedRow.verdict_id) ??
+      detailQuery.data ??
       (live.source === 'offline'
         ? (FALLBACK_DETAIL[selectedRow.verdict_id] ?? null)
         : null);
@@ -116,7 +121,7 @@ export default function GovernancePage() {
               />
             ) : (
               <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-                {selectedRow ? t('governance.loadingDetail') : t('governance.emptyVerdicts')}
+                {selectedRow ? t('governance.loadingDetail') : t('governance.selectVerdict')}
               </div>
             )}
           </div>

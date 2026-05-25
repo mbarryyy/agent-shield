@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from shield_governance.graph import (
 from shield_sdk.schema import ActionRef, Phase, ShieldActionRecord
 from shield_server.app import create_app
 from shield_server.config import Settings
+from shield_server import governance as governance_svc
 from shield_server.storage import build_memory_storage
 
 DEFAULT_ARTIFACT_DIR = Path("/private/tmp/agent-shield-demo-run-20260525")
@@ -87,19 +89,35 @@ class DemoRunner:
 
     def run(self) -> dict[str, Any]:
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        with self.client as client:
-            self._register_agent(client)
-            self._scene_normal_precheck(client)
-            self._scene_unprotected_baseline()
-            self._scene_shield_block(client)
-            self._scene_hitl(client)
-            self._scene_audit_export(client)
-            summary = self._summary(client)
+        original_now_ms = governance_svc._now_ms
+        governance_svc._now_ms = self._demo_clock()
+        try:
+            with self.client as client:
+                self._register_agent(client)
+                self._scene_normal_precheck(client)
+                self._scene_unprotected_baseline()
+                self._scene_shield_block(client)
+                self._scene_hitl(client)
+                self._scene_audit_export(client)
+                summary = self._summary(client)
+        finally:
+            governance_svc._now_ms = original_now_ms
         (self.artifact_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return summary
+
+    @staticmethod
+    def _demo_clock():
+        current_ms = int(time.time() * 1000) - 20 * 60 * 1000
+
+        def now_ms() -> int:
+            nonlocal current_ms
+            current_ms += 45_000
+            return current_ms
+
+        return now_ms
 
     def _register_agent(self, client: TestClient) -> None:
         pub = crypto.get_public_key_base64url(PRIV)

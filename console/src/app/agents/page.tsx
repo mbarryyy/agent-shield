@@ -150,7 +150,7 @@ function AgentsContent() {
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, mutate]);
+  }, [deleteTarget, mutate, t]);
 
   return (
     <div className="fade-in">

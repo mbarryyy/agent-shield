@@ -37,7 +37,7 @@ const ACTION_DECISION: Record<'approve' | 'reject', string> = {
 export default function GovernanceIncidentsPage() {
   const { t } = useTranslation();
   const { canResolveIncidents } = useAuth();
-  const incidentsQuery = useIncidents({ run_id: RUN_ID });
+  const incidentsQuery = useIncidents();
   const useFallbackFixtures = fallbackFixturesEnabled();
   const live = incidentsQuery.data != null;
   const incidents = incidentsQuery.data?.incidents ?? (useFallbackFixtures ? FALLBACK_INCIDENTS : []);
