@@ -88,10 +88,9 @@ function mapAuthUser(envelope: FacadeSessionEnvelope): AuthUser {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // In open mode the real /v1/auth/session fetch is bypassed at the
-  // provider boundary — useSession() is still called (rules-of-hooks),
-  // but its result is ignored in favor of the seeded dev envelope.
-  const real = useSession();
+  // In open mode the real /v1/auth/session fetch is disabled so local
+  // recording sessions do not depend on enterprise-auth routes.
+  const real = useSession(AUTH_MODE !== 'open');
   const envelope: FacadeSessionEnvelope | null =
     AUTH_MODE === 'open' ? DEV_SESSION : real.data;
   const isPending = AUTH_MODE === 'open' ? false : real.isPending;

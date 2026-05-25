@@ -79,6 +79,11 @@ function fallbackGraph(runId: string): ProvenanceGraph {
   };
 }
 
+function displayRunName(runId: string): string {
+  if (runId === 'demo-shield-block') return 'Payment control run';
+  return `Run ${runId}`;
+}
+
 export default function GovernanceRunShell() {
   const { t } = useTranslation();
   const [runId, setRunId] = useState('');
@@ -113,16 +118,17 @@ export default function GovernanceRunShell() {
       : detail?.verdict;
 
   if (!runId) return null;
+  const runDisplayName = displayRunName(runId);
 
   return (
     <div className="fade-in">
       <PageHeader
-        title={`${t('governance.runTitle')} ${runId}`}
+        title={runDisplayName}
         subtitle={t('governance.runSubtitle')}
         breadcrumbs={[
           { label: t('common.dashboard'), href: '/' },
           { label: t('governance.title'), href: '/governance' },
-          { label: runId },
+          { label: runDisplayName },
         ]}
       />
 

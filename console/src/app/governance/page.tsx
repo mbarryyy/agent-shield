@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/ui/PageHeader';
@@ -133,6 +134,14 @@ export default function GovernancePage() {
           { label: t('common.dashboard'), href: '/' },
           { label: t('governance.title') },
         ]}
+        actions={
+          <Link
+            href={`/governance/runs/${encodeURIComponent(RUN_ID)}`}
+            className="btn-brutalist inline-block no-underline"
+          >
+            {t('governance.openTransferRun')}
+          </Link>
+        }
       />
 
       <div className="mb-6 px-4 py-2 border border-border bg-surface font-mono text-[11px] uppercase tracking-wider text-ink-dim">

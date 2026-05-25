@@ -108,10 +108,61 @@ describe('Governance run detail', () => {
     expect(await screen.findByText('STRUCTURING')).toBeInTheDocument();
     expect(screen.getByText(/Pending HITL incidents/i)).toBeInTheDocument();
     expect(screen.getByText('incident-1')).toBeInTheDocument();
-    expect(screen.getByText(/permanent evidence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
     const flow = await screen.findByTestId('governance-run-flow');
     expect(flow).toHaveClass('space-y-6');
     expect(flow).not.toHaveClass('grid');
+  });
+
+  it('uses a recording-safe display name for the seeded payment-control run', async () => {
+    window.history.pushState({}, '', '/governance/runs/demo-shield-block');
+    server.use(
+      http.get(`${API_BASE_URL}/v1/governance/runs/demo-shield-block/cost`, () =>
+        HttpResponse.json({
+          tokens: { prompt: 0, completion: 0, total: 0 },
+          decision_mix: { PASS: 2, ALERT: 0, BLOCK: 1, ESCALATE: 0, ROLLBACK: 0, REWRITE: 0 },
+          prevented_loss_total: 30000,
+          latency_p50_ms: 2,
+          latency_p95_ms: 4,
+        }),
+      ),
+      http.get(`${API_BASE_URL}/v1/governance/runs/demo-shield-block/provenance`, () =>
+        HttpResponse.json({
+          run_id: 'demo-shield-block',
+          nodes: [
+            { record_id: 'rec-1', phase: 'pre_exec', correlation_id: 'corr-pass', decision: 'PASS', seq_no: 0, chain_hash: 'hash-1' },
+            { record_id: 'rec-2', phase: 'pre_exec', correlation_id: 'corr-block', decision: 'BLOCK', seq_no: 1, chain_hash: 'hash-2' },
+          ],
+          edges: [{ src: 'rec-1', dst: 'rec-2', kind: 'chain' }],
+        }),
+      ),
+      http.get(`${API_BASE_URL}/v1/governance/runs/demo-shield-block/timeline`, () =>
+        HttpResponse.json({
+          rows: [
+            { verdict_id: 'verdict-block', record_id: 'rec-2', correlation_id: 'corr-block', run_id: 'demo-shield-block', decision: 'BLOCK', risk_score: 0.92, latency_ms: 4, created_at: 1716000001000 },
+          ],
+          cursor: null,
+          total_count: 1,
+        }),
+      ),
+      http.get(`${API_BASE_URL}/v1/governance/incidents`, () =>
+        HttpResponse.json({ incidents: [], cursor: null, total_count: 0 }),
+      ),
+    );
+
+    render(
+      <Fresh>
+        <GovernanceRunShell />
+      </Fresh>,
+    );
+
+    expect((await screen.findAllByText('Payment control run')).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Run demo-shield-block/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/demo-shield-block/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
+    expect(screen.getByText('SIGNED')).toBeInTheDocument();
   });
 
   it('shows backend-empty state instead of fallback data by default', async () => {

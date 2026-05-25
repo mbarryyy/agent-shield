@@ -96,6 +96,10 @@ describe('backend-first demo pages', () => {
     );
 
     expect(await screen.findByText(/Select a verdict to inspect details/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open transfer run/i })).toHaveAttribute(
+      'href',
+      '/governance/runs/banking',
+    );
     expect(screen.queryByText('RECIPIENT_NOT_ALLOWLISTED')).not.toBeInTheDocument();
 
     const row = screen.getByText('corr-block').closest('tr');

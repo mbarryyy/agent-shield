@@ -248,13 +248,13 @@ class DemoGovernanceApp:
     @staticmethod
     def _auditor_reason(verdict: GovernanceVerdict) -> VerdictReason:
         if verdict.decision == Decision.BLOCK:
-            label = "Block evidence locked"
+            label = "Block evidence recorded"
         elif verdict.decision == Decision.ESCALATE:
-            label = "Review evidence locked"
+            label = "Review evidence recorded"
         elif verdict.decision == Decision.PASS:
-            label = "Allow evidence locked"
+            label = "Allow evidence recorded"
         else:
-            label = "Verdict evidence locked"
+            label = "Verdict evidence recorded"
         return VerdictReason(
             agent=Guardian.AUDITOR,
             label=label,

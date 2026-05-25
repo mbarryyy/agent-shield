@@ -264,6 +264,7 @@ describe('LiveMonitor evidence labels', () => {
     render(<LiveMonitor rows={rows} />);
 
     expect(screen.queryByText(/Evidence label required/i)).not.toBeInTheDocument();
+    expect(screen.getByText('SIGNED')).toBeInTheDocument();
   });
 });
 
@@ -378,6 +379,7 @@ describe('ProvenanceDAG', () => {
       edges: [],
     };
     render(<ProvenanceDAG graph={graph} />);
-    expect(screen.getByText(/permanent evidence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
   });
 });

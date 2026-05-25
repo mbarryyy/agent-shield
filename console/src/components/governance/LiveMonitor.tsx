@@ -16,6 +16,14 @@ const latency = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 
+function SignedEvidenceBadge() {
+  return (
+    <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border text-ink-dim">
+      SIGNED
+    </span>
+  );
+}
+
 export default function LiveMonitor({
   rows,
   selectedVerdictId,
@@ -83,7 +91,11 @@ export default function LiveMonitor({
                       {r.latency_ms != null ? `${latency.format(r.latency_ms)} ms` : '—'}
                     </td>
                     <td className="px-4 py-3">
-                      {r.evidence_label ? <EvidenceBadge label={r.evidence_label} /> : null}
+                      {r.evidence_label ? (
+                        <EvidenceBadge label={r.evidence_label} />
+                      ) : (
+                        <SignedEvidenceBadge />
+                      )}
                     </td>
                   </tr>
                 );
