@@ -235,8 +235,8 @@ export function riskBand(score: number | null | undefined): RiskBand {
 }
 
 // --- GET /v1/governance/dashboard/kpi (Task #31.b) -----------------------
-// Org-wide rollup for the console Dashboard "Eval-suite prevented loss"
-// stat card. Server NEVER recomputes — `prevented_loss_total` is Σ over
+// Org-wide rollup for the console Dashboard local-demo prevented-loss stat
+// card. Server NEVER recomputes — `prevented_loss_total` is Σ over
 // signed verdicts' `obligations.prevented_loss` (the MEASURED env-diff
 // stored at /decide time). Shape mirrors `shield_server.models.DashboardKpi`
 // byte-for-byte (§5b vs models.py:365).

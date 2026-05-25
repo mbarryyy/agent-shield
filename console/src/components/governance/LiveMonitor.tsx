@@ -3,24 +3,15 @@
 import { useTranslation } from 'react-i18next';
 import { formatRelativeTime } from '@/lib/hooks';
 import type { TimelineRow } from '@/types/governance';
-import { riskBand } from '@/types/governance';
 import { DecisionBadge, EvidenceBadge, RiskBadge } from './badges';
 
 // U2 — the live monitor. Presentational over the LOCKED timeline feed
 // (GET /v1/governance/runs/{id}/timeline rows: flat
 // {verdict_id,record_id,correlation_id,run_id,decision,risk_score,
 // latency_ms,created_at}). Full verdict + paired records load from
-// /verdicts/{correlation_id} on row click. Row tint follows the LOCKED
-// §3.3 bands; the console never fabricates a score/decision. The
-// SSE/poll data source is the isolated adapter (this component is
-// source-agnostic — takes rows as a prop).
-
-const BAND_ROW: Record<string, string> = {
-  PASS: '',
-  ALERT: 'bg-amber-50',
-  ESCALATE: 'bg-amber-50',
-  BLOCK: 'bg-red-50',
-};
+// /verdicts/{correlation_id} on row click. Decisions and risk stay visible in
+// their badges; the row background is reserved for actual hover/selection so
+// recording viewers do not read a BLOCK row as pre-selected.
 const latency = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
@@ -67,13 +58,12 @@ export default function LiveMonitor({
             </thead>
             <tbody>
               {rows.map((r) => {
-                const tint = BAND_ROW[riskBand(r.risk_score)] ?? '';
                 const selected = selectedVerdictId === r.verdict_id;
                 return (
                   <tr
                     key={r.verdict_id}
                     onClick={() => onSelect?.(r)}
-                    className={`border-b border-border last:border-0 ${tint} ${
+                    className={`border-b border-border last:border-0 ${
                       onSelect ? 'cursor-pointer hover:bg-surface' : ''
                     } ${selected ? 'outline outline-1 outline-ink' : ''}`}
                   >
@@ -93,7 +83,7 @@ export default function LiveMonitor({
                       {r.latency_ms != null ? `${latency.format(r.latency_ms)} ms` : '—'}
                     </td>
                     <td className="px-4 py-3">
-                      <EvidenceBadge label={r.evidence_label} />
+                      {r.evidence_label ? <EvidenceBadge label={r.evidence_label} /> : null}
                     </td>
                   </tr>
                 );

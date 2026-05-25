@@ -176,6 +176,20 @@ describe('KpiCards', () => {
     expect(screen.getByText(/120 prompt \/ 40 completion/i)).toBeInTheDocument();
     expect(screen.getByText(/\$0.01 cost/i)).toBeInTheDocument();
   });
+
+  it('does not show a missing-evidence warning for unlabeled live rollups', () => {
+    const rollup: CostRollup = {
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      decision_mix: { PASS: 1, ALERT: 0, BLOCK: 1, ESCALATE: 0, ROLLBACK: 0, REWRITE: 0 },
+      prevented_loss_total: 30000,
+      latency_p50_ms: 4,
+      latency_p95_ms: 8,
+    };
+
+    render(<KpiCards rollup={rollup} />);
+
+    expect(screen.queryByText(/Evidence label required/i)).not.toBeInTheDocument();
+  });
 });
 
 describe('LiveMonitor evidence labels', () => {
@@ -209,6 +223,46 @@ describe('LiveMonitor evidence labels', () => {
 
     expect(screen.getByText('MOCKED')).toBeInTheDocument();
     expect(screen.getByText('SKIPPED')).toBeInTheDocument();
+  });
+
+  it('does not tint risk rows as if they were selected', () => {
+    const rows: TimelineRow[] = [
+      {
+        verdict_id: 'v-block',
+        record_id: 'r-block',
+        correlation_id: 'corr-block',
+        run_id: 'run-1',
+        decision: 'BLOCK',
+        risk_score: 0.92,
+        latency_ms: 18,
+        created_at: Date.now(),
+      },
+    ];
+
+    render(<LiveMonitor rows={rows} />);
+
+    const row = screen.getByText('corr-block').closest('tr');
+    expect(row).not.toHaveClass('bg-red-50');
+    expect(row).not.toHaveClass('outline');
+  });
+
+  it('does not render a missing-evidence warning for unlabeled live rows', () => {
+    const rows: TimelineRow[] = [
+      {
+        verdict_id: 'v-live',
+        record_id: 'r-live',
+        correlation_id: 'corr-live',
+        run_id: 'run-1',
+        decision: 'PASS',
+        risk_score: 0.03,
+        latency_ms: 4,
+        created_at: Date.now(),
+      },
+    ];
+
+    render(<LiveMonitor rows={rows} />);
+
+    expect(screen.queryByText(/Evidence label required/i)).not.toBeInTheDocument();
   });
 });
 

@@ -92,14 +92,16 @@ export default function GovernanceRunShell() {
   const timeline = useGovTimeline(runId || undefined);
   const incidentsQuery = useIncidents({ run_id: runId }, !!runId);
   const useFallbackFixtures = fallbackFixturesEnabled();
+  const [selKey, setSelKey] = useState<string>('');
 
   const live = cost.data != null || prov.data != null || timeline.data != null || incidentsQuery.data != null;
   const rollup = cost.data ?? (useFallbackFixtures ? fallbackRollup() : null);
   const graph = prov.data ?? (useFallbackFixtures ? fallbackGraph(runId) : null);
   const rows = timeline.data?.rows ?? (useFallbackFixtures ? fallbackTimeline(runId) : []);
-  const selectedRow = rows.find((row) => row.decision === 'BLOCK') ?? rows[rows.length - 1] ?? null;
+  const selectedRow = rows.find((row) => stableRowKey(row) === selKey) ?? null;
   const detailQuery = useVerdictDetail(timeline.data && selectedRow ? selectedRow.correlation_id : undefined);
-  const detail = detailQuery.data ?? (useFallbackFixtures && !timeline.data ? fallbackDetail() : null);
+  const detail =
+    detailQuery.data ?? (useFallbackFixtures && !timeline.data && selectedRow ? fallbackDetail() : null);
   const incidents = incidentsQuery.data?.incidents ?? [];
   const meanScore = rows.length
     ? rows.reduce((total, row) => total + row.risk_score, 0) / rows.length
@@ -150,6 +152,7 @@ export default function GovernanceRunShell() {
           <LiveMonitor
             rows={rows}
             selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}
+            onSelect={(row) => setSelKey(stableRowKey(row))}
           />
           <div>
             <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
@@ -164,7 +167,7 @@ export default function GovernanceRunShell() {
               />
             ) : (
               <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-                {t('governance.loadingDetail')}
+                {selectedRow ? t('governance.loadingDetail') : t('governance.selectVerdict')}
               </div>
             )}
           </div>

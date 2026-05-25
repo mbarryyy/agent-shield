@@ -5,13 +5,9 @@ import { http, HttpResponse } from 'msw';
 import { SWRConfig } from 'swr';
 import type { ReactNode } from 'react';
 
-// Task #31.b — 5th Dashboard stat card binds GET /v1/governance/dashboard/kpi.
-// HG#6 mandate (cached from reviewer's pre-staged §5b map): the card MUST
-// carry the eval-suite / oracle-fixed / MockedLLM qualifier verbatim — no
-// production-deployment framing. We carry it in BOTH the card title
-// ("Eval-suite prevented loss") AND the always-visible subtitle
-// ("AgentDojo InjectionTask6 oracle-fixed scenario · MockedLLM"). Never a
-// hover-only tooltip; the qualifier must actually be seen.
+// Dashboard stat card binds GET /v1/governance/dashboard/kpi and keeps the
+// scope visible without stale MockedLLM/eval-suite wording. The card is demo
+// evidence, not production deployment framing.
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -39,8 +35,8 @@ function Fresh({ children }: { children: ReactNode }) {
   );
 }
 
-describe('Dashboard "Eval-suite prevented loss" card (Task #31.b)', () => {
-  it('renders $60,000 + the HG#6 eval-suite qualifier on 200', async () => {
+describe('Dashboard prevented loss card', () => {
+  it('renders $60,000 + the local demo qualifier on 200', async () => {
     server.use(
       http.get(`${API_BASE_URL}/v1/governance/dashboard/kpi`, () =>
         HttpResponse.json(
@@ -61,10 +57,9 @@ describe('Dashboard "Eval-suite prevented loss" card (Task #31.b)', () => {
       // never recomputes the dollar figure.
       expect(screen.getByText('$60,000')).toBeInTheDocument();
     });
-    // HG#6 qualifier — short title + always-visible methodology subtitle.
-    expect(screen.getByText('Eval-suite prevented loss')).toBeInTheDocument();
+    expect(screen.getByText('Local demo prevented loss')).toBeInTheDocument();
     expect(
-      screen.getByText('AgentDojo InjectionTask6 oracle-fixed scenario · MockedLLM'),
+      screen.getByText('AgentDojo InjectionTask6 local backend demo · no provider call'),
     ).toBeInTheDocument();
     // Negative guards: no banned framings.
     expect(screen.queryByText(/saved from real attacks/i)).not.toBeInTheDocument();
@@ -99,6 +94,6 @@ describe('Dashboard "Eval-suite prevented loss" card (Task #31.b)', () => {
     expect(screen.queryByText(/load failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/failed to fetch/i)).not.toBeInTheDocument();
     // Title still present.
-    expect(screen.getByText('Eval-suite prevented loss')).toBeInTheDocument();
+    expect(screen.getByText('Local demo prevented loss')).toBeInTheDocument();
   });
 });

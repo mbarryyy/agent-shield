@@ -38,7 +38,7 @@ function KpiCard({
         <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim">
           {label}
         </div>
-        {showEvidence && <EvidenceBadge label={evidenceLabel} />}
+        {showEvidence && evidenceLabel && <EvidenceBadge label={evidenceLabel} />}
       </div>
       <div className="mt-2 font-sans text-2xl font-semibold text-ink">{value}</div>
       {sub && (

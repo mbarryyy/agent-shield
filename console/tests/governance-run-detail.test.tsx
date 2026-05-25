@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { SWRConfig } from 'swr';
@@ -100,6 +100,11 @@ describe('Governance run detail', () => {
     expect(await screen.findByText('$30,000')).toBeInTheDocument();
     expect(screen.getByText(/160 tokens/i)).toBeInTheDocument();
     expect((await screen.findAllByText('corr-block')).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Select a verdict to inspect details/i)).toBeInTheDocument();
+    expect(screen.queryByText('STRUCTURING')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText('corr-block')[0]);
+
     expect(await screen.findByText('STRUCTURING')).toBeInTheDocument();
     expect(screen.getByText(/Pending HITL incidents/i)).toBeInTheDocument();
     expect(screen.getByText('incident-1')).toBeInTheDocument();

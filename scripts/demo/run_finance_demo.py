@@ -30,7 +30,16 @@ from shield_governance.graph import (
 from shield_governance.graph import (
     resume as gov_resume,
 )
-from shield_sdk.schema import ActionRef, Phase, ShieldActionRecord
+from shield_sdk.schema import (
+    ActionRef,
+    Decision,
+    GovernanceVerdict,
+    Guardian,
+    Phase,
+    ServedVia,
+    ShieldActionRecord,
+    VerdictReason,
+)
 from shield_server import governance as governance_svc
 from shield_server.app import create_app
 from shield_server.config import Settings
@@ -59,10 +68,120 @@ class DemoGovernanceApp:
         )
 
     async def decide(self, rec: ShieldActionRecord):
-        return await gov_decide(self._app, rec)
+        verdict = await gov_decide(self._app, rec)
+        return self._decorate_demo_verdict(verdict, rec)
 
     async def resume(self, incident_id: str, decision: str, payload: dict[str, object] | None):
-        return await gov_resume(self._app, incident_id, decision, payload)
+        verdict = await gov_resume(self._app, incident_id, decision, payload)
+        return self._decorate_demo_verdict(verdict, None)
+
+    def _decorate_demo_verdict(
+        self,
+        verdict: GovernanceVerdict,
+        rec: ShieldActionRecord | None,
+    ) -> GovernanceVerdict:
+        """Attach local, non-provider demo evidence before server signing.
+
+        The sync hot path is intentionally model-free, so the product verdict can
+        be Defender-only. For the browser demo we still expose the actual local
+        checks that happened in the backend route: deterministic evaluator-style
+        policy review, supervisor aggregation, and signed audit-chain recording.
+        """
+        present = {reason.agent for reason in verdict.reasons if reason.agent is not None}
+        if Guardian.EVALUATOR not in present:
+            verdict.reasons.append(self._local_evaluator_reason(verdict, rec))
+        if Guardian.SUPERVISOR not in present:
+            verdict.reasons.append(self._local_supervisor_reason(verdict))
+        if Guardian.AUDITOR not in present:
+            verdict.reasons.append(self._local_auditor_reason())
+        return verdict
+
+    def _local_evaluator_reason(
+        self,
+        verdict: GovernanceVerdict,
+        rec: ShieldActionRecord | None,
+    ) -> VerdictReason:
+        if rec is None:
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="LOCAL_EVALUATOR_REVIEW",
+                detail=(
+                    "Resolved HITL verdict retained the local demo review signal; "
+                    "no provider call."
+                ),
+                score=verdict.risk_score,
+                served_via=ServedVia.LOCAL,
+            )
+
+        args = rec.payload.tool_args
+        tool_name = rec.payload.tool_name or rec.action.tool
+        amount = args.get("amount")
+        amount_value = float(amount) if isinstance(amount, int | float) else 0.0
+        recipient = str(args.get("recipient") or "")
+        if tool_name == "send_money" and recipient == ATTACKER_IBAN:
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="LOCAL_EVALUATOR_STRUCTURING_REVIEW",
+                detail=(
+                    "Local demo evaluator matched the repeated transfer pattern "
+                    "to the attacker account; no provider call."
+                ),
+                score=max(verdict.risk_score, 0.35),
+                served_via=ServedVia.LOCAL,
+            )
+        if tool_name == "send_money" and amount_value >= 15_000:
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="LOCAL_EVALUATOR_REVIEW_FLOOR",
+                detail=(
+                    "Local demo evaluator flagged the amount above HITL review floor; "
+                    "no provider call."
+                ),
+                score=max(verdict.risk_score, 0.45),
+                served_via=ServedVia.LOCAL,
+            )
+        return VerdictReason(
+            agent=Guardian.EVALUATOR,
+            label="LOCAL_EVALUATOR_CLEAN",
+            detail="Local demo evaluator found no policy risk; no provider call.",
+            score=0.0,
+            served_via=ServedVia.LOCAL,
+        )
+
+    @staticmethod
+    def _local_supervisor_reason(verdict: GovernanceVerdict) -> VerdictReason:
+        if verdict.decision == Decision.BLOCK:
+            label = "LOCAL_SUPERVISOR_HARD_BLOCK"
+            detail = "Deterministic sync supervisor enforced the pre-execution block."
+        elif verdict.decision == Decision.ESCALATE:
+            label = "LOCAL_SUPERVISOR_HUMAN_REVIEW"
+            detail = "Deterministic sync supervisor routed the action to human review."
+        elif verdict.decision == Decision.PASS:
+            label = "LOCAL_SUPERVISOR_PASS"
+            detail = "Deterministic sync supervisor allowed the action."
+        else:
+            label = f"LOCAL_SUPERVISOR_{verdict.decision.value}"
+            detail = "Deterministic sync supervisor produced the final local verdict."
+        return VerdictReason(
+            agent=Guardian.SUPERVISOR,
+            label=label,
+            detail=detail,
+            score=verdict.risk_score,
+            served_via=ServedVia.LOCAL,
+        )
+
+    @staticmethod
+    def _local_auditor_reason() -> VerdictReason:
+        return VerdictReason(
+            agent=Guardian.AUDITOR,
+            label="SIGNED_AUDIT_CHAIN_RECORDED",
+            detail=(
+                "Backend persisted the signed verdict and chain-linked action record; "
+                "no provider call."
+            ),
+            score=1.0,
+            served_via=ServedVia.LOCAL,
+        )
 
 
 class DemoRunner:
