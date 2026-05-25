@@ -478,6 +478,7 @@ async def resume(
     incident_id: str,
     decision: str,
     payload: dict[str, object] | None,
+    org_id: str = "demo-org",
 ) -> GovernanceVerdict:
     """W3 PR-S5 — thin HITL resume gate. Server owns route+auth+validation +
     SIGNING + the server-authoritative resume-STATE (the incidents-list
@@ -493,7 +494,8 @@ async def resume(
             f"decision must be one of {', '.join(RESUME_DECISIONS)}.",
         )
     started = time.perf_counter()
-    verdict = await gov_app.resume(incident_id, decision, payload)
+    thread_id = await _resume_thread_id(storage, org_id, incident_id)
+    verdict = await gov_app.resume(thread_id, decision, payload)
     verdict.served_at = _now_ms()
     verdict.latency_ms = (time.perf_counter() - started) * 1000.0
     verdict.shield_kid = SHIELD_KID
@@ -510,3 +512,18 @@ async def resume(
         incident_id,
     )
     return verdict
+
+
+async def _resume_thread_id(storage: Storage, org_id: str, incident_id: str) -> str:
+    """Map the console/server incident id (ESCALATE verdict_id) back to the
+    LangGraph thread id (run_id). Older tests and the NullGovernanceApp pass
+    arbitrary ids, so unresolved ids remain unchanged."""
+    row = await storage.db.fetchrow(
+        "SELECT * FROM governance_verdicts WHERE verdict_id = $1 AND org_id = $2",
+        incident_id,
+        org_id,
+    )
+    if row is None:
+        return incident_id
+    run_id = row.get("run_id")
+    return incident_id if run_id is None else str(run_id)

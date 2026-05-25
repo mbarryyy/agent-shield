@@ -293,7 +293,7 @@ async def decide(app: GovApp, record: ShieldActionRecord) -> GovernanceVerdict:
 async def resume(
     gov_app: GovApp,
     incident_id: str,
-    decision: Decision,
+    decision: Decision | str,
     payload: dict[str, Any] | None = None,
 ) -> GovernanceVerdict:
     """Server PR-S5 HITL seam (LOCKED 4-arg signature:
@@ -310,13 +310,26 @@ async def resume(
         )
     from langgraph.types import Command
 
+    resolved = _resume_decision_to_verdict(decision)
     out = await gov_app.app.ainvoke(
-        Command(resume={"decision": decision.value, "payload": payload}),
+        Command(resume={"decision": resolved.value, "payload": payload}),
         {"configurable": {"thread_id": incident_id}},
     )
     verdict = out["verdict"]
     assert isinstance(verdict, GovernanceVerdict)
     return verdict
+
+
+def _resume_decision_to_verdict(value: Decision | str) -> Decision:
+    if isinstance(value, Decision):
+        return value
+    if value in ("accept", "response"):
+        return Decision.PASS
+    if value == "ignore":
+        return Decision.BLOCK
+    if value == "edit":
+        return Decision.REWRITE
+    return _coerce_decision(value, default=Decision.ESCALATE)
 
 
 # --------------------------------------------------------------------------- #

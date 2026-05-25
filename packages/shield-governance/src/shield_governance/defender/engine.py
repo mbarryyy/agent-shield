@@ -228,6 +228,7 @@ def _decision_for(label: str) -> Decision:
     """Map a reason label to its Decision (deterministic, no LLM)."""
     if label in (
         "amount.ok",
+        "amount.review_ok",
         "iban.format_ok",
         "iban.allowlist_ok",
         "subject.clean",
@@ -239,6 +240,8 @@ def _decision_for(label: str) -> Decision:
     ):
         return Decision.PASS
     if label.startswith("scanner.review"):
+        return Decision.ESCALATE
+    if label == "amount.review_required":
         return Decision.ESCALATE
     # Every other emitted label is a deterministic / scanner / invariant BLOCK
     # (amount.over_cap, cumulative.structuring, iban.invalid, iban.not_allowlisted,

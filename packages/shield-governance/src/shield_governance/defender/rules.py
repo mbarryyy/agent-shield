@@ -105,6 +105,7 @@ class DefenderPolicy:
 
     amount_cap: float | None = None
     cumulative_cap: float | None = None
+    review_floor: float | None = None
     iban_allowlist: frozenset[str] | None = None
     require_valid_iban: bool = False
     block_on_subject_secret: bool = True
@@ -163,6 +164,20 @@ def check_amount_cap(amount: float, cap: float | None) -> RuleOutcome:
         f"amount {amount} exceeds per-call cap {cap}",
         1.0,
         prevented_loss=float(amount),
+    )
+
+
+def check_review_floor(amount: float, floor: float | None) -> RuleOutcome:
+    """Grey-band payment review. This is intentionally weaker than the hard
+    amount cap: it asks a human to review unusual but not policy-violating
+    transfers, and never claims prevented loss."""
+    if floor is None or amount <= floor:
+        return RuleOutcome(Decision.PASS, "amount.review_ok")
+    return RuleOutcome(
+        Decision.ESCALATE,
+        "amount.review_required",
+        f"amount {amount} exceeds review floor {floor}; human review required",
+        0.45,
     )
 
 
@@ -272,6 +287,7 @@ def evaluate_send_money(
     if policy.iban_allowlist is not None:
         outcomes.append(check_iban_allowlist(recipient, policy.iban_allowlist))
     outcomes.append(check_amount_cap(amount, policy.amount_cap))
+    outcomes.append(check_review_floor(amount, policy.review_floor))
     outcomes.append(tracker.evaluate(recipient, amount, policy.cumulative_cap))
     return _worst(outcomes)
 

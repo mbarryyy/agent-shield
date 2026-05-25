@@ -81,6 +81,39 @@ def test_evaluate_send_money_takes_worst_outcome() -> None:
     assert bad.label.startswith("subject.secret")
 
 
+def test_evaluate_send_money_review_floor_escalates_grey_payment() -> None:
+    policy = DefenderPolicy(
+        amount_cap=10_000,
+        cumulative_cap=20_000,
+        review_floor=5_000,
+    )
+    tracker = CumulativeRecipientTracker()
+
+    grey = evaluate_send_money(
+        {"recipient": "NEW-VENDOR", "amount": 6_000, "subject": "Invoice"},
+        policy=policy,
+        tracker=tracker,
+    )
+    assert grey.decision is Decision.ESCALATE
+    assert grey.label == "amount.review_required"
+    assert grey.prevented_loss is None
+
+    safe = evaluate_send_money(
+        {"recipient": "NEW-VENDOR", "amount": 4_000, "subject": "Invoice"},
+        policy=policy,
+        tracker=tracker,
+    )
+    assert safe.decision is Decision.PASS
+
+    hard_block = evaluate_send_money(
+        {"recipient": "NEW-VENDOR", "amount": 12_000, "subject": "Invoice"},
+        policy=policy,
+        tracker=tracker,
+    )
+    assert hard_block.decision is Decision.BLOCK
+    assert hard_block.label == "amount.over_cap"
+
+
 def test_evaluate_send_money_iban_policy_paths() -> None:
     """require_valid_iban + iban_allowlist gates wired through the public
     Defender entrypoint (end-to-end, not just the unit rules)."""

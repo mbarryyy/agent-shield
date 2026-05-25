@@ -240,7 +240,27 @@ export const api = {
       if (!response.ok) {
         throw new ApiError(response.status, 'DOWNLOAD_ERROR', 'unknown', `Download failed with status ${response.status}`);
       }
-      return response.blob();
+      const contentType = response.headers.get('Content-Type') ?? '';
+      if (!contentType.includes('application/json')) {
+        return response.blob();
+      }
+      const payload = await response.json() as unknown;
+      if (
+        payload &&
+        typeof payload === 'object' &&
+        'content_type' in payload &&
+        'body_base64' in payload &&
+        (payload as { content_type?: unknown }).content_type === 'application/pdf' &&
+        typeof (payload as { body_base64?: unknown }).body_base64 === 'string'
+      ) {
+        const binary = atob((payload as { body_base64: string }).body_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: 'application/pdf' });
+      }
+      return new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     },
   },
 

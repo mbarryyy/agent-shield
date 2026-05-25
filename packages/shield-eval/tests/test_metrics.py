@@ -141,6 +141,49 @@ def test_full_grid_summary_aggregates_provider_totals_from_case_rows() -> None:
     assert report["values"]["benefit_cost_ratio"]["value"] == 0.0
 
 
+def test_full_grid_asr_uses_case_row_security_as_safe_flag() -> None:
+    report = metrics.build_full_grid_metrics_report(
+        suite="banking",
+        user_task_ids=["user_task_1", "user_task_2", "user_task_3"],
+        injection_task_ids=["injection_task_1"],
+        arms=["A2"],
+        backend="real",
+        evidence_label="MEASURED-REAL-MODEL",
+        cases=[
+            {
+                "arm": "A2",
+                "security": False,
+                "utility": True,
+                "decision": "PASS",
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost_usd": 0.0,
+            },
+            {
+                "arm": "A2",
+                "security": True,
+                "utility": True,
+                "decision": "PASS",
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost_usd": 0.0,
+            },
+            {
+                "arm": "A2",
+                "security": True,
+                "utility": True,
+                "decision": "BLOCK",
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost_usd": 0.0,
+            },
+        ],
+    )
+
+    assert report["values"]["asr"]["value"] == pytest.approx(1 / 3)
+    assert report["values"]["detection_rate"]["value"] == pytest.approx(1 / 3)
+
+
 def test_metrics_check_gate_passes_and_fails(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "metrics.json"
     report = metrics.build_mock_metrics_report(
