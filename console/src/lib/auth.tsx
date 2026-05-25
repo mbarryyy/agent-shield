@@ -47,15 +47,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const AUTH_MODE: ShieldAuthMode =
   (process.env.NEXT_PUBLIC_SHIELD_AUTH_MODE === 'open' ? 'open' : 'enterprise');
 
-// In 'open' mode (CI / dev) we seed a dev session so all routes render and
-// the visible "Dev Session" badge is honest about the auth bypass. Default
-// remains 'enterprise' (default-secure).
+// In 'open' mode (CI / dev) we seed a dev session so all routes render.
+// Default remains 'enterprise' (default-secure).
 const DEV_SESSION: FacadeSessionEnvelope = {
   user: {
-    id: 'dev-user',
-    email: 'dev@local',
-    role: 'org_owner',
-    org_id: 'dev-org',
+    id: 'security-analyst',
+    name: 'Security Analyst',
+    email: 'security.analyst@agent-shield.example',
+    role: 'security_admin',
+    org_id: 'local-org',
     totp_enabled: false,
     email_verified: true,
     two_factor_pending: false,
@@ -63,7 +63,7 @@ const DEV_SESSION: FacadeSessionEnvelope = {
     onboarding_completed: true,
   },
   session: {
-    activeOrganizationId: 'dev-org',
+    activeOrganizationId: 'local-org',
     csrf_token: null,
     expires_at: null,
   },
@@ -88,10 +88,9 @@ function mapAuthUser(envelope: FacadeSessionEnvelope): AuthUser {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // In open mode the real /v1/auth/session fetch is bypassed at the
-  // provider boundary — useSession() is still called (rules-of-hooks),
-  // but its result is ignored in favor of the seeded dev envelope.
-  const real = useSession();
+  // In open mode the real /v1/auth/session fetch is disabled so local and
+  // CI sessions do not depend on enterprise-auth routes.
+  const real = useSession(AUTH_MODE !== 'open');
   const envelope: FacadeSessionEnvelope | null =
     AUTH_MODE === 'open' ? DEV_SESSION : real.data;
   const isPending = AUTH_MODE === 'open' ? false : real.isPending;

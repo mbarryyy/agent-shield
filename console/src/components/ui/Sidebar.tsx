@@ -214,7 +214,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </Link>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div className="sidebar-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
           {/* Navigation */}
           <nav className="py-4">
             {sections.map((section) => (

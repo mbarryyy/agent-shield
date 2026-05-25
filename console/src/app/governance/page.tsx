@@ -1,14 +1,21 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/ui/PageHeader';
 import KpiCards from '@/components/governance/KpiCards';
 import LiveMonitor from '@/components/governance/LiveMonitor';
 import VerdictPanel from '@/components/governance/VerdictPanel';
-import { useCost } from '@/lib/hooks';
+import {
+  useCost,
+  useDashboardKpi,
+  useGovTimeline,
+  useVerdictDetail,
+} from '@/lib/hooks';
 import { useLiveGovernance } from '@/lib/useLiveGovernance';
 import { stableRowKey } from '@/lib/governanceKeys';
+import { mergeTimelineRows } from '@/lib/governanceTimeline';
 import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
 import type { CostRollup, TimelineRow, VerdictDetail } from '@/types/governance';
 import { evidenceLabelFrom, riskBand } from '@/types/governance';
@@ -41,24 +48,67 @@ const FALLBACK_ROLLUP: CostRollup = {
   evidence_label: 'MOCKED',
 };
 
+function orgRollupFromDashboard(
+  dashboard: { prevented_loss_total: number; decision_mix: Record<string, number> } | undefined,
+  runCost: CostRollup | undefined,
+): CostRollup | null {
+  if (!dashboard) return null;
+  return {
+    tokens: runCost?.tokens ?? { prompt: 0, completion: 0, total: 0 },
+    decision_mix: {
+      PASS: dashboard.decision_mix.PASS ?? 0,
+      ALERT: dashboard.decision_mix.ALERT ?? 0,
+      BLOCK: dashboard.decision_mix.BLOCK ?? 0,
+      ESCALATE: dashboard.decision_mix.ESCALATE ?? 0,
+      ROLLBACK: dashboard.decision_mix.ROLLBACK ?? 0,
+      REWRITE: dashboard.decision_mix.REWRITE ?? 0,
+    },
+    prevented_loss_total: dashboard.prevented_loss_total,
+    latency_p50_ms: runCost?.latency_p50_ms ?? 0,
+    latency_p95_ms: runCost?.latency_p95_ms ?? 0,
+    cost_usd: runCost?.cost_usd,
+    evidence_label: runCost?.evidence_label,
+  };
+}
+
 export default function GovernancePage() {
   const { t } = useTranslation();
   const useFallbackFixtures = fallbackFixturesEnabled();
   const live = useLiveGovernance(WORKFLOW_ID, RUN_ID, FALLBACK_ROWS, {
     fallbackFixtures: useFallbackFixtures,
+    includeWorkflowEvents: true,
   });
+  const includeDemoScenes = WORKFLOW_ID === 'banking';
+  const normalTimeline = useGovTimeline(
+    includeDemoScenes ? 'demo-normal-precheck' : undefined,
+    true,
+  );
+  const hitlTimeline = useGovTimeline(includeDemoScenes ? 'demo-hitl' : undefined, true);
   const cost = useCost(RUN_ID);
-  const rollup = cost.data ?? (useFallbackFixtures && live.source === 'offline' ? FALLBACK_ROLLUP : null);
+  const dashboard = useDashboardKpi();
+  const rollup =
+    orgRollupFromDashboard(dashboard.data, cost.data) ??
+    cost.data ??
+    (useFallbackFixtures && live.source === 'offline' ? FALLBACK_ROLLUP : null);
 
-  const rows = live.rows;
+  const rows = mergeTimelineRows(
+    live.rows,
+    normalTimeline.data?.rows,
+    hitlTimeline.data?.rows,
+  );
   const [selKey, setSelKey] = useState<string>('');
-  const selectedRow =
-    rows.find((r) => stableRowKey(r) === selKey) ?? rows[rows.length - 1] ?? null;
+  const selectedRow = rows.find((r) => stableRowKey(r) === selKey) ?? null;
+  const detailQuery = useVerdictDetail(
+    selectedRow && !live.detailByVerdict.has(selectedRow.verdict_id)
+      ? selectedRow.correlation_id
+      : undefined,
+  );
 
   let detail: VerdictDetail | null = null;
   if (selectedRow) {
     detail =
       live.detailByVerdict.get(selectedRow.verdict_id) ??
+      detailQuery.data ??
       (live.source === 'offline'
         ? (FALLBACK_DETAIL[selectedRow.verdict_id] ?? null)
         : null);
@@ -67,11 +117,16 @@ export default function GovernancePage() {
   const meanScore = rows.length
     ? rows.reduce((s, r) => s + r.risk_score, 0) / rows.length
     : 0;
-  const sourceLabel = t(`governance.source_${live.source}`);
+  const sourceLabel = t(
+    `governance.source_${live.source === 'backend_empty' && rows.length > 0 ? 'poll' : live.source}`,
+  );
   const selectedVerdict =
     detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
       ? { ...detail.verdict, evidence_label: detail.evidence_label }
       : detail?.verdict;
+  const selectedRunHref = selectedRow?.run_id
+    ? `/governance/runs/${encodeURIComponent(selectedRow.run_id)}`
+    : null;
 
   return (
     <div className="fade-in">
@@ -97,15 +152,25 @@ export default function GovernancePage() {
           {BACKEND_EMPTY_MESSAGE}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div data-testid="governance-flow" className="space-y-6">
           <LiveMonitor
             rows={rows}
             selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}
             onSelect={(r) => setSelKey(stableRowKey(r))}
           />
           <div>
-            <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-              {t('governance.verdictPanelTitle')}
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                {t('governance.verdictPanelTitle')}
+              </div>
+              {selectedRunHref && (
+                <Link
+                  href={selectedRunHref}
+                  className="btn-brutalist inline-block no-underline"
+                >
+                  {t('governance.openSelectedRun')}
+                </Link>
+              )}
             </div>
             {selectedVerdict ? (
               <VerdictPanel
@@ -116,7 +181,7 @@ export default function GovernancePage() {
               />
             ) : (
               <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-                {selectedRow ? t('governance.loadingDetail') : t('governance.emptyVerdicts')}
+                {selectedRow ? t('governance.loadingDetail') : t('governance.selectVerdict')}
               </div>
             )}
           </div>
