@@ -15,6 +15,9 @@ const cents = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+const latency = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+});
 
 function KpiCard({
   label,
@@ -30,15 +33,19 @@ function KpiCard({
   showEvidence?: boolean;
 }) {
   return (
-    <div className="border border-border p-5">
+    <div className="border border-border p-5 min-w-0">
       <div className="flex items-start justify-between gap-3">
         <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim">
           {label}
         </div>
-        {showEvidence && <EvidenceBadge label={evidenceLabel} />}
+        {showEvidence && evidenceLabel && <EvidenceBadge label={evidenceLabel} />}
       </div>
       <div className="mt-2 font-sans text-2xl font-semibold text-ink">{value}</div>
-      {sub && <div className="mt-1 font-mono text-[11px] text-ink-dim">{sub}</div>}
+      {sub && (
+        <div className="mt-1 font-mono text-[11px] text-ink-dim break-words [overflow-wrap:anywhere]">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -70,7 +77,7 @@ export default function KpiCards({
     : '';
   const costText = rollup?.cost_usd != null ? ` · ${cents.format(rollup.cost_usd)} cost` : '';
   const tokensSub = rollup
-    ? `${rollup.tokens.total} ${t('governance.tokens')} (${tokenBreakdown}) · p95 ${rollup.latency_p95_ms} ms${costText}`
+    ? `${rollup.tokens.total} ${t('governance.tokens')} (${tokenBreakdown}) · p95 ${latency.format(rollup.latency_p95_ms)} ms${costText}`
     : undefined;
 
   return (

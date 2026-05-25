@@ -26,7 +26,9 @@ export function useLiveGovernance(
   workflowId: string,
   runId: string,
   offlineRows: TimelineRow[],
-  options: { fallbackFixtures: boolean } = { fallbackFixtures: false },
+  options: { fallbackFixtures: boolean; includeWorkflowEvents?: boolean } = {
+    fallbackFixtures: false,
+  },
 ): {
   rows: TimelineRow[];
   detailByVerdict: Map<string, VerdictDetail>;
@@ -42,6 +44,7 @@ export function useLiveGovernance(
   useEffect(() => {
     const close = openGovernanceStream(workflowId, {
       onVerdict: (ev) => {
+        if (!options.includeWorkflowEvents && ev.run_id !== runId) return;
         const row = streamEventToRow(ev, Date.now());
         const detail = streamEventToDetail(ev);
         if (detail) detailRef.current.set(ev.verdict_id, detail);
@@ -54,13 +57,22 @@ export function useLiveGovernance(
       },
     });
     return close;
-  }, [workflowId]);
+  }, [workflowId, runId, options.includeWorkflowEvents]);
 
-  const sseList = [...sseRows.values()].sort((a, b) => a.created_at - b.created_at);
+  const sseList = [...sseRows.values()].sort((a, b) => b.created_at - a.created_at);
+  const pollRows = poll.data?.rows;
   if (sseSeen && sseList.length > 0) {
+    if (pollRows && pollRows.length > 0) {
+      const pollIds = new Set(pollRows.map((row) => row.verdict_id));
+      const sseOnlyRows = sseList.filter((row) => !pollIds.has(row.verdict_id));
+      return {
+        rows: [...sseOnlyRows, ...pollRows].sort((a, b) => b.created_at - a.created_at),
+        detailByVerdict: detailRef.current,
+        source: 'sse',
+      };
+    }
     return { rows: sseList, detailByVerdict: detailRef.current, source: 'sse' };
   }
-  const pollRows = poll.data?.rows;
   if (pollRows && pollRows.length > 0) {
     return { rows: pollRows, detailByVerdict: detailRef.current, source: 'poll' };
   }
