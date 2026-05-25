@@ -64,16 +64,23 @@ class DemoGovernanceApp:
 
 
 class DemoRunner:
-    def __init__(self, artifact_dir: Path) -> None:
+    def __init__(
+        self,
+        artifact_dir: Path,
+        *,
+        storage: Any | None = None,
+        governance: DemoGovernanceApp | None = None,
+        app: Any | None = None,
+    ) -> None:
         self.artifact_dir = artifact_dir
-        self.storage = build_memory_storage()
-        self.client = TestClient(
-            create_app(
-                storage=self.storage,
-                settings=Settings.from_env(),
-                governance=DemoGovernanceApp(),
-            )
+        self.storage = storage or build_memory_storage()
+        self.governance = governance or DemoGovernanceApp()
+        self.app = app or create_app(
+            storage=self.storage,
+            settings=Settings.from_env(),
+            governance=self.governance,
         )
+        self.client = TestClient(self.app)
         self.prev_chain_hash = "A" * 43
         self.scenes: list[dict[str, Any]] = []
         self.verdicts: list[dict[str, Any]] = []
