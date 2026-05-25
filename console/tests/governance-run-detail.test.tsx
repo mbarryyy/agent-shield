@@ -45,8 +45,8 @@ describe('Governance run detail', () => {
         HttpResponse.json({
           run_id: 'run-e2e',
           nodes: [
-            { record_id: 'rec-1', phase: 'pre_exec', correlation_id: 'corr-pass', decision: 'PASS', seq_no: 0, chain_hash: 'hash-1' },
-            { record_id: 'rec-2', phase: 'pre_exec', correlation_id: 'corr-block', decision: 'BLOCK', seq_no: 1, chain_hash: 'hash-2' },
+            { record_id: 'rec-1', phase: 'pre_exec', correlation_id: 'corr-pass', decision: 'PASS', seq_no: 3, chain_hash: 'hash-1' },
+            { record_id: 'rec-2', phase: 'pre_exec', correlation_id: 'corr-block', decision: 'BLOCK', seq_no: 4, chain_hash: 'hash-2' },
           ],
           edges: [{ src: 'rec-1', dst: 'rec-2', kind: 'chain' }],
         }),
@@ -105,9 +105,14 @@ describe('Governance run detail', () => {
     expect(screen.queryByText(/Select a verdict to inspect details/i)).not.toBeInTheDocument();
 
     expect(await screen.findByText('STRUCTURING')).toBeInTheDocument();
+    expect(screen.getByText(/Selected step evidence/i)).toBeInTheDocument();
+    expect(screen.queryByText('VERDICT')).not.toBeInTheDocument();
     expect(screen.getAllByText(/Analyst review/i).length).toBeGreaterThan(0);
     expect(screen.getByText('incident-1')).toBeInTheDocument();
     expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Chain step 01/i)).toBeInTheDocument();
+    expect(screen.getByText(/Chain step 02/i)).toBeInTheDocument();
+    expect(screen.queryByText('#3')).not.toBeInTheDocument();
     expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
     const flow = await screen.findByTestId('governance-run-flow');
     expect(flow).toHaveClass('grid');

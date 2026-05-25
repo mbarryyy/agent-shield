@@ -120,6 +120,16 @@ function criticalRow(rows: TimelineRow[]): TimelineRow | null {
   })[0] ?? null;
 }
 
+function orderedTimeline(rows: TimelineRow[]): TimelineRow[] {
+  return [...rows].sort((a, b) => a.created_at - b.created_at);
+}
+
+function stepNumberForRow(rows: TimelineRow[], row: TimelineRow | null): string | null {
+  if (!row) return null;
+  const index = orderedTimeline(rows).findIndex((candidate) => stableRowKey(candidate) === stableRowKey(row));
+  return index >= 0 ? String(index + 1).padStart(2, '0') : null;
+}
+
 function SignedEvidenceBadge() {
   return (
     <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border text-ink-dim">
@@ -202,7 +212,7 @@ function RunStepList({
   selectedKey: string | null;
   onSelect: (row: TimelineRow) => void;
 }) {
-  const orderedRows = [...rows].sort((a, b) => a.created_at - b.created_at);
+  const orderedRows = orderedTimeline(rows);
   return (
     <div className="border border-border">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
@@ -340,7 +350,7 @@ function AuditChainPanel({ graph }: { graph: ProvenanceGraph | null }) {
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
         <div className="section-label">Audit chain</div>
         <span className="font-mono text-[11px] text-ink-dim">
-          {ordered.length} records / {graph.edges.length} chain links
+          {ordered.length} linked records
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
@@ -357,32 +367,60 @@ function AuditChainPanel({ graph }: { graph: ProvenanceGraph | null }) {
           </div>
         ))}
       </div>
-      <div className="divide-y divide-border border-t border-border">
-        {ordered.map((node) => (
-          <div
-            key={node.record_id}
-            className={`px-4 py-3 grid grid-cols-1 md:grid-cols-[72px_120px_minmax(0,1fr)_auto] gap-3 items-center ${
-              isBlockedIntent(node) ? 'bg-red-50' : ''
-            }`}
-          >
-            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-              #{node.seq_no}
-            </div>
-            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-              {node.phase ?? '—'}
-            </div>
-            <div className="font-mono text-[12px] text-ink break-all">
-              {truncateHash(node.correlation_id ?? node.record_id, 10)}
-              {isBlockedIntent(node) && (
-                <span className="ml-3 text-[10px] uppercase tracking-wider text-red-700">
-                  {t('governance.blockedIntentEvidence')}
+      <ol className="border-t border-border">
+        {ordered.map((node, index) => {
+          const step = String(index + 1).padStart(2, '0');
+          const blocked = isBlockedIntent(node);
+          const isLast = index === ordered.length - 1;
+          return (
+            <li
+              key={node.record_id}
+              className={`grid grid-cols-[64px_minmax(0,1fr)] gap-4 px-4 py-4 ${
+                blocked ? 'bg-red-50' : ''
+              }`}
+            >
+              <div className="relative flex justify-center">
+                {!isLast && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-10 bottom-[-16px] w-px bg-border"
+                  />
+                )}
+                <span
+                  className={`relative z-10 flex h-10 w-10 items-center justify-center border bg-background font-mono text-[11px] uppercase tracking-wider ${
+                    blocked ? 'border-red-300 text-red-700' : 'border-border text-ink'
+                  }`}
+                >
+                  {step}
                 </span>
-              )}
-            </div>
-            <div>{node.decision ? <DecisionBadge decision={node.decision} /> : null}</div>
-          </div>
-        ))}
-      </div>
+              </div>
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                    Chain step {step}
+                  </span>
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                    {node.phase ?? 'record'}
+                  </span>
+                  {node.decision ? <DecisionBadge decision={node.decision} /> : null}
+                </div>
+                <div className="font-mono text-[12px] text-ink break-all">
+                  {truncateHash(node.correlation_id ?? node.record_id, 12)}
+                  {blocked && (
+                    <span className="ml-3 text-[10px] uppercase tracking-wider text-red-700">
+                      {t('governance.blockedIntentEvidence')}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-ink-dim break-all">
+                  record {truncateHash(node.record_id, 10)}
+                  {node.chain_hash ? ` · hash ${truncateHash(node.chain_hash, 10)}` : ''}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
@@ -415,6 +453,7 @@ export default function GovernanceRunShell() {
     detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
       ? { ...detail.verdict, evidence_label: detail.evidence_label }
       : detail?.verdict;
+  const selectedStepNumber = stepNumberForRow(rows, selectedRow);
   const selectCorrelation = (correlationId: string) => {
     const row = rows.find((candidate) => candidate.correlation_id === correlationId);
     if (row) setSelKey(stableRowKey(row));
@@ -460,8 +499,15 @@ export default function GovernanceRunShell() {
             <HumanReviewPanel incidents={incidents} onSelectCorrelation={selectCorrelation} />
           </div>
           <div className="min-w-0 self-start">
-            <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-              {t('governance.verdictPanelTitle')}
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                Selected step evidence
+              </div>
+              {selectedRow && selectedStepNumber && (
+                <span className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                  Step {selectedStepNumber} · {selectedRow.decision}
+                </span>
+              )}
             </div>
             {selectedVerdict ? (
               <VerdictPanel
