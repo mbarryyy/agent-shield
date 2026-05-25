@@ -9,6 +9,7 @@ import VerdictPanel from '@/components/governance/VerdictPanel';
 import { useCost } from '@/lib/hooks';
 import { useLiveGovernance } from '@/lib/useLiveGovernance';
 import { stableRowKey } from '@/lib/governanceKeys';
+import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
 import type { CostRollup, TimelineRow, VerdictDetail } from '@/types/governance';
 import { evidenceLabelFrom, riskBand } from '@/types/governance';
 
@@ -42,9 +43,12 @@ const FALLBACK_ROLLUP: CostRollup = {
 
 export default function GovernancePage() {
   const { t } = useTranslation();
-  const live = useLiveGovernance(WORKFLOW_ID, RUN_ID, FALLBACK_ROWS);
+  const useFallbackFixtures = fallbackFixturesEnabled();
+  const live = useLiveGovernance(WORKFLOW_ID, RUN_ID, FALLBACK_ROWS, {
+    fallbackFixtures: useFallbackFixtures,
+  });
   const cost = useCost(RUN_ID);
-  const rollup = cost.data ?? (live.source === 'offline' ? FALLBACK_ROLLUP : null);
+  const rollup = cost.data ?? (useFallbackFixtures && live.source === 'offline' ? FALLBACK_ROLLUP : null);
 
   const rows = live.rows;
   const [selKey, setSelKey] = useState<string>('');
@@ -88,30 +92,36 @@ export default function GovernancePage() {
         <KpiCards rollup={rollup} meanRiskBand={riskBand(meanScore)} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <LiveMonitor
-          rows={rows}
-          selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}
-          onSelect={(r) => setSelKey(stableRowKey(r))}
-        />
-        <div>
-          <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-            {t('governance.verdictPanelTitle')}
-          </div>
-          {selectedVerdict ? (
-            <VerdictPanel
-              verdict={selectedVerdict}
-              preExec={detail?.pre_exec ?? null}
-              postExec={detail?.post_exec ?? null}
-              guardianEvidence={detail?.guardian_evidence ?? []}
-            />
-          ) : (
-            <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-              {selectedRow ? t('governance.loadingDetail') : t('governance.emptyVerdicts')}
-            </div>
-          )}
+      {rows.length === 0 ? (
+        <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
+          {BACKEND_EMPTY_MESSAGE}
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <LiveMonitor
+            rows={rows}
+            selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}
+            onSelect={(r) => setSelKey(stableRowKey(r))}
+          />
+          <div>
+            <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+              {t('governance.verdictPanelTitle')}
+            </div>
+            {selectedVerdict ? (
+              <VerdictPanel
+                verdict={selectedVerdict}
+                preExec={detail?.pre_exec ?? null}
+                postExec={detail?.post_exec ?? null}
+                guardianEvidence={detail?.guardian_evidence ?? []}
+              />
+            ) : (
+              <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
+                {selectedRow ? t('governance.loadingDetail') : t('governance.emptyVerdicts')}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

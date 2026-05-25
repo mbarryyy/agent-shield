@@ -8,6 +8,7 @@ import { DecisionBadge } from '@/components/governance/badges';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useIncidents, useVerdictDetail } from '@/lib/hooks';
+import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
 import type { Incident, VerdictDetail } from '@/types/governance';
 
 const RUN_ID = process.env.NEXT_PUBLIC_GOV_RUN_ID ?? 'banking';
@@ -37,8 +38,9 @@ export default function GovernanceIncidentsPage() {
   const { t } = useTranslation();
   const { canResolveIncidents } = useAuth();
   const incidentsQuery = useIncidents({ run_id: RUN_ID });
+  const useFallbackFixtures = fallbackFixturesEnabled();
   const live = incidentsQuery.data != null;
-  const incidents = incidentsQuery.data?.incidents ?? FALLBACK_INCIDENTS;
+  const incidents = incidentsQuery.data?.incidents ?? (useFallbackFixtures ? FALLBACK_INCIDENTS : []);
 
   const [selectedId, setSelectedId] = useState<string>('');
   const selected =
@@ -47,7 +49,7 @@ export default function GovernanceIncidentsPage() {
   const detailQuery = useVerdictDetail(selected?.correlation_id);
   const detail: VerdictDetail | null =
     detailQuery.data ??
-    (selected ? (FALLBACK_DETAIL[selected.correlation_id] ?? null) : null);
+    (useFallbackFixtures && selected ? (FALLBACK_DETAIL[selected.correlation_id] ?? null) : null);
 
   async function handleResolve(incidentId: string, action: 'approve' | 'reject') {
     try {
@@ -72,12 +74,12 @@ export default function GovernanceIncidentsPage() {
 
       <div className="mb-6 px-4 py-2 border border-border bg-surface font-mono text-[11px] uppercase tracking-wider text-ink-dim">
         {t('governance.dataSource')}:{' '}
-        {live ? t('governance.source_sse') : t('governance.source_offline')}
+        {live ? t('governance.source_poll') : useFallbackFixtures ? t('governance.source_offline') : t('governance.source_backend_empty')}
       </div>
 
       {incidents.length === 0 ? (
         <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-          {t('governance.incidentsEmpty')}
+          {live ? t('governance.incidentsEmpty') : BACKEND_EMPTY_MESSAGE}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

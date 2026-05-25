@@ -6,7 +6,7 @@ import { useGovTimeline } from './hooks';
 import { streamEventToDetail, streamEventToRow } from './governanceKeys';
 import type { TimelineRow, VerdictDetail } from '@/types/governance';
 
-export type LiveSource = 'sse' | 'poll' | 'offline';
+export type LiveSource = 'sse' | 'poll' | 'offline' | 'backend_empty';
 
 /**
  * Live-monitor data, SSE-PRIMARY with deterministic fallbacks (demo
@@ -26,6 +26,7 @@ export function useLiveGovernance(
   workflowId: string,
   runId: string,
   offlineRows: TimelineRow[],
+  options: { fallbackFixtures: boolean } = { fallbackFixtures: false },
 ): {
   rows: TimelineRow[];
   detailByVerdict: Map<string, VerdictDetail>;
@@ -62,6 +63,9 @@ export function useLiveGovernance(
   const pollRows = poll.data?.rows;
   if (pollRows && pollRows.length > 0) {
     return { rows: pollRows, detailByVerdict: detailRef.current, source: 'poll' };
+  }
+  if (!options.fallbackFixtures) {
+    return { rows: [], detailByVerdict: detailRef.current, source: 'backend_empty' };
   }
   return { rows: offlineRows, detailByVerdict: detailRef.current, source: 'offline' };
 }

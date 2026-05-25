@@ -14,7 +14,10 @@ vi.mock('next/navigation', () => ({
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  delete process.env.NEXT_PUBLIC_USE_FALLBACK_FIXTURES;
+  server.resetHandlers();
+});
 afterAll(() => server.close());
 
 function Fresh({ children }: { children: ReactNode }) {
@@ -103,7 +106,28 @@ describe('Governance run detail', () => {
     expect(screen.getByText(/permanent evidence/i)).toBeInTheDocument();
   });
 
-  it('labels fallback data when governance read APIs are unavailable', async () => {
+  it('shows backend-empty state instead of fallback data by default', async () => {
+    window.history.pushState({}, '', '/governance/runs/run-empty-default');
+    server.use(
+      http.get(`${API_BASE_URL}/v1/governance/runs/run-empty-default/cost`, () => HttpResponse.error()),
+      http.get(`${API_BASE_URL}/v1/governance/runs/run-empty-default/provenance`, () => HttpResponse.error()),
+      http.get(`${API_BASE_URL}/v1/governance/runs/run-empty-default/timeline`, () => HttpResponse.error()),
+      http.get(`${API_BASE_URL}/v1/governance/incidents`, () => HttpResponse.error()),
+    );
+
+    render(
+      <Fresh>
+        <GovernanceRunShell />
+      </Fresh>,
+    );
+
+    expect(await screen.findByText(/Backend has not produced data yet, run demo flow first/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Pre-recorded fallback/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MOCKED/i)).not.toBeInTheDocument();
+  });
+
+  it('labels fallback data only when fixture mode is explicitly enabled', async () => {
+    process.env.NEXT_PUBLIC_USE_FALLBACK_FIXTURES = '1';
     window.history.pushState({}, '', '/governance/runs/run-offline');
     server.use(
       http.get(`${API_BASE_URL}/v1/governance/runs/run-offline/cost`, () => HttpResponse.error()),
@@ -118,7 +142,7 @@ describe('Governance run detail', () => {
       </Fresh>,
     );
 
-    expect((await screen.findAllByText(/Pre-recorded fallback/i)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Module B governance read APIs required/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/Offline fallback/i)).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Fixture data is enabled/i)).toBeInTheDocument();
   });
 });
