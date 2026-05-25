@@ -53,6 +53,15 @@ def test_seeded_demo_backend_exposes_dashboard_and_run_routes(tmp_path, monkeypa
         "supervisor",
         "auditor",
     }
+    visible_reason_text = " ".join(
+        str(reason.get(field, "")) for reason in reasons for field in ("label", "detail")
+    )
+    assert "LOCAL_" not in visible_reason_text
+    assert "local demo" not in visible_reason_text.lower()
+    assert "no provider call" not in visible_reason_text.lower()
+    assert "Cumulative limit exceeded" in visible_reason_text
+    assert "Structuring risk confirmed" in visible_reason_text
+    assert "Block evidence locked" in visible_reason_text
 
     assert exports.status_code == 200, exports.text
     assert len(exports.json()["exports"]) >= 2

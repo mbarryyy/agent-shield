@@ -4,6 +4,7 @@ import VerdictPanel from '@/components/governance/VerdictPanel';
 import KpiCards from '@/components/governance/KpiCards';
 import ProvenanceDAG from '@/components/governance/ProvenanceDAG';
 import LiveMonitor from '@/components/governance/LiveMonitor';
+import { mergeTimelineRows } from '@/lib/governanceTimeline';
 import { streamEventToRow } from '@/lib/governanceKeys';
 import type { GovernanceVerdict } from '@elydora/shared';
 import type { CostRollup, ProvenanceGraph, ShieldVerdictEvent, TimelineRow } from '@/types/governance';
@@ -263,6 +264,79 @@ describe('LiveMonitor evidence labels', () => {
     render(<LiveMonitor rows={rows} />);
 
     expect(screen.queryByText(/Evidence label required/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('mergeTimelineRows', () => {
+  it('deduplicates verdicts and sorts decisions across demo runs newest first', () => {
+    const rows = mergeTimelineRows(
+      [
+        {
+          verdict_id: 'v-block-pass',
+          record_id: 'r-block-pass',
+          correlation_id: 'corr-block-pass',
+          run_id: 'demo-shield-block',
+          decision: 'PASS',
+          risk_score: 0.0,
+          latency_ms: 2,
+          created_at: 3000,
+        },
+        {
+          verdict_id: 'v-block-final',
+          record_id: 'r-block-final',
+          correlation_id: 'corr-block-final',
+          run_id: 'demo-shield-block',
+          decision: 'BLOCK',
+          risk_score: 0.35,
+          latency_ms: 2,
+          created_at: 5000,
+        },
+      ],
+      [
+        {
+          verdict_id: 'v-hitl',
+          record_id: 'r-hitl',
+          correlation_id: 'corr-hitl',
+          run_id: 'demo-hitl',
+          decision: 'ESCALATE',
+          risk_score: 0.45,
+          latency_ms: 2,
+          created_at: 6000,
+        },
+      ],
+      [
+        {
+          verdict_id: 'v-normal',
+          record_id: 'r-normal',
+          correlation_id: 'corr-normal',
+          run_id: 'demo-normal-precheck',
+          decision: 'PASS',
+          risk_score: 0.0,
+          latency_ms: 2,
+          created_at: 1000,
+        },
+      ],
+      [
+        {
+          verdict_id: 'v-block-final',
+          record_id: 'r-block-final',
+          correlation_id: 'corr-block-final',
+          run_id: 'demo-shield-block',
+          decision: 'BLOCK',
+          risk_score: 0.35,
+          latency_ms: 2,
+          created_at: 5000,
+        },
+      ],
+    );
+
+    expect(rows.map((row) => row.decision)).toEqual(['ESCALATE', 'BLOCK', 'PASS', 'PASS']);
+    expect(rows.map((row) => row.verdict_id)).toEqual([
+      'v-hitl',
+      'v-block-final',
+      'v-block-pass',
+      'v-normal',
+    ]);
   });
 });
 

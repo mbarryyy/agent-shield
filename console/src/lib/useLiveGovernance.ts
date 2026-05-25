@@ -26,7 +26,9 @@ export function useLiveGovernance(
   workflowId: string,
   runId: string,
   offlineRows: TimelineRow[],
-  options: { fallbackFixtures: boolean } = { fallbackFixtures: false },
+  options: { fallbackFixtures: boolean; includeWorkflowEvents?: boolean } = {
+    fallbackFixtures: false,
+  },
 ): {
   rows: TimelineRow[];
   detailByVerdict: Map<string, VerdictDetail>;
@@ -42,7 +44,7 @@ export function useLiveGovernance(
   useEffect(() => {
     const close = openGovernanceStream(workflowId, {
       onVerdict: (ev) => {
-        if (ev.run_id !== runId) return;
+        if (!options.includeWorkflowEvents && ev.run_id !== runId) return;
         const row = streamEventToRow(ev, Date.now());
         const detail = streamEventToDetail(ev);
         if (detail) detailRef.current.set(ev.verdict_id, detail);
@@ -55,7 +57,7 @@ export function useLiveGovernance(
       },
     });
     return close;
-  }, [workflowId, runId]);
+  }, [workflowId, runId, options.includeWorkflowEvents]);
 
   const sseList = [...sseRows.values()].sort((a, b) => b.created_at - a.created_at);
   const pollRows = poll.data?.rows;

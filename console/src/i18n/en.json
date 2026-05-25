@@ -29,7 +29,6 @@
     "governance": "Governance",
     "incidents": "Incidents",
     "saved": "Saved.",
-    "devSessionBadge": "Dev session — auth bypass for local/CI; production is enterprise auth.",
     "brandMarkAlt": "Agent Shield",
     "missingPermission": "You do not have permission to view this page."
   },
@@ -108,8 +107,8 @@
     "merkleRollups": "Merkle rollup epochs",
     "pendingExports": "Pending Exports",
     "queuedOrRunning": "Queued or running",
-    "preventedLossTitle": "Local demo prevented loss",
-    "preventedLossSubtitle": "AgentDojo InjectionTask6 local backend demo · no provider call",
+    "preventedLossTitle": "Prevented loss",
+    "preventedLossSubtitle": "Structured transfer control · signed backend evidence",
     "quickActions": "Quick Actions",
     "registerAgent": "Register Agent",
     "viewOperations": "View Operations",

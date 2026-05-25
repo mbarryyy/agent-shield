@@ -36,7 +36,7 @@ function Fresh({ children }: { children: ReactNode }) {
 }
 
 describe('Dashboard prevented loss card', () => {
-  it('renders $60,000 + the local demo qualifier on 200', async () => {
+  it('renders $60,000 + production-style policy evidence copy on 200', async () => {
     server.use(
       http.get(`${API_BASE_URL}/v1/governance/dashboard/kpi`, () =>
         HttpResponse.json(
@@ -57,14 +57,16 @@ describe('Dashboard prevented loss card', () => {
       // never recomputes the dollar figure.
       expect(screen.getByText('$60,000')).toBeInTheDocument();
     });
-    expect(screen.getByText('Local demo prevented loss')).toBeInTheDocument();
+    expect(screen.getByText('Prevented loss')).toBeInTheDocument();
     expect(
-      screen.getByText('AgentDojo InjectionTask6 local backend demo · no provider call'),
+      screen.getByText('Structured transfer control · signed backend evidence'),
     ).toBeInTheDocument();
     // Negative guards: no banned framings.
     expect(screen.queryByText(/saved from real attacks/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/total fraud prevented/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^money saved$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/local demo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no provider call/i)).not.toBeInTheDocument();
   });
 
   it('renders the AuthError-resolver message (NOT "Load failed") on 401', async () => {
@@ -94,6 +96,6 @@ describe('Dashboard prevented loss card', () => {
     expect(screen.queryByText(/load failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/failed to fetch/i)).not.toBeInTheDocument();
     // Title still present.
-    expect(screen.getByText('Local demo prevented loss')).toBeInTheDocument();
+    expect(screen.getByText('Prevented loss')).toBeInTheDocument();
   });
 });

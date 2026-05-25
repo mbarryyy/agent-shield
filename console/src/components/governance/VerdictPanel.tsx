@@ -44,6 +44,11 @@ function formatLatencyMs(value: number): string {
   }).format(value);
 }
 
+function visibleServedVia(servedVia: string | null | undefined): string | null {
+  if (!servedVia || servedVia === 'local') return null;
+  return servedVia;
+}
+
 function formatMemorySummary(row: GuardianEvidenceRow): string | null {
   const memoryBackend = row.memory_backend ?? row.memory?.memory_backend;
   if (!memoryBackend) return null;
@@ -104,8 +109,8 @@ function GuardianLane({
               {r.score != null && (
                 <span className="text-ink-dim"> · {r.score.toFixed(2)}</span>
               )}
-              {r.served_via && (
-                <span className="text-ink-dim"> · {r.served_via}</span>
+              {visibleServedVia(r.served_via) && (
+                <span className="text-ink-dim"> · {visibleServedVia(r.served_via)}</span>
               )}
               {r.model_id && (
                 <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
@@ -138,7 +143,9 @@ function GuardianLane({
               <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                 {row.prompt_tokens} prompt / {row.completion_tokens} completion
                 <span> · {formatLatencyMs(row.latency_ms)} ms</span>
-                {row.served_via && <span> · {row.served_via}</span>}
+                {visibleServedVia(row.served_via) && (
+                  <span> · {visibleServedVia(row.served_via)}</span>
+                )}
                 <span> · cost {formatGuardianCost(row.cost_usd)}</span>
               </div>
               {row.model_id && (

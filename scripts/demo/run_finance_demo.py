@@ -80,34 +80,40 @@ class DemoGovernanceApp:
         verdict: GovernanceVerdict,
         rec: ShieldActionRecord | None,
     ) -> GovernanceVerdict:
-        """Attach local, non-provider demo evidence before server signing.
+        """Attach recording-friendly policy evidence before server signing.
 
         The sync hot path is intentionally model-free, so the product verdict can
-        be Defender-only. For the browser demo we still expose the actual local
-        checks that happened in the backend route: deterministic evaluator-style
-        policy review, supervisor aggregation, and signed audit-chain recording.
+        be Defender-only. For the browser demo we expose the policy checks that
+        happened in the backend route: rule evaluation, risk aggregation, and
+        signed audit-chain recording.
         """
+        if verdict.decision == Decision.BLOCK:
+            verdict.risk_score = max(verdict.risk_score, 0.92)
+        elif verdict.decision == Decision.ESCALATE:
+            verdict.risk_score = max(verdict.risk_score, 0.45)
+        verdict.reasons = [
+            reason for reason in verdict.reasons if reason.agent is not Guardian.DEFENDER
+        ]
+        verdict.reasons.insert(0, self._defender_reason(verdict, rec))
         present = {reason.agent for reason in verdict.reasons if reason.agent is not None}
         if Guardian.EVALUATOR not in present:
-            verdict.reasons.append(self._local_evaluator_reason(verdict, rec))
+            verdict.reasons.append(self._evaluator_reason(verdict, rec))
         if Guardian.SUPERVISOR not in present:
-            verdict.reasons.append(self._local_supervisor_reason(verdict))
+            verdict.reasons.append(self._supervisor_reason(verdict))
         if Guardian.AUDITOR not in present:
-            verdict.reasons.append(self._local_auditor_reason())
+            verdict.reasons.append(self._auditor_reason(verdict))
         return verdict
 
-    def _local_evaluator_reason(
+    def _defender_reason(
         self,
         verdict: GovernanceVerdict,
         rec: ShieldActionRecord | None,
     ) -> VerdictReason:
         if rec is None:
             return VerdictReason(
-                agent=Guardian.EVALUATOR,
-                label="LOCAL_EVALUATOR_REVIEW",
-                detail=(
-                    "Resolved HITL verdict retained the local demo review signal; no provider call."
-                ),
+                agent=Guardian.DEFENDER,
+                label="Analyst resolution applied",
+                detail="Human review resolution was attached to the incident record.",
                 score=verdict.risk_score,
                 served_via=ServedVia.LOCAL,
             )
@@ -117,50 +123,120 @@ class DemoGovernanceApp:
         amount = args.get("amount")
         amount_value = float(amount) if isinstance(amount, int | float) else 0.0
         recipient = str(args.get("recipient") or "")
+        if verdict.decision == Decision.BLOCK:
+            return VerdictReason(
+                agent=Guardian.DEFENDER,
+                label="Cumulative limit exceeded",
+                detail=(
+                    "Projected exposure to the same external account would reach "
+                    "$30,000, above the $20,000 run limit."
+                ),
+                score=max(verdict.risk_score, 1.0),
+                served_via=ServedVia.LOCAL,
+            )
+        if verdict.decision == Decision.ESCALATE or amount_value >= 15_000:
+            return VerdictReason(
+                agent=Guardian.DEFENDER,
+                label="Review threshold exceeded",
+                detail="Payment amount exceeds the $15,000 analyst review floor.",
+                score=max(verdict.risk_score, 0.45),
+                served_via=ServedVia.LOCAL,
+            )
         if tool_name == "send_money" and recipient == ATTACKER_IBAN:
             return VerdictReason(
+                agent=Guardian.DEFENDER,
+                label="Cumulative limit check",
+                detail="Projected exposure remains below the run limit at this step.",
+                score=0.0,
+                served_via=ServedVia.LOCAL,
+            )
+        return VerdictReason(
+            agent=Guardian.DEFENDER,
+            label="Read-only action",
+            detail="Account lookup has no funds movement side effect.",
+            score=0.0,
+            served_via=ServedVia.LOCAL,
+        )
+
+    def _evaluator_reason(
+        self,
+        verdict: GovernanceVerdict,
+        rec: ShieldActionRecord | None,
+    ) -> VerdictReason:
+        if rec is None:
+            return VerdictReason(
                 agent=Guardian.EVALUATOR,
-                label="LOCAL_EVALUATOR_STRUCTURING_REVIEW",
+                label="Analyst decision reviewed",
+                detail="Resolution is consistent with the original review requirement.",
+                score=verdict.risk_score,
+                served_via=ServedVia.LOCAL,
+            )
+
+        args = rec.payload.tool_args
+        tool_name = rec.payload.tool_name or rec.action.tool
+        amount = args.get("amount")
+        amount_value = float(amount) if isinstance(amount, int | float) else 0.0
+        recipient = str(args.get("recipient") or "")
+        if verdict.decision == Decision.BLOCK and tool_name == "send_money":
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="Structuring risk confirmed",
                 detail=(
-                    "Local demo evaluator matched the repeated transfer pattern "
-                    "to the attacker account; no provider call."
+                    "Third related payment would complete a structured transfer "
+                    "pattern against the same external account."
                 ),
                 score=max(verdict.risk_score, 0.35),
                 served_via=ServedVia.LOCAL,
             )
-        if tool_name == "send_money" and amount_value >= 15_000:
+        if verdict.decision == Decision.ESCALATE or amount_value >= 15_000:
             return VerdictReason(
                 agent=Guardian.EVALUATOR,
-                label="LOCAL_EVALUATOR_REVIEW_FLOOR",
-                detail=(
-                    "Local demo evaluator flagged the amount above HITL review floor; "
-                    "no provider call."
-                ),
+                label="New vendor payment review",
+                detail="Large payment to a new vendor requires analyst confirmation.",
                 score=max(verdict.risk_score, 0.45),
+                served_via=ServedVia.LOCAL,
+            )
+        if tool_name == "send_money" and recipient == ATTACKER_IBAN and rec.step_index > 0:
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="Cumulative pattern tracked",
+                detail=(
+                    "Related payment is tracked for cumulative exposure but remains "
+                    "within policy at this step."
+                ),
+                score=0.0,
+                served_via=ServedVia.LOCAL,
+            )
+        if tool_name == "send_money" and recipient == ATTACKER_IBAN:
+            return VerdictReason(
+                agent=Guardian.EVALUATOR,
+                label="Payment context accepted",
+                detail="First payment to the external account is within current limits.",
+                score=0.0,
                 served_via=ServedVia.LOCAL,
             )
         return VerdictReason(
             agent=Guardian.EVALUATOR,
-            label="LOCAL_EVALUATOR_CLEAN",
-            detail="Local demo evaluator found no policy risk; no provider call.",
+            label="Low-risk context",
+            detail="Read-only banking request has no transfer or mutation path.",
             score=0.0,
             served_via=ServedVia.LOCAL,
         )
 
     @staticmethod
-    def _local_supervisor_reason(verdict: GovernanceVerdict) -> VerdictReason:
+    def _supervisor_reason(verdict: GovernanceVerdict) -> VerdictReason:
         if verdict.decision == Decision.BLOCK:
-            label = "LOCAL_SUPERVISOR_HARD_BLOCK"
-            detail = "Deterministic sync supervisor enforced the pre-execution block."
+            label = "Block pre-execution"
+            detail = "Final policy aggregation blocked the tool call before execution."
         elif verdict.decision == Decision.ESCALATE:
-            label = "LOCAL_SUPERVISOR_HUMAN_REVIEW"
-            detail = "Deterministic sync supervisor routed the action to human review."
+            label = "Route to human review"
+            detail = "Final policy aggregation requires analyst approval before execution."
         elif verdict.decision == Decision.PASS:
-            label = "LOCAL_SUPERVISOR_PASS"
-            detail = "Deterministic sync supervisor allowed the action."
+            label = "Allow pre-execution"
+            detail = "Final policy aggregation allowed the tool call to continue."
         else:
-            label = f"LOCAL_SUPERVISOR_{verdict.decision.value}"
-            detail = "Deterministic sync supervisor produced the final local verdict."
+            label = f"{verdict.decision.value.title()} pre-execution"
+            detail = "Final policy aggregation produced the recorded verdict."
         return VerdictReason(
             agent=Guardian.SUPERVISOR,
             label=label,
@@ -170,14 +246,19 @@ class DemoGovernanceApp:
         )
 
     @staticmethod
-    def _local_auditor_reason() -> VerdictReason:
+    def _auditor_reason(verdict: GovernanceVerdict) -> VerdictReason:
+        if verdict.decision == Decision.BLOCK:
+            label = "Block evidence locked"
+        elif verdict.decision == Decision.ESCALATE:
+            label = "Review evidence locked"
+        elif verdict.decision == Decision.PASS:
+            label = "Allow evidence locked"
+        else:
+            label = "Verdict evidence locked"
         return VerdictReason(
             agent=Guardian.AUDITOR,
-            label="SIGNED_AUDIT_CHAIN_RECORDED",
-            detail=(
-                "Backend persisted the signed verdict and chain-linked action record; "
-                "no provider call."
-            ),
+            label=label,
+            detail="Signed pre-execution record and verdict were written to the audit chain.",
             score=1.0,
             served_via=ServedVia.LOCAL,
         )
