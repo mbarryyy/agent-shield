@@ -56,11 +56,20 @@ export function useLiveGovernance(
     return close;
   }, [workflowId]);
 
-  const sseList = [...sseRows.values()].sort((a, b) => a.created_at - b.created_at);
+  const sseList = [...sseRows.values()].sort((a, b) => b.created_at - a.created_at);
+  const pollRows = poll.data?.rows;
   if (sseSeen && sseList.length > 0) {
+    if (pollRows && pollRows.length > 0) {
+      const pollIds = new Set(pollRows.map((row) => row.verdict_id));
+      const sseOnlyRows = sseList.filter((row) => !pollIds.has(row.verdict_id));
+      return {
+        rows: [...sseOnlyRows, ...pollRows].sort((a, b) => b.created_at - a.created_at),
+        detailByVerdict: detailRef.current,
+        source: 'sse',
+      };
+    }
     return { rows: sseList, detailByVerdict: detailRef.current, source: 'sse' };
   }
-  const pollRows = poll.data?.rows;
   if (pollRows && pollRows.length > 0) {
     return { rows: pollRows, detailByVerdict: detailRef.current, source: 'poll' };
   }

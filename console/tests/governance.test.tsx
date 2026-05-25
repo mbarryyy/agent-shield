@@ -4,8 +4,9 @@ import VerdictPanel from '@/components/governance/VerdictPanel';
 import KpiCards from '@/components/governance/KpiCards';
 import ProvenanceDAG from '@/components/governance/ProvenanceDAG';
 import LiveMonitor from '@/components/governance/LiveMonitor';
+import { streamEventToRow } from '@/lib/governanceKeys';
 import type { GovernanceVerdict } from '@elydora/shared';
-import type { CostRollup, ProvenanceGraph, TimelineRow } from '@/types/governance';
+import type { CostRollup, ProvenanceGraph, ShieldVerdictEvent, TimelineRow } from '@/types/governance';
 
 // W3 governance-component smoke tests — closes part of the G3-NOTE
 // tracked-debt while protecting the demo-centerpiece invariants:
@@ -192,6 +193,34 @@ describe('LiveMonitor evidence labels', () => {
 
     expect(screen.getByText('MOCKED')).toBeInTheDocument();
     expect(screen.getByText('SKIPPED')).toBeInTheDocument();
+  });
+});
+
+describe('streamEventToRow', () => {
+  it('uses verdict served_at for SSE rows when the signed verdict includes it', () => {
+    const servedAt = 1_716_000_123_456;
+    const row = streamEventToRow(
+      {
+        verdict_id: 'v-stream',
+        record_id: 'r-stream',
+        correlation_id: 'corr-stream',
+        run_id: 'run-stream',
+        decision: 'BLOCK',
+        risk_score: '0.35',
+        phase: 'pre_exec',
+        verdict: JSON.stringify({
+          correlation_id: 'corr-stream',
+          decision: 'BLOCK',
+          risk_score: 0.35,
+          latency_ms: 7,
+          served_at: servedAt,
+        }),
+      } as ShieldVerdictEvent,
+      9_999_999_999_999,
+    );
+
+    expect(row.created_at).toBe(servedAt);
+    expect(row.latency_ms).toBe(7);
   });
 });
 

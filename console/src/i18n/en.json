@@ -93,6 +93,7 @@
     "resolution_response": "Responded",
     "resolution_ignore": "Ignored",
     "loadingDetail": "Loading verdict detail…",
+    "selectVerdict": "Select a verdict to inspect details.",
     "approve": "Approve",
     "reject": "Reject"
   },

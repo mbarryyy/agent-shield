@@ -93,6 +93,7 @@
     "resolution_response": "已回应",
     "resolution_ignore": "已忽略",
     "loadingDetail": "正在加载裁决详情…",
+    "selectVerdict": "选择一条裁决查看详情。",
     "approve": "批准",
     "reject": "拒绝"
   },

@@ -28,9 +28,8 @@ function OperationsContent() {
     limit: 50,
   });
 
-  const operations = data?.operations ?? [];
-
   const filteredOps = useMemo(() => {
+    const operations = data?.operations ?? [];
     if (!search.trim()) return operations;
     const q = search.toLowerCase();
     return operations.filter(
@@ -39,7 +38,7 @@ function OperationsContent() {
         op.agent_id.toLowerCase().includes(q) ||
         op.operation_type.toLowerCase().includes(q),
     );
-  }, [operations, search]);
+  }, [data?.operations, search]);
 
   const columns: Column<Operation & Record<string, unknown>>[] = [
     {

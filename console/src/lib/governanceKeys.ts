@@ -48,9 +48,14 @@ function toNum(v: unknown): number {
  */
 export function streamEventToRow(ev: ShieldVerdictEvent, receivedAt: number): TimelineRow {
   let latency: number | null = null;
+  let createdAt = receivedAt;
   try {
     const v = JSON.parse(ev.verdict) as GovernanceVerdict;
     latency = v.latency_ms ?? null;
+    const servedAt = Number((v as { served_at?: unknown }).served_at);
+    if (Number.isFinite(servedAt) && servedAt > 0) {
+      createdAt = servedAt;
+    }
   } catch {
     latency = null;
   }
@@ -62,7 +67,7 @@ export function streamEventToRow(ev: ShieldVerdictEvent, receivedAt: number): Ti
     decision: ev.decision,
     risk_score: toNum(ev.risk_score),
     latency_ms: latency,
-    created_at: receivedAt,
+    created_at: createdAt,
   };
 }
 
