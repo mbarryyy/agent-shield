@@ -217,6 +217,7 @@
   "operations": {
     "title": "操作",
     "subtitle": "浏览和检查已记录的操作",
+    "searchFilter": "搜索",
     "searchPlaceholder": "按 ID、代理或类型搜索...",
     "colOperationId": "操作 ID",
     "colAgent": "代理",

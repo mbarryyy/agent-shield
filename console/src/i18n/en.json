@@ -217,6 +217,7 @@
   "operations": {
     "title": "Operations",
     "subtitle": "Browse and inspect recorded operations",
+    "searchFilter": "Search",
     "searchPlaceholder": "Search by ID, agent, or type...",
     "colOperationId": "Operation ID",
     "colAgent": "Agent",
