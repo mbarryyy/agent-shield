@@ -146,7 +146,7 @@ export default function GovernanceRunShell() {
       </div>
 
       {rows.length > 0 && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <div data-testid="governance-run-flow" className="space-y-6 mb-6">
           <LiveMonitor
             rows={rows}
             selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}

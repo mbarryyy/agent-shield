@@ -56,6 +56,7 @@ describe('console responsive UI contracts', () => {
     expect(navigation.parentElement).toHaveClass('flex-1');
     expect(navigation.parentElement).toHaveClass('min-h-0');
     expect(navigation.parentElement).toHaveClass('overflow-y-auto');
+    expect(navigation.parentElement).toHaveClass('sidebar-scroll');
 
     expect(screen.getByRole('link', { name: 'Home' })).toHaveClass('sidebar-footer-link');
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveClass('sidebar-footer-link');
@@ -86,6 +87,8 @@ describe('console responsive UI contracts', () => {
     expect(css).toMatch(/min-height:\s*44px/);
     expect(css).toMatch(/min-width:\s*44px/);
     expect(css).toMatch(/touch-action:\s*manipulation/);
+    expect(css).toContain('.sidebar-scroll::-webkit-scrollbar-track');
+    expect(css).toContain('scrollbar-color: rgba(234, 234, 229, 0.3) transparent');
   });
 
   it('keeps the mobile hamburger on the 44px icon-button contract', () => {

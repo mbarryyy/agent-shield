@@ -38,6 +38,12 @@ function formatEvidenceNumber(value: number): string {
   }).format(value);
 }
 
+function formatLatencyMs(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function formatMemorySummary(row: GuardianEvidenceRow): string | null {
   const memoryBackend = row.memory_backend ?? row.memory?.memory_backend;
   if (!memoryBackend) return null;
@@ -82,7 +88,7 @@ function GuardianLane({
 }) {
   const hasSignal = reasons.length > 0 || evidenceRows.length > 0;
   return (
-    <div className="border border-border p-3">
+    <div className="border border-border p-3 min-w-0 overflow-hidden">
       <div className="font-mono text-[10px] uppercase tracking-wider text-ink-dim mb-2">
         {guardian}
       </div>
@@ -91,8 +97,10 @@ function GuardianLane({
       ) : (
         <ul className="space-y-1.5">
           {reasons.map((r, i) => (
-            <li key={`${guardian}-${i}`} className="font-mono text-[12px] text-ink">
-              <span className="uppercase tracking-wider">{r.label}</span>
+            <li key={`${guardian}-${i}`} className="font-mono text-[12px] text-ink min-w-0">
+              <span className="uppercase tracking-wider break-words [overflow-wrap:anywhere]">
+                {r.label}
+              </span>
               {r.score != null && (
                 <span className="text-ink-dim"> · {r.score.toFixed(2)}</span>
               )}
@@ -100,12 +108,12 @@ function GuardianLane({
                 <span className="text-ink-dim"> · {r.served_via}</span>
               )}
               {r.model_id && (
-                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                   model {r.model_id}
                 </div>
               )}
               {r.detail && (
-                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                   {r.detail}
                 </div>
               )}
@@ -114,51 +122,56 @@ function GuardianLane({
           {evidenceRows.map((row, i) => (
             <li
               key={`${guardian}-evidence-${i}`}
-              className="font-mono text-[12px] text-ink"
+              className="font-mono text-[12px] text-ink min-w-0"
             >
-              <span className="uppercase tracking-wider">{row.decision}</span>
+              <span className="uppercase tracking-wider break-words [overflow-wrap:anywhere]">
+                {row.decision}
+              </span>
               {row.reasons.map((reason) => (
-                <div key={reason} className="text-ink-dim normal-case mt-0.5 break-words">
+                <div
+                  key={reason}
+                  className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]"
+                >
                   {reason}
                 </div>
               ))}
-              <div className="text-ink-dim normal-case mt-0.5 break-words">
+              <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                 {row.prompt_tokens} prompt / {row.completion_tokens} completion
-                <span> · {row.latency_ms} ms</span>
+                <span> · {formatLatencyMs(row.latency_ms)} ms</span>
                 {row.served_via && <span> · {row.served_via}</span>}
                 <span> · cost {formatGuardianCost(row.cost_usd)}</span>
               </div>
               {row.model_id && (
-                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                   model {row.model_id}
                 </div>
               )}
               {row.tool_calls && row.tool_calls.length > 0 && (
-                <div className="text-ink-dim normal-case mt-0.5 break-words">
+                <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                   tools {row.tool_calls.join(', ')}
                 </div>
               )}
               {(formatMemorySummary(row) || row.query_id || row.missing_reason || memoryHits(row).length > 0) && (
                 <>
                   {formatMemorySummary(row) && (
-                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                    <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                       {formatMemorySummary(row)}
                     </div>
                   )}
                   {(row.query_id ?? row.memory?.query_id) && (
-                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                    <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                       query {row.query_id ?? row.memory?.query_id}
                     </div>
                   )}
                   {(row.missing_reason ?? row.memory?.missing_reason) && (
-                    <div className="text-ink-dim normal-case mt-0.5 break-words">
+                    <div className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]">
                       missing {row.missing_reason ?? row.memory?.missing_reason}
                     </div>
                   )}
                   {memoryHits(row).slice(0, 3).map((hit) => (
                     <div
                       key={`${row.record_id}-${hit.id}`}
-                      className="text-ink-dim normal-case mt-0.5 break-words"
+                      className="text-ink-dim normal-case mt-0.5 break-words [overflow-wrap:anywhere]"
                     >
                       {formatMemoryHit(hit)}
                     </div>
@@ -202,12 +215,12 @@ export default function VerdictPanel({
           {evidenceLabel && <EvidenceBadge label={evidenceLabel} />}
         </div>
         <div className="font-mono text-[11px] text-ink-dim text-right">
-          {verdict.latency_ms != null && <div>latency {verdict.latency_ms} ms</div>}
+          {verdict.latency_ms != null && <div>latency {formatLatencyMs(verdict.latency_ms)} ms</div>}
           <div className="break-all">{verdict.correlation_id}</div>
         </div>
       </div>
 
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3">
         {GUARDIANS.map((g) => (
           <GuardianLane
             key={g}

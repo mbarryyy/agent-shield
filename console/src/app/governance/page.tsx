@@ -97,7 +97,7 @@ export default function GovernancePage() {
           {BACKEND_EMPTY_MESSAGE}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div data-testid="governance-flow" className="space-y-6">
           <LiveMonitor
             rows={rows}
             selectedVerdictId={selectedRow ? stableRowKey(selectedRow) : null}

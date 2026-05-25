@@ -21,6 +21,9 @@ const BAND_ROW: Record<string, string> = {
   ESCALATE: 'bg-amber-50',
   BLOCK: 'bg-red-50',
 };
+const latency = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+});
 
 export default function LiveMonitor({
   rows,
@@ -87,7 +90,7 @@ export default function LiveMonitor({
                       <RiskBadge score={r.risk_score} />
                     </td>
                     <td className="px-4 py-3 font-mono text-[12px] text-ink-dim">
-                      {r.latency_ms != null ? `${r.latency_ms} ms` : '—'}
+                      {r.latency_ms != null ? `${latency.format(r.latency_ms)} ms` : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <EvidenceBadge label={r.evidence_label} />
