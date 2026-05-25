@@ -57,7 +57,7 @@
     "incidentsSubtitle": "已升级与已拦截的第二层事件",
     "incidentsEmpty": "所选后端运行暂无事件。",
     "runTitle": "运行",
-    "runSubtitle": "按运行成本汇总与裁决时间线",
+    "runSubtitle": "转账序列、干预证据与人工复核",
     "runStub": "运行详情从后端读取成本、时间线、事件与溯源图。",
     "openTransferRun": "打开转账运行",
     "noSignal": "无信号",

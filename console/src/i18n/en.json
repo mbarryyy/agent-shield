@@ -57,7 +57,7 @@
     "incidentsSubtitle": "Escalated and blocked Layer-2 events",
     "incidentsEmpty": "No incidents for the selected backend run.",
     "runTitle": "Run",
-    "runSubtitle": "Per-run cost rollup and verdict timeline",
+    "runSubtitle": "Transfer sequence, intervention evidence and analyst review",
     "runStub": "Run detail reads cost, timeline, incidents, and provenance from the backend.",
     "openTransferRun": "Open transfer run",
     "noSignal": "no signal",

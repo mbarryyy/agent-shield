@@ -56,9 +56,10 @@ describe('Governance run detail', () => {
           rows: [
             { verdict_id: 'verdict-pass', record_id: 'rec-1', correlation_id: 'corr-pass', run_id: 'run-e2e', decision: 'PASS', risk_score: 0.03, latency_ms: 5, created_at: 1716000000000 },
             { verdict_id: 'verdict-block', record_id: 'rec-2', correlation_id: 'corr-block', run_id: 'run-e2e', decision: 'BLOCK', risk_score: 0.92, latency_ms: 6, created_at: 1716000001000 },
+            { verdict_id: 'verdict-hitl', record_id: 'rec-3', correlation_id: 'corr-hitl', run_id: 'run-e2e', decision: 'ESCALATE', risk_score: 0.45, latency_ms: 7, created_at: 1716000002000 },
           ],
           cursor: null,
-          total_count: 2,
+          total_count: 3,
         }),
       ),
       http.get(`${API_BASE_URL}/v1/governance/verdicts/corr-block`, () =>
@@ -98,7 +99,8 @@ describe('Governance run detail', () => {
     );
 
     expect(await screen.findByText('$30,000')).toBeInTheDocument();
-    expect(screen.getByText(/160 tokens/i)).toBeInTheDocument();
+    expect(screen.getByText(/Control sequence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sent to analyst review/i)).toBeInTheDocument();
     expect((await screen.findAllByText('corr-block')).length).toBeGreaterThan(0);
     expect(screen.getByText(/Select a verdict to inspect details/i)).toBeInTheDocument();
     expect(screen.queryByText('STRUCTURING')).not.toBeInTheDocument();
@@ -106,13 +108,12 @@ describe('Governance run detail', () => {
     fireEvent.click(screen.getAllByText('corr-block')[0]);
 
     expect(await screen.findByText('STRUCTURING')).toBeInTheDocument();
-    expect(screen.getByText(/Pending HITL incidents/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Analyst review/i).length).toBeGreaterThan(0);
     expect(screen.getByText('incident-1')).toBeInTheDocument();
     expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
     expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
     const flow = await screen.findByTestId('governance-run-flow');
-    expect(flow).toHaveClass('space-y-6');
-    expect(flow).not.toHaveClass('grid');
+    expect(flow).toHaveClass('grid');
   });
 
   it('uses a recording-safe display name for the seeded payment-control run', async () => {
@@ -121,7 +122,7 @@ describe('Governance run detail', () => {
       http.get(`${API_BASE_URL}/v1/governance/runs/demo-shield-block/cost`, () =>
         HttpResponse.json({
           tokens: { prompt: 0, completion: 0, total: 0 },
-          decision_mix: { PASS: 2, ALERT: 0, BLOCK: 1, ESCALATE: 0, ROLLBACK: 0, REWRITE: 0 },
+          decision_mix: { PASS: 2, ALERT: 0, BLOCK: 1, ESCALATE: 1, ROLLBACK: 0, REWRITE: 0 },
           prevented_loss_total: 30000,
           latency_p50_ms: 2,
           latency_p95_ms: 4,
@@ -140,6 +141,7 @@ describe('Governance run detail', () => {
       http.get(`${API_BASE_URL}/v1/governance/runs/demo-shield-block/timeline`, () =>
         HttpResponse.json({
           rows: [
+            { verdict_id: 'verdict-hitl', record_id: 'rec-3', correlation_id: 'corr-hitl', run_id: 'demo-shield-block', decision: 'ESCALATE', risk_score: 0.45, latency_ms: 5, created_at: 1716000002000 },
             { verdict_id: 'verdict-block', record_id: 'rec-2', correlation_id: 'corr-block', run_id: 'demo-shield-block', decision: 'BLOCK', risk_score: 0.92, latency_ms: 4, created_at: 1716000001000 },
           ],
           cursor: null,
@@ -160,9 +162,10 @@ describe('Governance run detail', () => {
     expect((await screen.findAllByText('Payment control run')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Run demo-shield-block/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/demo-shield-block/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Sent to analyst review/i)).toBeInTheDocument();
     expect(screen.getByText(/Pre-execution evidence/i)).toBeInTheDocument();
     expect(screen.queryByText(/Blocked intent/i)).not.toBeInTheDocument();
-    expect(screen.getByText('SIGNED')).toBeInTheDocument();
+    expect(screen.getAllByText('SIGNED').length).toBeGreaterThan(0);
   });
 
   it('shows backend-empty state instead of fallback data by default', async () => {

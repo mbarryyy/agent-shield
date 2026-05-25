@@ -51,6 +51,7 @@ AGENT = "agentdojo-banking-v1"
 KID = "agentdojo-banking-v1-key-v1"
 PRIV = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 ATTACKER_IBAN = "US133000000121212121212"
+PAYMENT_RUN_ID = "demo-shield-block"
 
 
 class DemoGovernanceApp:
@@ -456,7 +457,7 @@ class DemoRunner:
         for index in range(3):
             rec, verdict = self._decide(
                 client,
-                run_id="demo-shield-block",
+                run_id=PAYMENT_RUN_ID,
                 step_index=index * 2,
                 tool_name="send_money",
                 tool_args={
@@ -491,7 +492,7 @@ class DemoRunner:
     def _scene_hitl(self, client: TestClient) -> None:
         rec, verdict = self._decide(
             client,
-            run_id="demo-hitl",
+            run_id=PAYMENT_RUN_ID,
             step_index=0,
             tool_name="send_money",
             tool_args={
@@ -501,7 +502,7 @@ class DemoRunner:
             },
         )
         incident_id = str(verdict["verdict_id"])
-        before = client.get("/v1/governance/incidents?run_id=demo-hitl")
+        before = client.get(f"/v1/governance/incidents?run_id={PAYMENT_RUN_ID}")
         before.raise_for_status()
         resume = client.post(
             f"/v1/governance/incidents/{incident_id}/resume",
@@ -509,7 +510,7 @@ class DemoRunner:
         )
         resume.raise_for_status()
         resumed = resume.json()
-        after = client.get("/v1/governance/incidents?run_id=demo-hitl")
+        after = client.get(f"/v1/governance/incidents?run_id={PAYMENT_RUN_ID}")
         after.raise_for_status()
         incidents_after = after.json()["incidents"]
         self._record_post_exec(
@@ -585,13 +586,13 @@ class DemoRunner:
         return base64.b64decode(str(envelope["body_base64"]))
 
     def _summary(self, client: TestClient) -> dict[str, Any]:
-        timeline = client.get("/v1/governance/runs/demo-shield-block/timeline")
+        timeline = client.get(f"/v1/governance/runs/{PAYMENT_RUN_ID}/timeline")
         timeline.raise_for_status()
         all_decisions = [str(v["decision"]) for v in self.verdicts]
         decision_counts = {
             decision: all_decisions.count(decision) for decision in sorted(set(all_decisions))
         }
-        cost = client.get("/v1/governance/runs/demo-shield-block/cost")
+        cost = client.get(f"/v1/governance/runs/{PAYMENT_RUN_ID}/cost")
         cost_payload = cost.json() if cost.status_code == 200 else None
         latencies = [
             float(v["latency_ms"])

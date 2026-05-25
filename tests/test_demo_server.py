@@ -32,6 +32,7 @@ def test_seeded_demo_backend_exposes_dashboard_and_run_routes(tmp_path, monkeypa
         dashboard = client.get("/v1/governance/dashboard/kpi")
         timeline = client.get("/v1/governance/runs/demo-shield-block/timeline")
         exports = client.get("/v1/exports")
+        incidents = client.get("/v1/governance/incidents?run_id=demo-shield-block")
         block_row = next(row for row in timeline.json()["rows"] if row["decision"] == "BLOCK")
         block_detail = client.get(f"/v1/governance/verdicts/{block_row['correlation_id']}")
 
@@ -43,7 +44,12 @@ def test_seeded_demo_backend_exposes_dashboard_and_run_routes(tmp_path, monkeypa
     assert timeline.status_code == 200, timeline.text
     timeline_body = timeline.json()
     assert timeline_body["total_count"] >= 1
-    assert {row["decision"] for row in timeline_body["rows"]} >= {"PASS", "BLOCK"}
+    assert {row["decision"] for row in timeline_body["rows"]} >= {"PASS", "ESCALATE", "BLOCK"}
+
+    assert incidents.status_code == 200, incidents.text
+    incident_body = incidents.json()
+    assert incident_body["total_count"] >= 1
+    assert incident_body["incidents"][0]["run_id"] == "demo-shield-block"
 
     assert block_detail.status_code == 200, block_detail.text
     reasons = block_detail.json()["verdict"]["reasons"]
