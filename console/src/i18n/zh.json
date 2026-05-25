@@ -59,7 +59,7 @@
     "runTitle": "运行",
     "runSubtitle": "转账序列、干预证据与人工复核",
     "runStub": "运行详情从后端读取成本、时间线、事件与溯源图。",
-    "openTransferRun": "打开转账运行",
+    "openSelectedRun": "打开此运行",
     "noSignal": "无信号",
     "tokens": "tokens",
     "pending": "处理中",

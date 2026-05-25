@@ -59,7 +59,7 @@
     "runTitle": "Run",
     "runSubtitle": "Transfer sequence, intervention evidence and analyst review",
     "runStub": "Run detail reads cost, timeline, incidents, and provenance from the backend.",
-    "openTransferRun": "Open transfer run",
+    "openSelectedRun": "Open this run",
     "noSignal": "no signal",
     "tokens": "tokens",
     "pending": "pending",

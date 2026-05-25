@@ -96,10 +96,7 @@ describe('backend-first demo pages', () => {
     );
 
     expect(await screen.findByText(/Select a verdict to inspect details/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open transfer run/i })).toHaveAttribute(
-      'href',
-      '/governance/runs/banking',
-    );
+    expect(screen.queryByRole('link', { name: /Open this run/i })).not.toBeInTheDocument();
     expect(screen.queryByText('RECIPIENT_NOT_ALLOWLISTED')).not.toBeInTheDocument();
 
     const row = screen.getByText('corr-block').closest('tr');
@@ -107,6 +104,10 @@ describe('backend-first demo pages', () => {
     fireEvent.click(row as HTMLTableRowElement);
 
     expect(await screen.findByText('RECIPIENT_NOT_ALLOWLISTED')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open this run/i })).toHaveAttribute(
+      'href',
+      '/governance/runs/banking',
+    );
   });
 
   it('keeps /governance/incidents on backend-empty state when backend errors and fixtures are disabled', async () => {

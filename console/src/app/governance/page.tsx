@@ -124,6 +124,9 @@ export default function GovernancePage() {
     detail?.verdict && detail.evidence_label && !evidenceLabelFrom(detail.verdict)
       ? { ...detail.verdict, evidence_label: detail.evidence_label }
       : detail?.verdict;
+  const selectedRunHref = selectedRow?.run_id
+    ? `/governance/runs/${encodeURIComponent(selectedRow.run_id)}`
+    : null;
 
   return (
     <div className="fade-in">
@@ -134,14 +137,6 @@ export default function GovernancePage() {
           { label: t('common.dashboard'), href: '/' },
           { label: t('governance.title') },
         ]}
-        actions={
-          <Link
-            href={`/governance/runs/${encodeURIComponent(RUN_ID)}`}
-            className="btn-brutalist inline-block no-underline"
-          >
-            {t('governance.openTransferRun')}
-          </Link>
-        }
       />
 
       <div className="mb-6 px-4 py-2 border border-border bg-surface font-mono text-[11px] uppercase tracking-wider text-ink-dim">
@@ -164,8 +159,18 @@ export default function GovernancePage() {
             onSelect={(r) => setSelKey(stableRowKey(r))}
           />
           <div>
-            <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim">
-              {t('governance.verdictPanelTitle')}
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">
+                {t('governance.verdictPanelTitle')}
+              </div>
+              {selectedRunHref && (
+                <Link
+                  href={selectedRunHref}
+                  className="btn-brutalist inline-block no-underline"
+                >
+                  {t('governance.openSelectedRun')}
+                </Link>
+              )}
             </div>
             {selectedVerdict ? (
               <VerdictPanel
