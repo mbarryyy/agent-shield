@@ -61,17 +61,13 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
     if samples != 2:
         raise ValueError(f"expected samples_per_pair=2, got {samples}")
     users = {str(pair.get("user_task_id")) for pair in pairs if isinstance(pair, dict)}
-    injections = {
-        str(pair.get("injection_task_id")) for pair in pairs if isinstance(pair, dict)
-    }
+    injections = {str(pair.get("injection_task_id")) for pair in pairs if isinstance(pair, dict)}
     expected_users = {f"user_task_{i}" for i in range(16)}
     expected_injections = {f"injection_task_{i}" for i in range(9)}
     if not expected_users.issubset(users):
         raise ValueError(f"manifest missing users: {sorted(expected_users - users)}")
     if not expected_injections.issubset(injections):
-        raise ValueError(
-            f"manifest missing injections: {sorted(expected_injections - injections)}"
-        )
+        raise ValueError(f"manifest missing injections: {sorted(expected_injections - injections)}")
 
 
 def _validate_benign_manifest(manifest: dict[str, Any]) -> None:
@@ -251,9 +247,7 @@ def build_estimate(manifest_path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
         "attack_variant": manifest["attack_variant"],
         "samples_per_pair": manifest["samples_per_pair"],
         "scenario_pair_count": len(manifest["scenario_pairs"]),
-        "selected_fraction_of_full_design": manifest["scope"][
-            "selected_fraction_of_full_design"
-        ],
+        "selected_fraction_of_full_design": manifest["scope"]["selected_fraction_of_full_design"],
         "reused_rows": reused_rows,
         "reused_artifact_paths": sorted({str(row["reused_from"]) for row in reused_rows}),
         "full_manifest_conservative_estimate_usd": round(full_estimate, 6),
@@ -293,8 +287,7 @@ def build_benign_estimate(manifest_path: Path = DEFAULT_BENIGN_MANIFEST) -> dict
         "recommended_hard_cap_usd": 5.0,
         "execution_recommendation": {
             "run_shape": (
-                "separate benign sub-run and artifact inside the same approved "
-                "Phase 4 execution"
+                "separate benign sub-run and artifact inside the same approved Phase 4 execution"
             ),
             "order": "run benign add-on first, then attack subset",
             "reason": (
@@ -306,12 +299,9 @@ def build_benign_estimate(manifest_path: Path = DEFAULT_BENIGN_MANIFEST) -> dict
     }
 
 
-def build_combined_summary(
-    attack: dict[str, Any], benign: dict[str, Any]
-) -> dict[str, Any]:
+def build_combined_summary(attack: dict[str, Any], benign: dict[str, Any]) -> dict[str, Any]:
     combined_conservative = round(
-        float(attack["conservative_estimate_usd"])
-        + float(benign["conservative_estimate_usd"]),
+        float(attack["conservative_estimate_usd"]) + float(benign["conservative_estimate_usd"]),
         6,
     )
     combined_mean = round(
@@ -382,9 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         benign = build_benign_estimate(args.benign_manifest)
         benign_out = args.benign_out or DEFAULT_BENIGN_OUT
         benign_out.parent.mkdir(parents=True, exist_ok=True)
-        benign_out.write_text(
-            json.dumps(benign, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        benign_out.write_text(json.dumps(benign, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         combined = build_combined_summary(estimate, benign)
         combined_out = args.combined_out or DEFAULT_COMBINED_OUT
         combined_out.parent.mkdir(parents=True, exist_ok=True)

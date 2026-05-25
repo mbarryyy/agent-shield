@@ -42,10 +42,7 @@ def test_20pct_manifest_is_frozen_stratified_and_marks_reused_rows() -> None:
 
     reused = manifest["reused_rows"]
     assert len(reused) == 2
-    assert {
-        (row["user_task_id"], row["injection_task_id"], row["arm"])
-        for row in reused
-    } == {
+    assert {(row["user_task_id"], row["injection_task_id"], row["arm"]) for row in reused} == {
         ("user_task_2", "injection_task_4", "A2"),
         ("user_task_2", "injection_task_6", "A2"),
     }

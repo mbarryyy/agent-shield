@@ -53,9 +53,7 @@ DEFAULT_ATTACK_MANIFEST = (
     / "scenarios"
     / "benchmark_20pct_20260525.json"
 )
-DEFAULT_BENIGN_MANIFEST = DEFAULT_ATTACK_MANIFEST.with_name(
-    "benchmark_20pct_benign_20260525.json"
-)
+DEFAULT_BENIGN_MANIFEST = DEFAULT_ATTACK_MANIFEST.with_name("benchmark_20pct_benign_20260525.json")
 DEFAULT_ATTACK_ESTIMATE = Path(
     "/private/tmp/agent-shield-benchmark-20pct-estimate-20260525/estimate.json"
 )
@@ -428,9 +426,7 @@ def build_benign_case_row(
         "decision_source": decision_source,
         "false_positive": decision in FALSE_POSITIVE_DECISIONS,
         "latency_ms": (
-            sum(outcome.latencies_ms) / len(outcome.latencies_ms)
-            if outcome.latencies_ms
-            else 0.0
+            sum(outcome.latencies_ms) / len(outcome.latencies_ms) if outcome.latencies_ms else 0.0
         ),
         "prompt_tokens": worker_prompt_tokens + guardian_prompt_tokens,
         "completion_tokens": worker_completion_tokens + guardian_completion_tokens,
@@ -633,9 +629,9 @@ def _summarize_benign(
         "manifest_id": manifest["manifest_id"],
         "suite": manifest["suite"],
         "backend": "real",
-        "api_call_status": "EXECUTED" if any(
-            row.get("api_call_status") == "EXECUTED" for row in cases
-        ) else "SKIPPED",
+        "api_call_status": "EXECUTED"
+        if any(row.get("api_call_status") == "EXECUTED" for row in cases)
+        else "SKIPPED",
         "evidence_label": "MEASURED-REAL-MODEL",
         "case_row_count": len(cases),
         "executed_case_count": sum(1 for row in cases if row.get("api_call_status") == "EXECUTED"),

@@ -365,8 +365,7 @@ class DemoRunner:
         timeline.raise_for_status()
         all_decisions = [str(v["decision"]) for v in self.verdicts]
         decision_counts = {
-            decision: all_decisions.count(decision)
-            for decision in sorted(set(all_decisions))
+            decision: all_decisions.count(decision) for decision in sorted(set(all_decisions))
         }
         cost = client.get("/v1/governance/runs/demo-shield-block/cost")
         cost_payload = cost.json() if cost.status_code == 200 else None
