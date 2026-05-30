@@ -149,4 +149,13 @@ def load_governance_app() -> GovernanceApp:
     resume_fn = getattr(gov, "resume", None)
     if build_decide_app is None or decide_fn is None or resume_fn is None:
         return NullGovernanceApp()  # gov W3 seam not exported yet → honest Null
-    return _GovSeamAdapter(decide_fn, resume_fn, build_decide_app())
+    # Build the decide-app WITH a checkpointer so the escalate/interrupt node is
+    # compiled into the graph and HITL resume() works (gov build_decide_app adds
+    # the escalate node + enables Command(resume=…) only when a checkpointer is
+    # supplied). InMemorySaver is the W4 dev/single-process saver; a durable
+    # PostgresSaver is deferred. Without this the server's
+    # POST /v1/governance/incidents/{id}/resume path is dead and no ESCALATE
+    # incident can ever pause.
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    return _GovSeamAdapter(decide_fn, resume_fn, build_decide_app(checkpointer=InMemorySaver()))

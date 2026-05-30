@@ -89,12 +89,52 @@ def test_loader_returns_adapter_when_gov_surface_present(
     ) -> object:  # pragma: no cover
         raise AssertionError("loader must not invoke resume")
 
-    fake.build_decide_app = lambda: object()
+    fake.build_decide_app = lambda *, checkpointer=None: object()
     fake.decide = _decide
     fake.resume = _resume
     monkeypatch.setitem(sys.modules, "shield_governance", fake)
     app = load_governance_app()
     assert isinstance(app, _GovSeamAdapter)
+
+
+def test_loader_builds_checkpointer_backed_app_for_hitl() -> None:
+    """P1b: the real loader builds the decide-app WITH a checkpointer so the
+    escalate/interrupt node is in the graph and resume() works. Without it the
+    server HITL path (POST /v1/governance/incidents/{id}/resume) is dead."""
+    app = load_governance_app()
+    # When the real gov surface is importable (workspace member), the loader
+    # returns the adapter; its wrapped GovApp must be checkpointer-backed.
+    assert isinstance(app, _GovSeamAdapter)
+    assert app._app.has_checkpointer is True  # type: ignore[attr-defined]
+
+
+def test_loader_passes_checkpointer_to_build_decide_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1b (state-robust): the loader passes a non-None checkpointer kwarg into
+    build_decide_app, regardless of whether gov-W3 is ambiently importable."""
+    captured: dict[str, object] = {}
+    fake = types.ModuleType("shield_governance")
+
+    async def _decide(app: object, rec: object) -> object:  # pragma: no cover
+        raise AssertionError("loader must not invoke decide")
+
+    async def _resume(
+        app: object, incident_id: str, decision: str, payload: object
+    ) -> object:  # pragma: no cover
+        raise AssertionError("loader must not invoke resume")
+
+    def _build(*, checkpointer: object | None = None) -> object:
+        captured["checkpointer"] = checkpointer
+        return object()
+
+    fake.build_decide_app = _build
+    fake.decide = _decide
+    fake.resume = _resume
+    monkeypatch.setitem(sys.modules, "shield_governance", fake)
+    app = load_governance_app()
+    assert isinstance(app, _GovSeamAdapter)
+    assert captured["checkpointer"] is not None
 
 
 class _FakeBlockGov:

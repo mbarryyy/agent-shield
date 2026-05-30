@@ -23,7 +23,9 @@ ADR-0013 additive:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
+import os
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -70,6 +72,52 @@ def _refuse_or_exit(settings: Settings) -> None:
         )
 
 
+async def _start_async_worker(app: FastAPI, settings: Settings) -> asyncio.Task[None] | None:
+    """Start the Channel-2 async verdict worker as a background task.
+
+    Disabled unless ``SHIELD_ASYNC_WORKER=1`` (returns ``None``). FAIL-LOUD: a
+    ``cloud`` router profile with no ``ANTHROPIC_API_KEY`` would run the async
+    LLM guardians with no credentials — neither ``ShieldModelRouter`` construction
+    nor ``model_factory`` raises on a missing key, so this boot-time guard is the
+    only place a misconfigured deployment can fail loudly instead of degrading
+    into a silent no-LLM worker. ``local`` profile is in-VPC and needs no key.
+    """
+    if os.environ.get("SHIELD_ASYNC_WORKER", "") != "1":
+        return None
+    if settings.router_profile == "cloud" and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "SHIELD_ASYNC_WORKER=1 with SHIELD_ROUTER_PROFILE=cloud requires "
+            "ANTHROPIC_API_KEY in the environment — the async guardians call the "
+            "cloud model router and must not run without credentials. Set the key, "
+            "or use SHIELD_ROUTER_PROFILE=local (in-VPC serving, no key)."
+        )
+    from shield_governance.channel2 import Channel2Transport, RedisChannel2Transport
+
+    from .async_verdict_worker import AsyncVerdictWorker, CacheChannel2Transport
+    from .storage.cache import RedisCache
+
+    cache = app.state.storage.cache
+    transport: Channel2Transport
+    if isinstance(cache, RedisCache):  # pragma: no cover - integration-only network glue
+        transport = await RedisChannel2Transport.connect(settings.redis_url)
+    else:
+        transport = CacheChannel2Transport(cache)
+    worker = AsyncVerdictWorker(storage=app.state.storage, settings=settings, transport=transport)
+    workflow_id = os.environ.get("SHIELD_ASYNC_WORKER_WORKFLOW_ID", "banking")
+    return asyncio.create_task(worker.run_loop(workflow_id))
+
+
+async def _stop_async_worker(app: FastAPI) -> None:
+    """Cancel the async verdict worker background task on shutdown (no-op when
+    it was never started). ``run_loop`` propagates ``CancelledError`` cleanly."""
+    task: asyncio.Task[None] | None = getattr(app.state, "async_worker_task", None)
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 def create_app(
     *,
     storage: Storage | None = None,
@@ -114,7 +162,14 @@ def create_app(
                     event="STARTED_IN_OPEN_MODE",
                     detail={"hostname": _hostname(), "pid": _pid()},
                 )
-        yield
+        # Channel-2 async verdict worker (signs + publishes the late LLM-guardian
+        # verdicts). OFF unless SHIELD_ASYNC_WORKER=1, so the unit suite +
+        # console-only deploys never spawn a consumer; cancelled on shutdown.
+        app.state.async_worker_task = await _start_async_worker(app, settings)
+        try:
+            yield
+        finally:
+            await _stop_async_worker(app)
 
     app = FastAPI(title="Agent Shield Server", version="1.0", lifespan=lifespan)
     app.state.settings = settings
