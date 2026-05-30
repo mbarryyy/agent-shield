@@ -14,6 +14,7 @@ from shield_sdk.schema import (
     GovernanceVerdict,
     Guardian,
     Phase,
+    ServedVia,
     ShieldActionRecord,
     VerdictReason,
 )
@@ -24,6 +25,7 @@ from shield_governance.evidence import GuardianEvidenceRecorder
 from shield_governance.graph import _resolve_pubkey
 from shield_governance.memory.tools import build_recall_similar_incidents_tool
 from shield_governance.model_router import ShieldModelRouter
+from shield_governance.pricing import cost_usd
 from shield_governance.router_runtime import (
     RouterCallMeasurement,
     RouterCallResult,
@@ -187,7 +189,12 @@ class RouterHallucinationChecker:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
-            cost_usd=0.0,
+            cost_usd=cost_usd(
+                model_id=model_id,
+                served_via=served_via,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ),
             memory=memory_evidence_log[-1] if memory_evidence_log else None,
             tool_calls=tuple(tool_call_log),
         )
@@ -263,19 +270,25 @@ class RouterSupervisorArbiter:
                 {"messages": [{"role": "user", "content": prompt}]},
                 config={"recursion_limit": self._max_iterations + 2},
             )
-            parsed = _extract_agent_text_and_usage(result)
         except Exception as exc:
-            parsed = _AgentRunSummary(
-                text=f"ESCALATE: supervisor tool loop failed ({exc.__class__.__name__})",
-                prompt_tokens=0,
-                completion_tokens=0,
-            )
-            tool_call_log.append("supervisor_tool_loop_error")
+            # NO fail-closed-as-mock: a real model/tool-loop failure must SURFACE,
+            # never be fabricated into an "ESCALATE: tool loop failed" verdict
+            # (charter R1/R6). Match RouterHallucinationChecker (the reference
+            # impl) — raise so the caller records an honest guardian error and
+            # the at-least-once consumer re-delivers instead of publishing a
+            # faked decision.
+            raise GuardianModelInvocationError(
+                Guardian.SUPERVISOR.value, resolved.model, exc
+            ) from exc
+        parsed = _extract_agent_text_and_usage(result)
+        result_with_cost = parsed.to_router_result(
+            model_id=resolved.model, served_via=resolved.served_via
+        )
         measurement = RouterCallMeasurement(
             role="supervisor",
             model_id=resolved.model,
             served_via=resolved.served_via,
-            result=parsed.to_router_result(),
+            result=result_with_cost,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
         self._last_measurement = measurement
@@ -415,14 +428,12 @@ class RouterBackedAuditor(Auditor):
                 },
                 config={"recursion_limit": self._max_iterations + 2},
             )
-            parsed = _extract_agent_text_and_usage(run)
         except Exception as exc:
-            parsed = _AgentRunSummary(
-                text=f"AUDIT: tool loop failed ({exc.__class__.__name__})",
-                prompt_tokens=0,
-                completion_tokens=0,
-            )
-            tool_call_log.append("auditor_tool_loop_error")
+            # NO fail-closed-as-mock: surface a real Auditor model/tool-loop
+            # failure instead of fabricating an "AUDIT: tool loop failed" row
+            # (charter R1/R6). Match RouterHallucinationChecker — raise.
+            raise GuardianModelInvocationError(Guardian.AUDITOR.value, resolved.model, exc) from exc
+        parsed = _extract_agent_text_and_usage(run)
         self._evidence.record_for_record(
             record,
             guardian=Guardian.AUDITOR,
@@ -434,7 +445,12 @@ class RouterBackedAuditor(Auditor):
             prompt_tokens=parsed.prompt_tokens,
             completion_tokens=parsed.completion_tokens,
             latency_ms=(time.perf_counter() - started) * 1000.0,
-            cost_usd=0.0,
+            cost_usd=cost_usd(
+                model_id=resolved.model,
+                served_via=resolved.served_via,
+                prompt_tokens=parsed.prompt_tokens,
+                completion_tokens=parsed.completion_tokens,
+            ),
             memory=memory_evidence_log[-1] if memory_evidence_log else None,
             tool_calls=tuple(tool_call_log),
         )
@@ -555,23 +571,33 @@ def make_router_backed_async_channel2_handler(
     )
 
     async def handle(record: ShieldActionRecord) -> None:
-        eval_result = await guardians.evaluator.evaluate(record)
-        public_key = await _resolve_pubkey(key_resolver, record)
-        audit_result = guardians.auditor.audit([record], agent_pubkey_b64url=public_key)
-        _record_auditor_if_absent(guardians.evidence_recorder, record, audit_result)
-        signals = GuardianSignals(
-            defender_decision=Decision.PASS,
-            evaluator_anomaly=eval_result.anomaly,
-            evaluator_reasons=eval_result.reasons,
-            evaluator_ran=True,
-            auditor_integrity=audit_result.integrity,
-            auditor_reasons=audit_result.reasons,
-            structuring_or_exfil=eval_result.structuring_or_exfil,
-            chain_broken=audit_result.chain_broken,
-            post_exec=record.phase == Phase.POST_EXEC,
-        )
-        verdict = guardians.supervisor.decide(signals, record=record)
-        _record_supervisor_if_absent(guardians.evidence_recorder, record, verdict)
+        # A guardian model failure RAISES GuardianModelInvocationError (charter
+        # R1/R6 — never a fabricated verdict). When that happens we record an
+        # HONEST guardian.model_error evidence row (truthful, decision-free) and
+        # RE-RAISE: ``on_verdict`` is NOT called, so nothing signs/persists/
+        # publishes a fake decision, and the at-least-once Channel-2 consumer
+        # re-delivers the record instead of ACKing it.
+        try:
+            eval_result = await guardians.evaluator.evaluate(record)
+            public_key = await _resolve_pubkey(key_resolver, record)
+            audit_result = guardians.auditor.audit([record], agent_pubkey_b64url=public_key)
+            _record_auditor_if_absent(guardians.evidence_recorder, record, audit_result)
+            signals = GuardianSignals(
+                defender_decision=Decision.PASS,
+                evaluator_anomaly=eval_result.anomaly,
+                evaluator_reasons=eval_result.reasons,
+                evaluator_ran=True,
+                auditor_integrity=audit_result.integrity,
+                auditor_reasons=audit_result.reasons,
+                structuring_or_exfil=eval_result.structuring_or_exfil,
+                chain_broken=audit_result.chain_broken,
+                post_exec=record.phase == Phase.POST_EXEC,
+            )
+            verdict = guardians.supervisor.decide(signals, record=record)
+            _record_supervisor_if_absent(guardians.evidence_recorder, record, verdict)
+        except GuardianModelInvocationError as exc:
+            _record_guardian_error(guardians.evidence_recorder, record, exc)
+            raise
         if on_verdict is not None:
             await on_verdict(
                 AsyncVerdictHandoff.from_record(
@@ -582,6 +608,36 @@ def make_router_backed_async_channel2_handler(
             )
 
     return handle
+
+
+def _record_guardian_error(
+    recorder: GuardianEvidenceRecorder,
+    record: ShieldActionRecord,
+    exc: GuardianModelInvocationError,
+) -> None:
+    """Record an HONEST evidence row for a guardian whose model call failed.
+
+    The row carries no fabricated decision — it is explicitly an error
+    (``decision=ALERT`` as a neutral "needs attention", labelled
+    ``guardian.model_error`` with the real model id + error class). Consumers
+    must treat this guardian as NOT having produced a verdict, never read it as
+    a real PASS/BLOCK/ESCALATE (charter R1: empty/error is honest, faked is
+    not).
+    """
+    guardian = _GUARDIAN_BY_NAME.get(exc.guardian_name)
+    if guardian is None:  # pragma: no cover - defensive; names come from Guardian
+        return
+    recorder.record_for_record(
+        record,
+        guardian=guardian,
+        decision=Decision.ALERT,
+        reasons=("guardian.model_error", f"error:{exc.error_class}"),
+        model_id=exc.model_id,
+        served_via=None,
+    )
+
+
+_GUARDIAN_BY_NAME: dict[str, Guardian] = {g.value: g for g in Guardian}
 
 
 def _record_auditor_if_absent(
@@ -632,12 +688,30 @@ class _AgentRunSummary:
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
-    def to_router_result(self) -> RouterCallResult:
+    def to_router_result(
+        self,
+        *,
+        model_id: str | None = None,
+        served_via: ServedVia | None = None,
+    ) -> RouterCallResult:
+        # Real cost when the caller knows the resolved model/transport;
+        # 0.0 only when neither is supplied (e.g. a bare summary with no model
+        # context) — never a hardcoded 0.0 for a known cloud call (charter R1).
+        result_cost = (
+            cost_usd(
+                model_id=model_id,
+                served_via=served_via,
+                prompt_tokens=self.prompt_tokens,
+                completion_tokens=self.completion_tokens,
+            )
+            if (model_id is not None or served_via is not None)
+            else 0.0
+        )
         return RouterCallResult(
             text=self.text,
             prompt_tokens=self.prompt_tokens,
             completion_tokens=self.completion_tokens,
-            cost_usd=0.0,
+            cost_usd=result_cost,
         )
 
 

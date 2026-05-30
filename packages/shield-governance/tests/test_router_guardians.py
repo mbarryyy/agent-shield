@@ -272,7 +272,14 @@ def test_router_supervisor_malformed_output_defaults_to_escalate() -> None:
     assert supervisor_row.reasons == ("supervisor.arbitrated",)
 
 
-def test_router_supervisor_tool_loop_limit_defaults_to_escalate() -> None:
+def test_router_supervisor_tool_loop_limit_raises_no_fabrication() -> None:
+    """A tool loop that exceeds its recursion limit is a real failure of the
+    model/agent loop — it must RAISE GuardianModelInvocationError, never be
+    fabricated into an ESCALATE verdict (charter R1/R6). This pins the
+    de-swallow: the old behavior (ESCALATE + ``supervisor_tool_loop_error``)
+    was a fail-closed-as-mock and is gone."""
+    from shield_governance.router_guardians import GuardianModelInvocationError
+
     recorder = GuardianEvidenceRecorder()
     tool_turns = [
         AIMessage(
@@ -287,20 +294,20 @@ def test_router_supervisor_tool_loop_limit_defaults_to_escalate() -> None:
         max_iterations=2,
     )
     record = _record()
-    verdict = Supervisor(arbiter=arbiter).decide(
-        GuardianSignals(
-            defender_decision=Decision.PASS,
-            evaluator_anomaly=0.95,
-            evaluator_ran=True,
-        ),
-        record=record,
-    )
+    with pytest.raises(GuardianModelInvocationError) as excinfo:
+        Supervisor(arbiter=arbiter).decide(
+            GuardianSignals(
+                defender_decision=Decision.PASS,
+                evaluator_anomaly=0.95,
+                evaluator_ran=True,
+            ),
+            record=record,
+        )
 
-    assert verdict.decision is Decision.ESCALATE
-    supervisor_row = next(
-        row for row in recorder.for_record(record.record_id) if row.guardian is Guardian.SUPERVISOR
-    )
-    assert "supervisor_tool_loop_error" in supervisor_row.tool_calls
+    assert excinfo.value.guardian_name == Guardian.SUPERVISOR.value
+    # No fabricated supervisor evidence row / no faked ESCALATE was recorded.
+    rows = recorder.for_record(record.record_id)
+    assert all("supervisor_tool_loop_error" not in row.tool_calls for row in rows)
 
 
 @pytest.mark.asyncio
