@@ -226,6 +226,73 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return max(-1.0, min(1.0, dot / (na * nb)))
 
 
+# --------------------------------------------------------------------------- #
+# Deterministic peer-relative anomaly (governance_design §3.2
+# `peer_relative_anomaly`). XG-Guard adaptive-prototype idea re-done
+# training-free + parameter-free: embed the record + each session record with
+# the local DeterministicHashEmbedder, take the cosine distance of the current
+# record to the session running-mean (centroid), and flag when the distance
+# exceeds a deterministic threshold. No LLM, no network — purely the existing
+# `_cosine` / `_centroid` / `_record_text` helpers + the local embedder.
+# --------------------------------------------------------------------------- #
+
+#: Default cosine-distance threshold above which a record is "peer-relative
+#: anomalous" vs its session. Runtime-overridable per call.
+DEFAULT_PEER_ANOMALY_THRESHOLD: float = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class PeerRelativeAnomaly:
+    """Result of comparing a record to its session centroid (no LLM)."""
+
+    anomalous: bool
+    distance: float  # cosine distance in [0, 1]: 0 = identical .. 1 = orthogonal
+    score: float  # alias of distance, clamped [0, 1] (anomaly strength)
+    threshold: float
+    baseline_count: int
+
+
+def peer_relative_anomaly(
+    record: ShieldActionRecord,
+    session_records: list[ShieldActionRecord],
+    *,
+    threshold: float = DEFAULT_PEER_ANOMALY_THRESHOLD,
+    embedder: object | None = None,
+) -> PeerRelativeAnomaly:
+    """Cosine distance of ``record`` to the centroid of ``session_records``.
+
+    An empty session is never anomalous (no peers to be relative to). Otherwise
+    the distance is ``1 - cosine(record_vec, session_centroid)`` clamped to
+    ``[0, 1]``; ``anomalous`` is ``distance >= threshold`` (a ``threshold`` of
+    ``1.0`` means "never flag", since no distance exceeds the maximum).
+    Deterministic via the local :class:`DeterministicHashEmbedder`; no model,
+    no I/O.
+    """
+    from shield_governance.memory.incidents import DeterministicHashEmbedder
+
+    if not session_records:
+        return PeerRelativeAnomaly(
+            anomalous=False, distance=0.0, score=0.0, threshold=threshold, baseline_count=0
+        )
+
+    emb = embedder if embedder is not None else DeterministicHashEmbedder()
+    current_vec = emb.embed(_record_text(record))  # type: ignore[attr-defined]
+    session_vecs = [emb.embed(_record_text(r)) for r in session_records]  # type: ignore[attr-defined]
+    centroid = _centroid(session_vecs)
+    distance = max(0.0, min(1.0, 1.0 - _cosine(current_vec, centroid)))
+    # A threshold of 1.0 means "never flag" (no distance can exceed the maximum
+    # possible distance), so anomalous requires distance >= threshold AND the
+    # threshold to be below the 1.0 ceiling.
+    anomalous = distance >= threshold and threshold < 1.0
+    return PeerRelativeAnomaly(
+        anomalous=anomalous,
+        distance=distance,
+        score=distance,
+        threshold=threshold,
+        baseline_count=len(session_records),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluatorConfig:
     run_invariant: bool = True
