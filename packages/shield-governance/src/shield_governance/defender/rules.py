@@ -27,6 +27,7 @@ the thesis is asserted as a unit test against the real success condition.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -207,6 +208,45 @@ def scan_subject_secrets(subject: str) -> RuleOutcome:
                 1.0,
             )
     return RuleOutcome(Decision.PASS, "subject.clean")
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic numeric value-sanity (governance_design §3.2 `value_sanity`,
+# "numeric range vs baseline"). The deterministic half of
+# hallucination_check/value_sanity: a transferred amount must be a finite,
+# non-negative, plausibly-bounded number. This is model-free — the LLM
+# `hallucination_check` half is the separate RouterHallucinationChecker. Catches
+# the obviously-insane value (NaN/inf/negative/absurd-magnitude) a worker (or an
+# injection) might emit, without needing a model.
+# --------------------------------------------------------------------------- #
+
+#: Default plausibility ceiling — above this a single transfer amount is treated
+#: as implausible/insane (not a normal banking transfer). Runtime-overridable.
+DEFAULT_VALUE_SANITY_CEILING: float = 1e12
+
+
+def value_sanity(value: object, *, ceiling: float = DEFAULT_VALUE_SANITY_CEILING) -> RuleOutcome:
+    """Deterministic numeric sanity check on a transfer-like amount.
+
+    BLOCKs unparseable, NaN/inf, negative, or above-``ceiling`` values; PASSes a
+    finite non-negative value within bounds. No model, no I/O.
+    """
+    try:
+        amount = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return RuleOutcome(Decision.BLOCK, "value.unparseable", f"non-numeric value {value!r}", 1.0)
+    if math.isnan(amount) or math.isinf(amount):
+        return RuleOutcome(Decision.BLOCK, "value.non_finite", f"non-finite value {amount!r}", 1.0)
+    if amount < 0:
+        return RuleOutcome(Decision.BLOCK, "value.negative", f"negative value {amount}", 1.0)
+    if amount > ceiling:
+        return RuleOutcome(
+            Decision.BLOCK,
+            "value.implausible_magnitude",
+            f"value {amount} exceeds plausibility ceiling {ceiling}",
+            1.0,
+        )
+    return RuleOutcome(Decision.PASS, "value.sane")
 
 
 # --------------------------------------------------------------------------- #

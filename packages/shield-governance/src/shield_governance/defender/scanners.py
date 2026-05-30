@@ -34,6 +34,7 @@ cumulative-amount catcher; this LocalPolicy is a verified DSL cross-check.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -131,6 +132,67 @@ class LlamaFirewallScanner:
         if result.decision == ScanDecision.HUMAN_IN_THE_LOOP_REQUIRED:
             return ScanFinding(False, True, f"scanner.review.{kind}", result.reason, result.score)
         return ScanFinding(False, False, "scanner.clean", result.reason, result.score)
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic dangerous-code detector (governance_design §3.1 `scan_code`).
+#
+# The design's `scan_code` = LlamaFirewall CODE_SHIELD (model-free regex +
+# Semgrep) behind a "looks like code" heuristic. CODE_SHIELD lives in the heavy
+# optional `llamafirewall` extra; this is the air-gap-safe model-free core —
+# a regex detector for code-execution / shell-injection sinks in free-text args
+# (an agent should never be emitting `eval`/`os.system`/`subprocess`/imports in
+# a `subject` or similar field). Pure Python, microseconds, no model, no
+# network. Returns the same `ScanFinding` shape as the other Defender scanners.
+# --------------------------------------------------------------------------- #
+
+_DANGEROUS_CODE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("eval_exec", re.compile(r"\b(eval|exec|compile)\s*\(")),
+    ("dunder_import", re.compile(r"\b__import__\s*\(")),
+    (
+        "os_system",
+        re.compile(r"\bos\s*\.\s*(system|popen|exec[lv]?[pe]*|spawn\w*|remove|unlink)\b"),
+    ),
+    ("subprocess", re.compile(r"\bsubprocess\s*\.\s*\w+")),
+    (
+        "dangerous_import",
+        re.compile(r"\b(import|from)\s+(os|subprocess|sys|shutil|socket|pty|ctypes)\b"),
+    ),
+    ("shell_backticks", re.compile(r"`[^`]+`")),
+    ("shell_rm_rf", re.compile(r"\brm\s+-rf\b")),
+)
+
+
+def scan_code(text: str, *, kind: str) -> ScanFinding:
+    """Model-free dangerous-code scan over a free-text value.
+
+    BLOCKs when the text contains a code-execution / shell-injection sink
+    (``eval``/``exec``/``__import__``, ``os.system``/``subprocess``, a dangerous
+    ``import``, shell backticks, or ``rm -rf``). Clean text returns an explicit
+    PASS finding. Deterministic, no model, no network.
+    """
+    if text:
+        for label, pat in _DANGEROUS_CODE_PATTERNS:
+            if pat.search(text):
+                return ScanFinding(
+                    True,
+                    False,
+                    f"scanner.code.{kind}",
+                    f"dangerous-code pattern ({label}) in free-text {kind}",
+                    1.0,
+                )
+    return ScanFinding(False, False, "scanner.code.clean", "", 0.0)
+
+
+class CodeShieldScanner:
+    """``InjectionScanner`` adapter for :func:`scan_code`.
+
+    Lets the Defender engine treat the deterministic code detector through the
+    same async ``scan_text`` seam as the other scanners (the heavy LlamaFirewall
+    CODE_SHIELD remains an optional drop-in behind the same Protocol)."""
+
+    async def scan_text(self, text: str, *, kind: str) -> ScanFinding:
+        return scan_code(text, kind=kind)
 
 
 @dataclass(frozen=True, slots=True)
