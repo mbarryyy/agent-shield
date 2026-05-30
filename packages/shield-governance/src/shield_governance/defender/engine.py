@@ -43,6 +43,7 @@ from shield_governance.defender.rules import (
     evaluate_send_money,
 )
 from shield_governance.defender.scanners import (
+    CodeShieldScanner,
     InjectionScanner,
     NullInjectionScanner,
     StructuringAnalyzer,
@@ -69,6 +70,7 @@ class DefenderConfig:
     )
     run_scanner: bool = True
     run_invariant: bool = True
+    run_code_scanner: bool = True
 
 
 def _defender_reason(
@@ -95,9 +97,14 @@ class DefenderEngine:
         *,
         scanner: InjectionScanner | None = None,
         structuring: StructuringAnalyzer | None = None,
+        code_scanner: InjectionScanner | None = None,
     ) -> None:
         self._cfg = config or DefenderConfig()
         self._scanner: InjectionScanner = scanner or NullInjectionScanner()
+        # Second model-free scanner (governance_design §3.1 scan_code): a
+        # deterministic dangerous-code/shell-injection detector on the same
+        # async InjectionScanner seam. Defaults to the real CodeShieldScanner.
+        self._code_scanner: InjectionScanner = code_scanner or CodeShieldScanner()
         self._structuring = structuring  # None -> Invariant cross-check skipped
         self._trackers: dict[str, CumulativeRecipientTracker] = {}
         self._traces: dict[str, list[dict[str, Any]]] = {}
@@ -195,6 +202,18 @@ class DefenderEngine:
                 f = await self._scanner.scan_text(subject, kind="subject")
                 if f.blocked or f.escalate:
                     reasons.append(_defender_reason(f.label, f.detail, f.score))
+
+        # 2b. Deterministic dangerous-code/shell-injection scan on the free-text
+        # subject (governance_design §3.1 scan_code; model-free, microseconds).
+        # The regex matches code-execution/shell sinks by call-syntax (eval(,
+        # os.system, backticks, rm -rf), not bare words — so a normal finance
+        # subject does not trip it (low false-positive on the §1 wedge).
+        if self._cfg.run_code_scanner:
+            subject = str(args.get("subject", ""))
+            if subject:
+                cf = await self._code_scanner.scan_text(subject, kind="subject")
+                if cf.blocked or cf.escalate:
+                    reasons.append(_defender_reason(cf.label, cf.detail, cf.score))
 
         # 3. Invariant LocalPolicy cross-call cross-check (verified count(min=3)).
         #    Invariant's sync LocalPolicy.analyze() calls asyncio.run()
