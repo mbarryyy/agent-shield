@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from langchain.agents import create_agent
@@ -522,20 +523,54 @@ class RouterBackedAuditor(Auditor):
         return report
 
 
+def resolve_default_memory(
+    memory: object | None,
+    memory_persist_directory: str | Path | None,
+) -> object:
+    """Pick the guardian recall backend.
+
+    Resolution order (charter R1 — real Chroma is the DEFAULT, the injection
+    seam is preserved, and nothing breaks when neither is supplied):
+
+    1. An explicitly injected ``memory`` always wins (the seam tests rely on).
+    2. Else, when a ``memory_persist_directory`` is configured, default to the
+       REAL local-Chroma ``incidents`` collection
+       (:meth:`ChromaVectorStore.incident_memory`) — this is the production
+       default the keyed async worker supplies.
+    3. Else (no memory, no persist dir — e.g. unit tests with no on-disk store),
+       fall back to the explicitly-labelled process-local short-window memory.
+    """
+    if memory is not None:
+        return memory
+    if memory_persist_directory is not None:
+        from shield_governance.memory import ChromaVectorStore, ChromaVectorStoreConfig
+
+        return ChromaVectorStore(
+            ChromaVectorStoreConfig(persist_directory=memory_persist_directory)
+        ).incident_memory()
+    from shield_governance.evaluator_agent import EvaluatorAgentMemory
+
+    return EvaluatorAgentMemory()
+
+
 def build_router_backed_guardians(
     router: ShieldModelRouter,
     *,
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
     memory: object | None = None,
+    memory_persist_directory: str | Path | None = None,
 ) -> RouterBackedGuardians:
     evidence = evidence_recorder or GuardianEvidenceRecorder()
+    resolved_memory = resolve_default_memory(memory, memory_persist_directory)
     evaluator = Evaluator(
         evaluator_config or EvaluatorConfig(),
-        hallucination=RouterHallucinationChecker(router, evidence, memory=memory),
+        hallucination=RouterHallucinationChecker(router, evidence, memory=resolved_memory),
     )
-    supervisor = Supervisor(arbiter=RouterSupervisorArbiter(router, evidence, memory=memory))
-    auditor = RouterBackedAuditor(router, evidence, memory=memory)
+    supervisor = Supervisor(
+        arbiter=RouterSupervisorArbiter(router, evidence, memory=resolved_memory)
+    )
+    auditor = RouterBackedAuditor(router, evidence, memory=resolved_memory)
     return RouterBackedGuardians(
         evaluator=evaluator,
         supervisor=supervisor,
@@ -550,6 +585,7 @@ def make_router_backed_async_channel2_handler(
     evidence_recorder: GuardianEvidenceRecorder | None = None,
     evaluator_config: EvaluatorConfig | None = None,
     memory: object | None = None,
+    memory_persist_directory: str | Path | None = None,
     on_verdict: Callable[[AsyncVerdictHandoff], Awaitable[None]] | None = None,
     key_resolver: Callable[[str], Awaitable[str | None] | str | None] | None = None,
 ) -> Callable[[ShieldActionRecord], Awaitable[None]]:
@@ -562,12 +598,19 @@ def make_router_backed_async_channel2_handler(
     that already uses ``agent_keys`` lookup). When no resolver is provided the
     audit step skips signature verification rather than pass the kid as a key.
     May be sync or async.
+
+    ``memory_persist_directory`` makes the REAL local-Chroma ``incidents``
+    collection the DEFAULT guardian recall backend (see
+    :func:`resolve_default_memory`): an explicit ``memory`` still wins; with a
+    persist dir but no ``memory`` the guardians recall from real Chroma; with
+    neither they use the process-local short-window fallback.
     """
     guardians = build_router_backed_guardians(
         router,
         evidence_recorder=evidence_recorder,
         evaluator_config=evaluator_config,
         memory=memory,
+        memory_persist_directory=memory_persist_directory,
     )
 
     async def handle(record: ShieldActionRecord) -> None:
