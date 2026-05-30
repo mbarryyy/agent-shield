@@ -180,6 +180,19 @@ class ChromaIncidentMemory:
             latency_ms=latency_ms,
         )
 
+    def recent_records(self, *, limit: int = 50) -> list[dict[str, str | int | float | bool]]:
+        """Return up to ``limit`` stored incident metadata rows (most recently
+        upserted last), for window-rescan reflection. Each row is the metadata
+        dict written by :func:`_metadata` (record_id / decision / reasons / …).
+        Deterministic enumeration over the local collection; no model, no
+        network."""
+        raw = self._collection.get(include=cast(Any, ["metadatas"]))
+        metadatas = raw.get("metadatas") if isinstance(raw, dict) else None
+        rows = [dict(m) for m in metadatas if isinstance(m, dict)] if metadatas else []
+        if limit >= 0:
+            return rows[-limit:] if limit else []
+        return rows
+
 
 def trace_safe_record_text(
     record: ShieldActionRecord,
