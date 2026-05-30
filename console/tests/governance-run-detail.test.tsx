@@ -106,7 +106,7 @@ describe('Governance run detail', () => {
     expect(screen.getByText(/permanent evidence/i)).toBeInTheDocument();
   });
 
-  it('shows backend-empty state instead of fallback data by default', async () => {
+  it('shows the honest backend-empty state, never fabricated rows, when the backend errors', async () => {
     window.history.pushState({}, '', '/governance/runs/run-empty-default');
     server.use(
       http.get(`${API_BASE_URL}/v1/governance/runs/run-empty-default/cost`, () => HttpResponse.error()),
@@ -121,28 +121,12 @@ describe('Governance run detail', () => {
       </Fresh>,
     );
 
-    expect(await screen.findByText(/Backend has not produced data yet, run demo flow first/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Pre-recorded fallback/i)).not.toBeInTheDocument();
+    // No fixture/offline mode exists anymore: the console degrades to an
+    // honest empty state and never fabricates rows or a $30k figure.
+    expect(await screen.findByText(/Backend has not produced verdicts yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Offline fallback/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Fixture data is enabled/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/MOCKED/i)).not.toBeInTheDocument();
-  });
-
-  it('labels fallback data only when fixture mode is explicitly enabled', async () => {
-    process.env.NEXT_PUBLIC_USE_FALLBACK_FIXTURES = '1';
-    window.history.pushState({}, '', '/governance/runs/run-offline');
-    server.use(
-      http.get(`${API_BASE_URL}/v1/governance/runs/run-offline/cost`, () => HttpResponse.error()),
-      http.get(`${API_BASE_URL}/v1/governance/runs/run-offline/provenance`, () => HttpResponse.error()),
-      http.get(`${API_BASE_URL}/v1/governance/runs/run-offline/timeline`, () => HttpResponse.error()),
-      http.get(`${API_BASE_URL}/v1/governance/incidents`, () => HttpResponse.error()),
-    );
-
-    render(
-      <Fresh>
-        <GovernanceRunShell />
-      </Fresh>,
-    );
-
-    expect((await screen.findAllByText(/Offline fallback/i)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Fixture data is enabled/i)).toBeInTheDocument();
+    expect(screen.queryByText('$30,000')).not.toBeInTheDocument();
   });
 });

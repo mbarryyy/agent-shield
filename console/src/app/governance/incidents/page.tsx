@@ -8,24 +8,9 @@ import { DecisionBadge } from '@/components/governance/badges';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useIncidents, useVerdictDetail } from '@/lib/hooks';
-import { BACKEND_EMPTY_MESSAGE, fallbackFixturesEnabled } from '@/lib/fallbackFixtures';
-import type { Incident, VerdictDetail } from '@/types/governance';
+import type { VerdictDetail } from '@/types/governance';
 
 const RUN_ID = process.env.NEXT_PUBLIC_GOV_RUN_ID ?? 'banking';
-
-// PRE-RECORDED-DEMO FALLBACK (data-layer resilience ONLY). ESCALATE-only
-// (BLOCK is terminal, not an incident — GATE-ARCH). One pending + one
-// resolved to exercise both server-rendered states. Typed to the LOCKED
-// incidents shape.
-const NOW = 1_716_000_000_000;
-const FALLBACK_INCIDENTS: Incident[] = [
-  { incident_id: 'v-esc-0001', correlation_id: 'corr-0002', run_id: RUN_ID, decision: 'ESCALATE', risk_score: 0.41, status: 'pending', resolution: null, created_at: NOW - 6000 },
-  { incident_id: 'v-esc-0002', correlation_id: 'corr-0005', run_id: RUN_ID, decision: 'ESCALATE', risk_score: 0.33, status: 'resolved', resolution: 'accept', created_at: NOW - 60000 },
-];
-const FALLBACK_DETAIL: Record<string, VerdictDetail> = {
-  'corr-0002': { correlation_id: 'corr-0002', verdict: { correlation_id: 'corr-0002', decision: 'ESCALATE', risk_score: 0.41, reasons: [{ agent: 'defender', label: 'AMOUNT_ABOVE_BASELINE', score: 0.4 }, { agent: 'supervisor', label: 'HUMAN_REVIEW', detail: 'Above this user’s historical pattern.' }], obligations: { require_human: true } }, pre_exec: null, post_exec: null },
-  'corr-0005': { correlation_id: 'corr-0005', verdict: { correlation_id: 'corr-0005', decision: 'ESCALATE', risk_score: 0.33, reasons: [{ agent: 'supervisor', label: 'HUMAN_REVIEW' }], obligations: { require_human: true } }, pre_exec: null, post_exec: null },
-};
 
 // Console → server decision vocabulary (resume body.decision; the locked
 // resolution enum). Approve = accept the action; Reject = ignore it.
@@ -38,18 +23,15 @@ export default function GovernanceIncidentsPage() {
   const { t } = useTranslation();
   const { canResolveIncidents } = useAuth();
   const incidentsQuery = useIncidents({ run_id: RUN_ID });
-  const useFallbackFixtures = fallbackFixturesEnabled();
   const live = incidentsQuery.data != null;
-  const incidents = incidentsQuery.data?.incidents ?? (useFallbackFixtures ? FALLBACK_INCIDENTS : []);
+  const incidents = incidentsQuery.data?.incidents ?? [];
 
   const [selectedId, setSelectedId] = useState<string>('');
   const selected =
     incidents.find((i) => i.incident_id === selectedId) ?? incidents[0] ?? null;
 
   const detailQuery = useVerdictDetail(selected?.correlation_id);
-  const detail: VerdictDetail | null =
-    detailQuery.data ??
-    (useFallbackFixtures && selected ? (FALLBACK_DETAIL[selected.correlation_id] ?? null) : null);
+  const detail: VerdictDetail | null = detailQuery.data ?? null;
 
   async function handleResolve(incidentId: string, action: 'approve' | 'reject') {
     try {
@@ -74,12 +56,12 @@ export default function GovernanceIncidentsPage() {
 
       <div className="mb-6 px-4 py-2 border border-border bg-surface font-mono text-[11px] uppercase tracking-wider text-ink-dim">
         {t('governance.dataSource')}:{' '}
-        {live ? t('governance.source_poll') : useFallbackFixtures ? t('governance.source_offline') : t('governance.source_backend_empty')}
+        {live ? t('governance.source_poll') : t('governance.source_backend_empty')}
       </div>
 
       {incidents.length === 0 ? (
         <div className="border border-border px-4 py-12 text-center font-mono text-[12px] text-ink-dim">
-          {live ? t('governance.incidentsEmpty') : BACKEND_EMPTY_MESSAGE}
+          {live ? t('governance.incidentsEmpty') : t('governance.backendEmpty')}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
