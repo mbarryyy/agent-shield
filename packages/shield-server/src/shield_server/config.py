@@ -42,6 +42,13 @@ PROTOCOL_VERSION = "1.0"
 ELYDORA_KID = "elydora-server-key-v1"
 DEMO_ORG_ID = "demo-org"
 
+# base64url 32-byte Ed25519 seed used to sign GovernanceVerdicts/EARs when
+# SHIELD_SERVER_SIGNING_KEY is unset. This is a PUBLICLY-KNOWN dev seed (the
+# 43-char no-pad genesis chain-hash constant) — fine for open/dev, REFUSED at
+# startup under enterprise mode (Settings.from_env), so a misconfigured deploy
+# can never silently sign production verdicts with a public key.
+DEV_DEFAULT_SIGNING_KEY = "A" * 43
+
 # Channel-2 (§4.3) — async action stream + consumer groups.
 SHIELD_KID = "shield-server-key-v1"  # signs GovernanceVerdicts (golden-vector kid)
 ACTIONS_STREAM_PREFIX = "shield:actions"  # XADD shield:actions:{workflow_id}
@@ -254,6 +261,19 @@ class Settings:
             )
         router_profile: RouterProfile = router_profile_raw  # type: ignore[assignment]
 
+        # Fail-loud-startup: enterprise mode MUST inject a real Ed25519 signing
+        # seed. The built-in dev default is a publicly-known key, so signing
+        # production verdicts with it is a silent security downgrade — refuse,
+        # mirroring the §A1 argon2-cap / §A4 email-backend startup refusals.
+        server_signing_key = os.environ.get("SHIELD_SERVER_SIGNING_KEY", DEV_DEFAULT_SIGNING_KEY)
+        if mode == "enterprise" and server_signing_key == DEV_DEFAULT_SIGNING_KEY:
+            raise RuntimeError(
+                "SHIELD_SERVER_SIGNING_KEY must be set to a real Ed25519 seed under "
+                "SHIELD_AUTH_MODE=enterprise; the built-in dev default is a "
+                "publicly-known key and must never sign production verdicts. "
+                "Inject a generated secret via the environment (never commit it)."
+            )
+
         # Cookie Secure attribute defaults True in enterprise mode (HTTPS-only
         # cookies); local-dev override via SHIELD_ALLOW_INSECURE_COOKIES=1.
         cookie_secure_default = (mode == "enterprise") and (
@@ -276,10 +296,10 @@ class Settings:
             minio_secret_key=os.environ.get("MINIO_ROOT_PASSWORD", "shieldsecret"),
             minio_secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
             minio_bucket=os.environ.get("MINIO_BUCKET", "shield-evidence"),
-            # base64url 32-byte Ed25519 seed for EAR signing. A fixed dev seed by
-            # default (zeros) so the demo runs key-less; production injects a real
-            # secret. Real signing is gated on shield_sdk.crypto (Task #2).
-            server_signing_key=os.environ.get("SHIELD_SERVER_SIGNING_KEY", "A" * 43),
+            # base64url 32-byte Ed25519 seed for EAR/verdict signing, resolved +
+            # enterprise-validated above (DEV_DEFAULT_SIGNING_KEY for open/dev;
+            # a real injected secret is required under enterprise mode).
+            server_signing_key=server_signing_key,
             api_token=os.environ.get("SHIELD_API_TOKEN") or None,
             cors_origins=tuple(o.strip() for o in origins.split(",") if o.strip()),
             dev_auth_open=mode == "open",

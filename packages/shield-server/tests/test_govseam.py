@@ -155,6 +155,9 @@ async def test_server_signs_and_forces_identity_on_gov_verdict() -> None:
     log = storage.db.intervention_log  # type: ignore[attr-defined]
     assert len(log) == 1
     assert log[0]["decision"] == "BLOCK" and log[0]["record_id"] == rec.record_id
+    # P2: the firing rule is persisted from the verdict's first reason label
+    # (server owns the table; the rule provenance comes from gov's reasons[]).
+    assert log[0]["triggered_rule_id"] == "RECIPIENT_NOT_ALLOWLISTED"
 
 
 async def test_null_resume_unsigned_stub() -> None:
