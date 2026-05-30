@@ -216,8 +216,8 @@ def test_cost_usd_unknown_cloud_model_raises_not_zero() -> None:
 def test_supervisor_evidence_cost_is_real_for_cloud() -> None:
     """A cloud supervisor call with real tokens records a NON-zero cost_usd
     (not the old hardcoded 0.0)."""
-    from langchain_core.messages import AIMessage
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
 
     class _ToolableFake(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):  # type: ignore[override,no-untyped-def]  # noqa: ARG002
