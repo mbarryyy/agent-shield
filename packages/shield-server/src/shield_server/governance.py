@@ -426,7 +426,11 @@ async def decide(
             rec.run_id,
             verdict.decision.value,
             rec.step_index,
-            None,  # triggered_rule_id — set by the real W3 graph
+            # The firing rule id is the first reason's label (the rule the gov
+            # decide() pipeline attributes the decision to); None when the
+            # verdict carries no reasons. tokens/model stay 0/None on the sync
+            # model-free Defender hot path — the async guardian hook backfills.
+            verdict.reasons[0].label if verdict.reasons else None,
             0,  # tokens_in  — governance hook #1 populates W3; server owns table only
             0,  # tokens_out
             None,  # model_id

@@ -58,6 +58,13 @@ def _enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "SHIELD_AUTH_FERNET_KEYS",
         "f1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
+    # Enterprise mode refuses the publicly-known dev signing seed at startup
+    # (config.DEV_DEFAULT_SIGNING_KEY); inject a real non-default key, as a
+    # real enterprise deployment must.
+    monkeypatch.setenv(
+        "SHIELD_SERVER_SIGNING_KEY",
+        "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    )
     monkeypatch.setenv("SHIELD_ALLOW_INSECURE_COOKIES", "1")
 
 
