@@ -47,9 +47,9 @@ describe('backend-first demo pages', () => {
       </Fresh>,
     );
 
-    expect(await screen.findByText(/Backend has not produced data yet, run demo flow first/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Backend has not produced verdicts yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/MOCKED/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Pre-recorded fallback/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Offline fallback/i)).not.toBeInTheDocument();
   });
 
   it('keeps /governance/incidents on backend-empty state when backend errors and fixtures are disabled', async () => {
@@ -63,8 +63,8 @@ describe('backend-first demo pages', () => {
       </Fresh>,
     );
 
-    expect(await screen.findByText(/Backend has not produced data yet, run demo flow first/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Backend has not produced verdicts yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/v-esc-0001/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Pre-recorded fallback/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Offline fallback/i)).not.toBeInTheDocument();
   });
 });
